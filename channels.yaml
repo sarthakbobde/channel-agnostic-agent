@@ -1,0 +1,23 @@
+# Per-channel configuration. Secrets come from .env via ${VAR}.
+# Defaults apply to every channel and can be overridden per channel.
+defaults:
+  show_sources: true
+
+channels:
+  slack:
+    enabled: true
+    bot_token: ${SLACK_BOT_TOKEN}     # xoxb-...
+    app_token: ${SLACK_APP_TOKEN}     # xapp-... (Socket Mode)
+    allowed_channels: []              # empty = any channel the bot is in; DMs always allowed
+  teams:
+    enabled: false                    # set true once the Azure Bot is registered
+    app_id: ${TEAMS_APP_ID}           # Azure Bot Microsoft App ID
+    app_password: ${TEAMS_APP_PASSWORD}
+    tenant_id: ${TEAMS_TENANT_ID}     # required for single-tenant bots
+    allowed_tenants: []               # empty = any tenant
+  gchat:
+    enabled: false                    # set true once the Chat app is configured
+    auth: project_number              # or: endpoint_url (Workspace add-on style)
+    audience: ${GCHAT_AUDIENCE}       # project NUMBER, or the endpoint URL for endpoint_url
+    service_account_email: ${GCHAT_SERVICE_ACCOUNT_EMAIL}   # only for auth: endpoint_url
+    allowed_spaces: []                # empty = any space/DM, e.g. ["spaces/AAAA..."]

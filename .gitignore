@@ -1,0 +1,16 @@
+# secrets / local config
+.env
+.env.local
+
+# runtime data
+chats/
+chroma_db/
+*.log
+
+# python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/

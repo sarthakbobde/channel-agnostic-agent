@@ -1,0 +1,26 @@
+[project]
+name = "rag-assistant"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = [
+  "langchain",
+  "langchain-core",
+  "langchain-openai",
+  "langchain-text-splitters",
+  "chromadb",
+  "streamlit",
+  "pypdf",
+  "python-dotenv",
+  "fastapi",
+  "uvicorn[standard]",
+  "pydantic",
+  "pyyaml",
+  "slack-bolt",
+  "botbuilder-core",
+  "pyjwt",
+  "google-auth",
+  "requests",
+]
+
+[tool.setuptools]
+packages = ["app"]

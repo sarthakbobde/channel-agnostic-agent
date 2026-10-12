@@ -1,0 +1,39 @@
+services:
+  rag:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: rag-assistant
+    ports:
+      - "8000:8000"
+    volumes:
+      - rag_chats:/app/chats
+      - rag_chroma_db:/app/chroma_db
+      - ./data/docs:/app/data/docs:ro
+      - ./channels.yaml:/app/channels.yaml:ro
+    environment:
+      - NINEROUTER_BASE_URL=${NINEROUTER_BASE_URL:-http://localhost:20128/v1}
+      - NINEROUTER_API_KEY=${NINEROUTER_API_KEY:-}
+      - LLM_MODEL=${LLM_MODEL:-testcombo}
+      - SLACK_BOT_TOKEN=${SLACK_BOT_TOKEN:-}
+      - SLACK_APP_TOKEN=${SLACK_APP_TOKEN:-}
+      - TEAMS_APP_ID=${TEAMS_APP_ID:-}
+      - TEAMS_APP_PASSWORD=${TEAMS_APP_PASSWORD:-}
+      - TEAMS_TENANT_ID=${TEAMS_TENANT_ID:-}
+      - GCHAT_AUDIENCE=${GCHAT_AUDIENCE:-}
+      - GCHAT_SERVICE_ACCOUNT_EMAIL=${GCHAT_SERVICE_ACCOUNT_EMAIL:-}
+      - CHAT_DIR=/app/chats
+      - CHROMA_PATH=/app/chroma_db
+      - COLLECTION_NAME=${COLLECTION_NAME:-docs}
+      - TOP_K=${TOP_K:-5}
+      - SCORE_THRESHOLD=${SCORE_THRESHOLD:-0.35}
+      - CHUNK_SIZE=${CHUNK_SIZE:-900}
+      - CHUNK_OVERLAP=${CHUNK_OVERLAP:-150}
+      - MEMORY_MAX_TURNS=${MEMORY_MAX_TURNS:-6}
+    restart: unless-stopped
+
+volumes:
+  rag_chats:
+    driver: local
+  rag_chroma_db:
+    driver: local
