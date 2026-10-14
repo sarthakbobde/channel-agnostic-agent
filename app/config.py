@@ -15,6 +15,9 @@ class Settings:
     collection: str = os.getenv("COLLECTION_NAME", "docs")
     admin_db_path: str = os.getenv("ADMIN_DB_PATH", "./admin_data/admin.db")
     secret_key: str = os.getenv("APP_SECRET_KEY", "")
+    admin_email_domain: str = os.getenv("ADMIN_EMAIL_DOMAIN", "sysfore.com")
+    admin_allow_remote: bool = os.getenv("ADMIN_ALLOW_REMOTE", "false").lower() in ("1", "true", "yes")
+    cors_origins: tuple = tuple(o.strip() for o in os.getenv("CORS_ORIGINS", "").split(",") if o.strip())
 
     top_k: int = int(os.getenv("TOP_K", "5"))
     score_threshold: float = float(os.getenv("SCORE_THRESHOLD", "0.35"))

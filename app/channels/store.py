@@ -104,6 +104,27 @@ class ChannelStore:
                 cfg[row.name] = self.secrets.decrypt(row.ciphertext)
             return ch.enabled, cfg
 
+    def merged_config(self, typ: str, values: dict) -> dict:
+        """What the full config would be after applying `values`, without saving anything.
+
+        Same rules as save(): an empty secret keeps the stored one; None removes a setting.
+        """
+        spec = self._spec(typ)
+        unknown = sorted(set(values) - set(spec))
+        if unknown:
+            raise ValueError(f"unknown settings for {typ}: {', '.join(unknown)}")
+        found = self.runtime_config(typ)
+        cfg = dict(found[1]) if found else {}
+        for name, val in values.items():
+            if spec[name].secret:
+                if val not in (None, ""):
+                    cfg[name] = str(val)
+            elif val is None:
+                cfg.pop(name, None)
+            else:
+                cfg[name] = val
+        return cfg
+
     def types(self) -> list[str]:
         with self.db.session() as s:
             return list(s.scalars(select(Channel.type).order_by(Channel.type)))

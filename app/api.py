@@ -6,6 +6,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from app import channels, chat_service, memory
+from app.admin.api import router as admin_router
+from app.config import settings
 
 log = logging.getLogger(__name__)
 
@@ -49,17 +51,19 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# Enable CORS
+# CORS: no browser origin is trusted unless listed in CORS_ORIGINS. (Streamlit and the chat
+# platforms call this server directly, not from a browser page, so they are unaffected.)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=list(settings.cors_origins),
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "DELETE"],
+    allow_headers=["Content-Type"],
 )
 
 
 channels.mount(app)
+app.include_router(admin_router)
 
 
 @app.get("/health")
