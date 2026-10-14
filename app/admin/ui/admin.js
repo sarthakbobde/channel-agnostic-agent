@@ -1,4 +1,4 @@
-/* RAG Assistant admin page. Talks only to /admin/api. Builds the page with DOM calls and
+/* Channel-Agnostic Agent admin page. Talks only to /admin/api. Builds the page with DOM calls and
    textContent (never HTML strings), so text from the API or the audit log cannot inject markup. */
 (function () {
   "use strict";
@@ -84,7 +84,7 @@
       h("div", { class: "field" }, h("label", { class: "l", for: "pw" }, "Password"), pw),
       h("div", { class: "actions" }, h("button", { class: "btn primary", type: "submit" }, "Sign in")),
       out);
-    mount(h("div", { class: "login" }, h("h1", {}, "RAG Assistant"), h("p", {}, "Admin sign-in"), form));
+    mount(h("div", { class: "login" }, h("h1", {}, "Channel-Agnostic Agent"), h("p", {}, "Admin sign-in"), form));
     email.focus();
   }
 
@@ -117,7 +117,7 @@
   var TABS = [["channels", "Channels"], ["audit", "Audit log"], ["admins", "Admins"], ["account", "Account"]];
 
   function renderShell() {
-    var nav = h("nav", { class: "side", "aria-label": "Admin sections" }, h("h1", {}, "RAG Assistant"));
+    var nav = h("nav", { class: "side", "aria-label": "Admin sections" }, h("h1", {}, "Channel-Agnostic Agent"));
     TABS.forEach(function (t) {
       nav.appendChild(h("button", {
         type: "button", class: state.tab === t[0] ? "on" : "", "aria-current": state.tab === t[0] ? "page" : null,

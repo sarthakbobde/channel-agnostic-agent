@@ -1,6 +1,43 @@
-# RAG Assistant - Docker Deployment
+# Channel-Agnostic Agent
 
-## Quick Start (3 commands)
+A knowledge-base question-answering assistant. One core answers questions from your documents
+(with file and page citations) and is reachable from Slack, Microsoft Teams and Google Chat
+through small per-platform adapters. Admins manage the channels and their credentials on a
+web page, with no code changes or restarts.
+
+| Read | For |
+|---|---|
+| [PROGRESS.md](PROGRESS.md) | What is built, how it works, open items |
+| [ADMIN.md](ADMIN.md) | Setting up and using the admin page, security model |
+| [TEAMS_SETUP.md](TEAMS_SETUP.md), [GCHAT_SETUP.md](GCHAT_SETUP.md) | Connecting Teams and Google Chat |
+| `docs/` | Architecture and one-pager PDFs |
+
+## Quick start (local, Windows)
+
+```powershell
+# 1. Python 3.11 environment (outside OneDrive: long paths break pip on Windows)
+py -3.11 -m venv --without-pip $env:USERPROFILE\rag-venv
+py -3.11 -m pip --python $env:USERPROFILE\rag-venv\Scripts\python.exe install -e .
+
+# 2. Settings: copy .env.example to .env and fill in the LLM key and model, then add a master key
+& $env:USERPROFILE\rag-venv\Scripts\python.exe -m app.secretstore generate   # paste into .env as APP_SECRET_KEY
+
+# 3. Index your documents (data\docs) and start
+.\start.ps1 -Ingest
+
+# 4. Create the first admin (hidden password prompt), then open http://127.0.0.1:8000/admin
+& $env:USERPROFILE\rag-venv\Scripts\python.exe -m app.admin.cli create-admin you@yourcompany.com
+```
+
+Channels (Slack, Teams, Google Chat) are added, tested and switched on in the admin page.
+Slack uses Socket Mode and needs no public URL; Teams and Google Chat need an HTTPS address
+(`.\start.ps1 -Tunnel`). The admin page only answers requests from the machine itself.
+
+The sections below describe the Docker setup. Docker has **not** been updated for the admin
+database (`APP_SECRET_KEY` and a volume for `admin_data/` are missing from `docker-compose.yml`)
+and the Docker path as a whole is untested.
+
+## Docker: Quick Start (3 commands)
 
 ```bash
 # 1. Configure

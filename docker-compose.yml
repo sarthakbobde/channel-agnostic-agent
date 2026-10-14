@@ -3,7 +3,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: rag-assistant
+    container_name: channel-agnostic-agent
     ports:
       - "8000:8000"
     volumes:
