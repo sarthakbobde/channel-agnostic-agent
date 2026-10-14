@@ -7,11 +7,11 @@ LLM calls never hit Teams' request timeout.
 import asyncio
 import logging
 import jwt
-from fastapi import APIRouter, HTTPException, Request, Response
+from fastapi import HTTPException, Request, Response
 from fastapi.concurrency import run_in_threadpool
 from botbuilder.core import BotFrameworkAdapter, BotFrameworkAdapterSettings, TurnContext
 from botbuilder.schema import Activity, ActivityTypes
-from app.channels.base import Adapter, Envelope
+from app.channels.base import Adapter, Envelope, Field
 from app.channels.core import handle, sources_line
 
 log = logging.getLogger(__name__)
@@ -19,6 +19,16 @@ log = logging.getLogger(__name__)
 
 class TeamsAdapter(Adapter):
     name = "teams"
+    title = "Microsoft Teams"
+    webhook_path = "/channels/teams/messages"
+    SPEC = (
+        Field("app_id", "Microsoft App ID", required=True, help="Azure Bot > Configuration"),
+        Field("app_password", "Client secret", secret=True, required=True,
+              help="Azure Bot > Configuration > Manage Password"),
+        Field("tenant_id", "Tenant ID", help="Required for single-tenant bots"),
+        Field("allowed_tenants", "Allowed tenants", kind="list", help="Empty = any tenant"),
+        Field("show_sources", "Show sources", kind="bool", default=True),
+    )
 
     def __init__(self, cfg: dict):
         super().__init__(cfg)
@@ -33,22 +43,24 @@ class TeamsAdapter(Adapter):
         ))
         self._tasks: set[asyncio.Task] = set()
 
-    def router(self) -> APIRouter:
-        r = APIRouter()
+    async def handle_webhook(self, request: Request):
+        if "application/json" not in request.headers.get("Content-Type", ""):
+            raise HTTPException(415)
+        activity = Activity().deserialize(await request.json())
+        auth = request.headers.get("Authorization", "")
+        try:
+            await self.bf.process_activity(activity, auth, self._on_turn)
+        except (PermissionError, jwt.PyJWTError):
+            raise HTTPException(401)
+        return Response(status_code=202)
 
-        @r.post("/channels/teams/messages")
-        async def messages(request: Request):
-            if "application/json" not in request.headers.get("Content-Type", ""):
-                raise HTTPException(415)
-            activity = Activity().deserialize(await request.json())
-            auth = request.headers.get("Authorization", "")
-            try:
-                await self.bf.process_activity(activity, auth, self._on_turn)
-            except (PermissionError, jwt.PyJWTError):
-                raise HTTPException(401)
-            return Response(status_code=202)
-
-        return r
+    def test(self) -> tuple[bool, str]:
+        from botframework.connector.auth import MicrosoftAppCredentials
+        creds = MicrosoftAppCredentials(self.app_id, self.cfg["app_password"],
+                                        channel_auth_tenant=self.cfg.get("tenant_id") or None)
+        if not creds.get_access_token():
+            return False, "Microsoft did not return a token for these credentials."
+        return True, "Microsoft accepted the app ID and secret."
 
     async def _on_turn(self, ctx: TurnContext) -> None:
         act = ctx.activity

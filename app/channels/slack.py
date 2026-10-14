@@ -3,7 +3,7 @@ import logging
 import re
 from slack_bolt import App
 from slack_bolt.adapter.socket_mode import SocketModeHandler
-from app.channels.base import Adapter, Envelope
+from app.channels.base import Adapter, Envelope, Field
 from app.channels.core import handle, sources_line, to_mrkdwn
 
 log = logging.getLogger(__name__)
@@ -12,6 +12,21 @@ _MENTION = re.compile(r"<@[A-Z0-9]+>")
 
 class SlackAdapter(Adapter):
     name = "slack"
+    title = "Slack"
+    SPEC = (
+        Field("bot_token", "Bot token (xoxb-...)", secret=True, required=True,
+              help="OAuth & Permissions > Bot User OAuth Token"),
+        Field("app_token", "App-level token (xapp-...)", secret=True, required=True,
+              help="Basic Information > App-Level Tokens, scope connections:write (Socket Mode)"),
+        Field("allowed_channels", "Allowed channels", kind="list",
+              help="Channel IDs the bot may answer in. Empty = any channel it is in. DMs always work."),
+        Field("show_sources", "Show sources", kind="bool", default=True),
+    )
+
+    def test(self) -> tuple[bool, str]:
+        from slack_sdk import WebClient
+        r = WebClient(token=self.cfg["bot_token"]).auth_test()
+        return True, f"Connected as {r.get('user')} in workspace {r.get('team')}."
 
     def __init__(self, cfg: dict):
         super().__init__(cfg)

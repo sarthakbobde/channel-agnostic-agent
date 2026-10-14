@@ -13,11 +13,11 @@ Every request carries a Google-signed bearer token, verified per `auth` mode:
 """
 import asyncio
 import logging
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
 from google.auth.transport import requests as g_requests
 from google.oauth2 import id_token
-from app.channels.base import Adapter, Envelope
+from app.channels.base import Adapter, Envelope, Field
 from app.channels.core import handle, sources_line, to_mrkdwn
 
 log = logging.getLogger(__name__)
@@ -30,6 +30,19 @@ TIMEOUT_REPLY = "That took too long. Please try again, or ask a shorter question
 
 class GChatAdapter(Adapter):
     name = "gchat"
+    title = "Google Chat"
+    webhook_path = "/channels/gchat/events"
+    SPEC = (
+        Field("auth", "Authentication audience", kind="choice", default="project_number",
+              choices=("project_number", "endpoint_url"),
+              help="Must match 'Authentication Audience' in the Chat API configuration"),
+        Field("audience", "Audience", required=True,
+              help="Google Cloud project NUMBER, or the endpoint URL when auth=endpoint_url"),
+        Field("service_account_email", "Service account email",
+              help="Only for auth=endpoint_url"),
+        Field("allowed_spaces", "Allowed spaces", kind="list", help="e.g. spaces/AAAA... Empty = any"),
+        Field("show_sources", "Show sources", kind="bool", default=True),
+    )
 
     def __init__(self, cfg: dict):
         super().__init__(cfg)
@@ -97,33 +110,37 @@ class GChatAdapter(Adapter):
         return {"hostAppDataAction": {"chatDataAction": {"createMessageAction": {
             "message": {"text": text}}}}}
 
-    # ---- route ------------------------------------------------------------
-    def router(self) -> APIRouter:
-        r = APIRouter()
+    # ---- webhook ----------------------------------------------------------
+    async def handle_webhook(self, request: Request):
+        try:
+            await run_in_threadpool(self._verify, request.headers.get("Authorization", ""))
+        except Exception as e:
+            log.warning("gchat auth rejected: %s", e)
+            raise HTTPException(401)
+        body = await request.json()
+        kind, space, thread, user, text, addon = self._parse(body)
+        if kind == "ignore":
+            return {}
+        if kind == "added":
+            return self._reply(GREETING, addon)
+        if not text or (self.allowed and space not in self.allowed):
+            return {}
+        env = Envelope("gchat", "g", space, thread or space, user, text)
+        try:
+            result = await asyncio.wait_for(run_in_threadpool(handle, env), TIMEOUT_S)
+        except asyncio.TimeoutError:
+            return self._reply(TIMEOUT_REPLY, addon)
+        out = to_mrkdwn(result["answer"])
+        if self.show_sources and result["sources"]:
+            out += f"\n\n_Sources: {sources_line(result['sources'])}_"
+        return self._reply(out, addon)
 
-        @r.post("/channels/gchat/events")
-        async def events(request: Request):
-            try:
-                await run_in_threadpool(self._verify, request.headers.get("Authorization", ""))
-            except Exception as e:
-                log.warning("gchat auth rejected: %s", e)
-                raise HTTPException(401)
-            body = await request.json()
-            kind, space, thread, user, text, addon = self._parse(body)
-            if kind == "ignore":
-                return {}
-            if kind == "added":
-                return self._reply(GREETING, addon)
-            if not text or (self.allowed and space not in self.allowed):
-                return {}
-            env = Envelope("gchat", "g", space, thread or space, user, text)
-            try:
-                result = await asyncio.wait_for(run_in_threadpool(handle, env), TIMEOUT_S)
-            except asyncio.TimeoutError:
-                return self._reply(TIMEOUT_REPLY, addon)
-            out = to_mrkdwn(result["answer"])
-            if self.show_sources and result["sources"]:
-                out += f"\n\n_Sources: {sources_line(result['sources'])}_"
-            return self._reply(out, addon)
-
-        return r
+    def test(self) -> tuple[bool, str]:
+        """Google signs requests; there is no outbound credential to try. Check that the
+        signing certificates are reachable so token verification can work."""
+        import requests
+        r = requests.get(CHAT_CERTS, timeout=10)
+        if r.status_code != 200:
+            return False, f"Could not fetch Google's signing certificates (HTTP {r.status_code})."
+        return True, ("Configuration is valid and Google's signing certificates are reachable. "
+                      "Full verification happens when Google sends its first request.")
