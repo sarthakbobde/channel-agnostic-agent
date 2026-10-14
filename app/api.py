@@ -7,6 +7,7 @@ from pydantic import BaseModel
 
 from app import channels, chat_service, memory
 from app.admin.api import router as admin_router
+from app.admin.ui import router as admin_ui_router
 from app.config import settings
 
 log = logging.getLogger(__name__)
@@ -64,6 +65,7 @@ app.add_middleware(
 
 channels.mount(app)
 app.include_router(admin_router)
+app.include_router(admin_ui_router)
 
 
 @app.get("/health")
