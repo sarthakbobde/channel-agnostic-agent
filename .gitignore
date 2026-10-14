@@ -14,3 +14,9 @@ __pycache__/
 .venv/
 venv/
 .pytest_cache/
+
+# admin database (holds encrypted secrets)
+admin_data/
+*.db
+*.db-wal
+*.db-shm

@@ -112,8 +112,23 @@ class ChannelManager:
             return await adapter.handle_webhook(request)
         return route
 
-    # ---- config source (YAML for now; the admin database replaces this) ---
+    # ---- config sources ---------------------------------------------------
+    def start_from_store(self, store) -> None:
+        """Start every enabled channel saved in the admin database."""
+        for typ in store.types():
+            found = store.runtime_config(typ)
+            if not found:
+                continue
+            enabled, cfg = found
+            if not enabled:
+                continue
+            try:
+                self.apply(typ, cfg)
+            except Exception:
+                log.exception("failed to start channel %s", typ)
+
     def start_from_config(self) -> None:
+        """Legacy source: channels.yaml. Used only when no master key is configured."""
         cfg = load()
         for typ, ccfg in cfg["channels"].items():
             if not ccfg.get("enabled"):

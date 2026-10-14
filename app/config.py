@@ -13,6 +13,8 @@ class Settings:
     chat_dir: str = os.getenv("CHAT_DIR", "./chats")
     chroma_path: str = os.getenv("CHROMA_PATH", "./chroma_db")
     collection: str = os.getenv("COLLECTION_NAME", "docs")
+    admin_db_path: str = os.getenv("ADMIN_DB_PATH", "./admin_data/admin.db")
+    secret_key: str = os.getenv("APP_SECRET_KEY", "")
 
     top_k: int = int(os.getenv("TOP_K", "5"))
     score_threshold: float = float(os.getenv("SCORE_THRESHOLD", "0.35"))

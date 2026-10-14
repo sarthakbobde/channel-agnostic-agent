@@ -20,6 +20,8 @@ dependencies = [
   "pyjwt",
   "google-auth",
   "requests",
+  "sqlalchemy",
+  "cryptography",
 ]
 
 [tool.setuptools]
