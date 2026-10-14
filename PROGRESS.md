@@ -1,9 +1,9 @@
-# Channel-Agnostic Agent: Progress Log
+# Channel Agnostic Agent: Progress Log
 
 Last updated: 2026-10-14
 
 ## Goal
-**Channel-Agnostic Agent** is a RAG assistant that plugs into chat apps (Slack, Teams, Google Chat) with **no code
+**Channel Agnostic Agent** is a RAG assistant that plugs into chat apps (Slack, Teams, Google Chat) with **no code
 changes per channel**. The same core answers every channel; each platform gets a thin
 adapter, and admins manage channels and their credentials from a web page.
 
@@ -57,7 +57,7 @@ Found and fixed:
   `allowed_channels`.
 
 ### 3. Slack app setup (done in the Sysfore workspace)
-- Slack app (now named **Channel-Agnostic Agent**, originally "RAG Assistant") created from a manifest: Socket Mode on, bot scopes
+- Slack app (now named **Channel Agnostic Agent**, originally "RAG Assistant") created from a manifest: Socket Mode on, bot scopes
   `app_mentions:read`, `chat:write`, `im:history`, `im:read`; events `app_mention`,
   `message.im`; Messages tab enabled. App-level token (`connections:write`), app installed.
 - **Verified**: a DM to the bot in Slack got a cited answer.
@@ -169,6 +169,16 @@ Run the tests: `python -m pytest tests` (set `CHROMA_PATH`, `CHAT_DIR` to temp f
 9. **Hardening before real use**: authentication on `/chat` and `/conversations`, rate limits
    on chat, pinned dependency versions, a real `requirements.txt`, and a service or Docker
    deployment so the server survives restarts.
-10. **Later phases (not started)**: documents and per-document access, multiple knowledge
-    bases, selectable vector store and chunking strategy (with versioned indexes),
-    LLM provider choice with fallback, tracing and evaluation.
+10. **Upcoming (shown greyed out in the admin sidebar, not started)**:
+    - **Documents**: upload and per-document access (who can add, who can see which files).
+    - **Chunking strategy**: today fixed 900/150 recursive; planned fixed size, per page, by
+      heading, semantic.
+    - **Vector store**: today hard-wired to ChromaDB; planned pgvector, Qdrant, Azure AI Search.
+    - **Retrieval strategy**: today vector similarity with a score threshold; planned hybrid
+      keyword + vector, re-ranker, query rewriting.
+    - **LLM provider and model**: today one OpenAI-compatible model (Gemini via its
+      OpenAI-compatible endpoint); planned Claude, Azure, Ollama, a different model per step
+      (routing vs answering), and a fallback if the primary fails or runs out of credit.
+    - Changing chunking, embeddings or the vector store means a full rebuild into a new
+      versioned index (old one kept for rollback), never a mix of strategies in one index.
+11. **Later still**: multiple knowledge bases, tracing and evaluation.

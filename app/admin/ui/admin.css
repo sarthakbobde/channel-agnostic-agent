@@ -8,7 +8,7 @@
   color-scheme: light;
 }
 * { box-sizing: border-box; }
-body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.5 var(--font); padding: 16px; }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.5 var(--font); padding: max(16px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) max(16px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left)); }
 button, input, select { font: inherit; color: inherit; }
 .boot { max-width: 520px; margin: 60px auto; text-align: center; color: var(--muted); }
 
@@ -18,13 +18,13 @@ button, input, select { font: inherit; color: inherit; }
 
 .app { max-width: 1180px; margin: 0 auto; background: var(--surface); border: 1px solid var(--line); border-radius: 18px;
        display: grid; grid-template-columns: 210px minmax(0, 1fr); min-height: 640px; overflow: hidden; }
-@media (max-width: 760px) { .app { grid-template-columns: 1fr; } nav.side { flex-direction: row; flex-wrap: wrap; } .who { width: 100%; } }
-nav.side { background: var(--blue); padding: 18px 14px; display: flex; flex-direction: column; gap: 4px; }
-nav.side h1 { font: 400 20px var(--serif); margin: 0 0 14px 6px; }
-nav.side button { text-align: left; background: transparent; border: 0; border-radius: 10px; padding: 9px 12px; font-weight: 700; cursor: pointer; }
-nav.side button.on { background: var(--surface); }
-nav.side button:disabled { color: var(--muted); font-weight: 400; cursor: default; }
-.who { margin-top: auto; padding: 10px 6px 0; border-top: 1px solid var(--edge); font-size: 12px; overflow-wrap: anywhere; }
+nav.side { background: var(--blue); padding: 18px 14px; display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+nav.side h1 { font: 400 20px var(--serif); margin: 0 0 14px 6px; order: 1; overflow-wrap: anywhere; }
+.tabs { display: flex; flex-direction: column; gap: 4px; order: 2; }
+.tabs button { text-align: left; background: transparent; border: 0; border-radius: 10px; padding: 9px 12px; font-weight: 700; cursor: pointer; }
+.tabs button.on { background: var(--surface); }
+.tabs button:disabled { color: var(--muted); font-weight: 400; cursor: default; }
+.who { order: 3; margin-top: auto; padding: 10px 6px 0; border-top: 1px solid var(--edge); font-size: 12px; overflow-wrap: anywhere; display: grid; gap: 0; justify-items: start; }
 .who b { display: block; }
 .who button { padding: 4px 0; color: var(--accent); background: none; border: 0; cursor: pointer; font-weight: 700; }
 main { padding: 22px 26px; min-width: 0; }
@@ -75,3 +75,59 @@ td.nw { white-space: nowrap; } td.wrap { overflow-wrap: anywhere; }
 .note { margin-top: 14px; font-size: 12.5px; color: var(--muted); }
 .inline { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; margin-top: 16px; max-width: 760px; align-items: end; }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+
+/* ---- tablet: narrower sidebar ---- */
+@media (max-width: 980px) {
+  .app { grid-template-columns: 180px minmax(0, 1fr); }
+  main { padding: 20px 20px; }
+}
+
+/* ---- phone: header row, scrollable tab strip, single column ---- */
+@media (max-width: 760px) {
+  body { padding-left: max(8px, env(safe-area-inset-left)); padding-right: max(8px, env(safe-area-inset-right)); padding-top: max(8px, env(safe-area-inset-top)); }
+  .app { grid-template-columns: 1fr; min-height: 0; border-radius: 14px; }
+  nav.side { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 6px 12px; padding: 12px 12px 8px; }
+  nav.side h1 { order: 0; margin: 0; font-size: 18px; }
+  .who { order: 0; margin: 0; padding: 0; border: 0; text-align: right; justify-items: end; max-width: 46vw; }
+  .who span { display: none; }
+  .who b { font-size: 11.5px; font-weight: 700; overflow-wrap: anywhere; }
+  .tabs { order: 0; grid-column: 1 / -1; flex-direction: row; overflow-x: auto; gap: 4px; padding-bottom: 4px; -webkit-overflow-scrolling: touch; scrollbar-width: thin; }
+  .tabs button { flex: 0 0 auto; padding: 8px 14px; white-space: nowrap; }
+  main { padding: 16px 14px 20px; }
+  main h2 { font-size: 21px; }
+  .sub { margin-bottom: 14px; }
+  .grid { grid-template-columns: 1fr; gap: 10px; margin-bottom: 14px; }
+  .panel { padding: 14px; border-radius: 14px; }
+  .form { grid-template-columns: 1fr; gap: 12px; }
+  .row { align-items: flex-start; }
+  .actions .btn { flex: 1 1 140px; }
+  .secret { flex-wrap: wrap; }
+  .secret .dots, .secret input { flex: 1 1 100%; }
+  .inline { grid-template-columns: 1fr; }
+  .login { margin-top: 4vh; padding: 22px 18px; }
+  input[type=text], input[type=password], input[type=email], select { font-size: 16px; }   /* stops iOS zooming into fields */
+}
+
+/* ---- small phone: tables become stacked cards (audit log, admins) ---- */
+@media (max-width: 600px) {
+  .tablewrap { overflow-x: visible; }
+  table, tbody, tr, td { display: block; width: 100%; }
+  thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+  tr { border: 1px solid var(--line); border-radius: 12px; padding: 8px 12px; margin-bottom: 10px; background: var(--tile); }
+  td { border: 0; padding: 3px 0; white-space: normal; overflow-wrap: anywhere; }
+  td[data-label]::before { content: attr(data-label); display: block; font-size: 10.5px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); font-weight: 700; }
+  td.act { padding-top: 6px; }
+  td:empty { display: none; }
+}
+
+/* ---- touch devices: comfortable tap targets ---- */
+@media (pointer: coarse) {
+  .btn { min-height: 44px; }
+  .btn.small { min-height: 40px; }
+  .tabs button { min-height: 42px; }
+  .who button { min-height: 36px; }
+  .switch input { height: 26px; width: 46px; }
+  .switch input::after { top: 3px; width: 20px; height: 20px; }
+  .switch input:checked::after { transform: translateX(20px); }
+  input[type=text], input[type=password], input[type=email], select { min-height: 42px; }
+}

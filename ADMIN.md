@@ -109,5 +109,8 @@ All under `/admin/api`, JSON, cookie + `X-CSRF-Token` header for changes.
 - Sessions cannot be revoked individually (they end on expiry, password change or key change).
 - Docker is not set up for the admin database (`APP_SECRET_KEY` and a volume for `admin_data/`
   are not in `docker-compose.yml` yet).
-- Not built yet: documents and per-document access, multiple knowledge bases, selectable vector
-  store and chunking, LLM provider choice.
+- Upcoming (greyed out in the sidebar, not built yet): documents and per-document access,
+  chunking strategy (fixed size, per page, by heading, semantic), vector store choice (pgvector,
+  Qdrant, Azure AI Search), retrieval strategy (hybrid keyword + vector, re-ranker, query
+  rewriting), and LLM provider and model (Claude, Azure, Ollama, a model per step, fallback).
+  Later: multiple knowledge bases.

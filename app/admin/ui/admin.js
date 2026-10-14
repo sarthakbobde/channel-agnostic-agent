@@ -1,4 +1,4 @@
-/* Channel-Agnostic Agent admin page. Talks only to /admin/api. Builds the page with DOM calls and
+/* Channel Agnostic Agent admin page. Talks only to /admin/api. Builds the page with DOM calls and
    textContent (never HTML strings), so text from the API or the audit log cannot inject markup. */
 (function () {
   "use strict";
@@ -84,7 +84,7 @@
       h("div", { class: "field" }, h("label", { class: "l", for: "pw" }, "Password"), pw),
       h("div", { class: "actions" }, h("button", { class: "btn primary", type: "submit" }, "Sign in")),
       out);
-    mount(h("div", { class: "login" }, h("h1", {}, "Channel-Agnostic Agent"), h("p", {}, "Admin sign-in"), form));
+    mount(h("div", { class: "login" }, h("h1", {}, "Channel Agnostic Agent"), h("p", {}, "Admin sign-in"), form));
     email.focus();
   }
 
@@ -115,18 +115,31 @@
 
   // ---- shell ----------------------------------------------------------------------
   var TABS = [["channels", "Channels"], ["audit", "Audit log"], ["admins", "Admins"], ["account", "Account"]];
+  // Planned, not built yet: shown greyed out so admins can see what is coming. [label, tooltip]
+  var UPCOMING = [
+    ["Documents", "Upcoming: upload documents and control who can add and see which files."],
+    ["Chunking", "Upcoming: choose how documents are split. Today: fixed 900 characters with 150 overlap. Planned: fixed size, per page, by heading, semantic."],
+    ["Vector store", "Upcoming: choose where document vectors are kept. Today: ChromaDB. Planned: pgvector, Qdrant, Azure AI Search."],
+    ["Retrieval", "Upcoming: tune how passages are found. Today: vector similarity with a score threshold. Planned: hybrid keyword + vector, re-ranker, query rewriting."],
+    ["LLM provider", "Upcoming: choose the model provider. Today: one OpenAI-compatible model. Planned: Claude, Azure, Ollama, a different model per step, and a fallback if one fails."]
+  ];
 
   function renderShell() {
-    var nav = h("nav", { class: "side", "aria-label": "Admin sections" }, h("h1", {}, "Channel-Agnostic Agent"));
+    var tabs = h("div", { class: "tabs" });
     TABS.forEach(function (t) {
-      nav.appendChild(h("button", {
+      tabs.appendChild(h("button", {
         type: "button", class: state.tab === t[0] ? "on" : "", "aria-current": state.tab === t[0] ? "page" : null,
         onclick: function () { state.tab = t[0]; renderShell(); }
       }, t[1]));
     });
-    nav.appendChild(h("button", { type: "button", disabled: true, title: "Planned for a later phase" }, "Documents (later)"));
-    nav.appendChild(h("div", { class: "who" }, h("b", {}, me), "Admin · local sign-in",
-      h("br"), h("button", { type: "button", onclick: signOut }, "Sign out")));
+    UPCOMING.forEach(function (u) {
+      tabs.appendChild(h("button", { type: "button", disabled: true, title: u[1] }, u[0] + " (upcoming)"));
+    });
+    var nav = h("nav", { class: "side", "aria-label": "Admin sections" },
+      h("h1", {}, "Channel Agnostic Agent"),
+      h("div", { class: "who" }, h("b", {}, me), h("span", {}, "Admin · local sign-in"),
+        h("button", { type: "button", onclick: signOut }, "Sign out")),
+      tabs);
     var main = h("main", {});
     mount(h("div", { class: "app" }, nav, main));
     var view = { channels: viewChannels, audit: viewAudit, admins: viewAdmins, account: viewAccount }[state.tab];
@@ -305,8 +318,11 @@
       var rows = await api("GET", "/audit?limit=200");
       var body = h("tbody", {});
       rows.forEach(function (r) {
-        body.appendChild(h("tr", {}, h("td", { class: "nw" }, when(r.ts)), h("td", { class: "wrap" }, r.actor),
-          h("td", { class: "nw" }, r.action), h("td", { class: "nw" }, r.target), h("td", { class: "wrap" }, r.detail)));
+        body.appendChild(h("tr", {}, h("td", { class: "nw", "data-label": "Time" }, when(r.ts)),
+          h("td", { class: "wrap", "data-label": "Actor" }, r.actor),
+          h("td", { class: "nw", "data-label": "Action" }, r.action),
+          h("td", { class: "nw", "data-label": "Target" }, r.target),
+          h("td", { class: "wrap", "data-label": "Detail" }, r.detail)));
       });
       holder.replaceChildren(h("div", { class: "tablewrap" }, h("table", {},
         h("thead", {}, h("tr", {}, ["Time", "Actor", "Action", "Target", "Detail"].map(function (t) { return h("th", {}, t); }))), body)));
@@ -326,8 +342,9 @@
         var admins = await api("GET", "/admins");
         var body = h("tbody", {});
         admins.forEach(function (a) {
-          body.appendChild(h("tr", {}, h("td", { class: "wrap" }, a.email), h("td", {}, a.role), h("td", {}, a.provider),
-            h("td", {}, a.email === me ? h("span", { class: "meta" }, "you") : confirmButton("Remove", "Confirm remove", async function () {
+          body.appendChild(h("tr", {}, h("td", { class: "wrap", "data-label": "Email" }, a.email),
+            h("td", { "data-label": "Role" }, a.role), h("td", { "data-label": "Sign-in" }, a.provider),
+            h("td", { class: "act" }, a.email === me ? h("span", { class: "meta" }, "you") : confirmButton("Remove", "Confirm remove", async function () {
               try { await api("DELETE", "/admins/" + encodeURIComponent(a.email)); result.replaceChildren(msg("ok", "Removed " + a.email + ".")); refresh(); }
               catch (err) { if (me) result.replaceChildren(msg("bad", err.message)); }
             }, true))));

@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Channel Agnostic Agent - one pager</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Lato:wght@400;700;900&family=Source+Serif+4:wght@400;600&display=swap">
+<style>
+  @page { size: A4; margin: 0; }
+  :root {
+    --blue: #d6e0f7; --mint: #cff3e6; --ink: #1b2a41; --muted: #4a5a70; --stat: #2563eb;
+    --tile: #f1f4f9; --line: #dbe2ec; --page: #edf1f6;
+    --serif: "Source Serif 4", Georgia, serif; --sans: "Lato", "Segoe UI", Arial, sans-serif;
+  }
+  * { box-sizing: border-box; margin: 0; }
+  html, body { background: var(--page); }
+  body { font-family: var(--sans); color: var(--ink); font-size: 11px; line-height: 1.45;
+         -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .page { width: 210mm; height: 297mm; padding: 7mm; }
+  .card { width: 100%; height: 100%; background: #fff; border: 1px solid var(--line); border-radius: 18px;
+          padding: 6mm 7mm 4.5mm; display: flex; flex-direction: column; gap: 2.8mm; overflow: hidden; }
+  h2 { font-family: var(--serif); font-weight: 400; font-size: 16px; margin-bottom: 1.2mm; }
+  .banner { background: var(--blue); border-radius: 22px; text-align: center; padding: 4.5mm 4mm 4mm; }
+  .banner h1 { font-family: var(--serif); font-weight: 400; font-size: 40px; line-height: 1.05; }
+  .banner .tag { margin-top: 2.5mm; font-weight: 900; font-size: 8.5px; letter-spacing: 0.22em; text-transform: uppercase; }
+  .meta { display: flex; justify-content: space-between; gap: 8px; font-size: 10.5px; }
+  .meta b { font-weight: 900; }
+  .two { display: grid; grid-template-columns: 1fr 1.28fr; gap: 3mm; }
+  .illus { background: var(--blue); border-radius: 18px; display: grid; place-items: center; padding: 4mm; }
+  .about { background: var(--mint); border-radius: 18px; padding: 3.6mm 5mm; text-align: center; }
+  .about h2 { font-size: 16px; }
+  p { color: var(--ink); }
+  .steps { display: grid; grid-template-columns: repeat(4, 1fr); gap: 3mm; }
+  .step { border-radius: 16px; padding: 3mm 3mm; text-align: center; display: grid; justify-items: center; gap: 1.2mm; align-content: start; }
+  .step:nth-child(odd) { background: var(--blue); } .step:nth-child(even) { background: var(--mint); }
+  .step b { font-weight: 900; font-size: 11.5px; } .step span { font-size: 10px; line-height: 1.4; }
+  .step svg { width: 34px; height: 34px; }
+
+  .arch { background: var(--tile); border: 1px solid var(--line); border-radius: 16px; padding: 3mm; }
+  .flow { display: grid; grid-template-columns: 1fr 14px 1fr 14px 1.5fr 14px 1fr; align-items: stretch; gap: 0; }
+  .node { background: #fff; border: 1px solid var(--line); border-radius: 12px; padding: 2.4mm 2.6mm; display: flex; flex-direction: column; gap: 1px; justify-content: center; }
+  .node.core { background: var(--blue); border-color: #bccaee; }
+  .node h3 { font-size: 9.5px; font-weight: 900; text-transform: uppercase; letter-spacing: 0.09em; color: var(--stat); margin-bottom: 1px; }
+  .node div, .node li { font-size: 10px; }
+  .node ul { list-style: none; padding: 0; display: grid; gap: 1px; }
+  .arrow { align-self: center; text-align: center; color: var(--muted); font-weight: 900; font-size: 13px; }
+  .models { display: grid; gap: 2mm; }
+  .models .node { padding: 1.8mm 2.4mm; }
+  .note { margin-top: 2.4mm; font-size: 9.5px; color: var(--muted); text-align: center; }
+
+  .tiles { display: grid; grid-template-columns: repeat(4, 1fr); gap: 3mm; }
+  .tile { background: var(--tile); border: 1px solid var(--line); border-radius: 14px; padding: 2.4mm 2.4mm; text-align: center; }
+  .tile b { display: block; color: var(--stat); font-size: 19px; font-weight: 900; line-height: 1.15; }
+  .tile span { font-size: 9.5px; color: var(--muted); line-height: 1.3; display: block; margin-top: 1px; }
+
+  .pills { display: flex; flex-wrap: wrap; gap: 2mm; }
+  .pill { font-weight: 700; font-size: 10px; padding: 1.3mm 3.2mm; border-radius: 99px; background: var(--mint); }
+  .pill:nth-child(even) { background: var(--blue); }
+  .status { margin-top: auto; border-top: 1px solid var(--line); padding-top: 2.4mm; font-size: 9.5px; color: var(--muted); display: flex; justify-content: space-between; gap: 8px; }
+</style>
+</head>
+<body>
+<div class="page"><div class="card">
+
+  <div class="banner">
+    <h1>Channel Agnostic Agent</h1>
+    <div class="tag">Answers from your documents, inside your chat apps</div>
+  </div>
+
+  <div class="meta">
+    <span><b>Type:</b> Knowledge-base AI assistant</span>
+    <span><b>Works with:</b> Slack, Microsoft Teams, Google Chat</span>
+    <span><b>Built for:</b> Employees and support teams</span>
+  </div>
+
+  <div class="two">
+    <div class="illus">
+      <svg viewBox="0 0 250 110" width="100%" fill="none" stroke="#1b2a41" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M18 24h38l12 12v46H18z"/><path d="M56 24v12h12"/><path d="M27 52h32M27 62h32M27 72h22"/>
+        <path d="M82 58h22m-6-6 6 6-6 6"/>
+        <ellipse cx="128" cy="34" rx="22" ry="8"/><path d="M106 34v38c0 4.5 10 8 22 8s22-3.5 22-8V34"/><path d="M106 53c0 4.5 10 8 22 8s22-3.5 22-8"/>
+        <path d="M158 58h22m-6-6 6 6-6 6"/>
+        <path d="M188 28h46a6 6 0 0 1 6 6v30a6 6 0 0 1-6 6h-30l-12 10V70h-4a6 6 0 0 1-6-6V34a6 6 0 0 1 6-6z" transform="translate(-4 -4)"/>
+        <path d="M200 48h.1M212 48h.1M224 48h.1" stroke-width="4"/>
+        <path d="M14 98h222" stroke-dasharray="4 4" stroke-width="1.6"/>
+      </svg>
+    </div>
+    <div class="about">
+      <h2>About the product</h2>
+      <p>Channel Agnostic Agent lets anyone ask a question in plain language and get an answer drawn only from your approved policies, procedures and documents, with the source file and page shown. It lives inside Slack, Microsoft Teams and Google Chat, so people get answers where they already work.</p>
+    </div>
+  </div>
+
+  <section>
+    <h2>The challenge we solve</h2>
+    <p>Policies and procedures sit in PDFs and shared folders that few people have time to search. HR, IT and operations teams answer the same questions repeatedly, and answers from memory drift from the documents. Channel Agnostic Agent answers from the source documents and says so when it cannot find something. Channels are connected by configuration, not by rewriting the assistant.</p>
+  </section>
+
+  <section>
+    <h2>How it works</h2>
+    <div class="steps">
+      <div class="step">
+        <svg viewBox="0 0 40 40" fill="none" stroke="#1b2a41" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8h28a2 2 0 0 1 2 2v17a2 2 0 0 1-2 2H18l-8 7v-7H6a2 2 0 0 1-2-2V10a2 2 0 0 1 2-2z"/><path d="M13 18.5h.1M20 18.5h.1M27 18.5h.1" stroke-width="3.4"/></svg>
+        <b>Step 1</b><span>Ask in the chat app. Message the bot or mention it in a channel.</span>
+      </div>
+      <div class="step">
+        <svg viewBox="0 0 40 40" fill="none" stroke="#1b2a41" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="17" cy="17" r="10"/><path d="M25 25l10 10"/><path d="M12 15h10M12 19.5h7"/></svg>
+        <b>Step 2</b><span>The assistant finds the most relevant passages in your indexed documents.</span>
+      </div>
+      <div class="step">
+        <svg viewBox="0 0 40 40" fill="none" stroke="#1b2a41" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 4l13 5v10c0 9-5.5 14.5-13 17C12.500 33.500 7 28 7 19V9z"/><path d="M13.500 20l5 5 8-9.500"/></svg>
+        <b>Step 3</b><span>It answers only from those passages and cites the file and page.</span>
+      </div>
+      <div class="step">
+        <svg viewBox="0 0 40 40" fill="none" stroke="#1b2a41" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8h22a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H16l-6 5v-5H6a2 2 0 0 1-2-2V10a2 2 0 0 1 2-2z"/><path d="M34 16h2a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-2v4l-6-4H20"/></svg>
+        <b>Step 4</b><span>The reply arrives in the same thread, formatted for the platform, with memory of the chat.</span>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Architecture</h2>
+    <div class="arch">
+      <div class="flow">
+        <div class="node"><h3>Channels</h3><ul><li>Slack</li><li>Microsoft Teams</li><li>Google Chat</li><li>Web UI</li></ul></div>
+        <div class="arrow">&rsaquo;</div>
+        <div class="node"><h3>Adapters</h3><ul><li>Verify the request</li><li>Normalise the message</li><li>Format the reply</li></ul></div>
+        <div class="arrow">&rsaquo;</div>
+        <div class="node core"><h3>Core service (FastAPI)</h3><ul><li><b>1 Route</b> search or chat?</li><li><b>2 Retrieve</b> top passages by similarity</li><li><b>3 Answer</b> grounded, with citations</li><li><b>Memory</b> per conversation thread</li></ul></div>
+        <div class="arrow">&rsaquo;</div>
+        <div class="models">
+          <div class="node"><h3>LLM</h3><div>Gemini 3.8 Flash</div></div>
+          <div class="node"><h3>Vector store</h3><div>ChromaDB, local</div></div>
+        </div>
+      </div>
+      <div class="note">Documents (PDF, Markdown, text) are split into overlapping chunks, embedded locally and stored in the vector store. Channels are added and switched on from the admin page.</div>
+    </div>
+  </section>
+
+  <section>
+    <h2>At a glance</h2>
+    <div class="tiles">
+      <div class="tile"><b>3</b><span>chat platforms supported</span></div>
+      <div class="tile"><b>Config only</b><span>to turn a channel on or off</span></div>
+      <div class="tile"><b>Cited</b><span>every answer shows file and page</span></div>
+      <div class="tile"><b>Local</b><span>embeddings and vector store run on your machine</span></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Technology</h2>
+    <div class="pills">
+      <span class="pill">Python 3.11</span><span class="pill">FastAPI</span><span class="pill">LangChain</span>
+      <span class="pill">ChromaDB</span><span class="pill">Gemini 3.8 Flash</span><span class="pill">MiniLM embeddings</span>
+      <span class="pill">Slack Bolt</span><span class="pill">Bot Framework</span><span class="pill">Google Chat API auth</span>
+      <span class="pill">Streamlit</span>
+    </div>
+  </section>
+
+  <div class="status">
+    <span><b>Status:</b> Slack verified live. Teams and Google Chat adapters built and tested offline, pending app registration.</span>
+    <span>github.com/sarthakbobde/channel-agnostic-agent</span>
+  </div>
+
+</div></div>
+</body>
+</html>

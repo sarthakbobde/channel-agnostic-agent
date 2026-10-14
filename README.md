@@ -1,4 +1,4 @@
-# Channel-Agnostic Agent
+# Channel Agnostic Agent
 
 A knowledge-base question-answering assistant. One core answers questions from your documents
 (with file and page citations) and is reachable from Slack, Microsoft Teams and Google Chat

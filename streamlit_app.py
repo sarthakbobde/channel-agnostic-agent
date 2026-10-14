@@ -6,8 +6,8 @@ import streamlit as st
 # Configuration
 BACKEND_URL = os.getenv("RAG_BACKEND_URL", "http://localhost:8000")
 
-st.set_page_config(page_title="Channel-Agnostic Agent", page_icon="💬")
-st.title("Channel-Agnostic Agent")
+st.set_page_config(page_title="Channel Agnostic Agent", page_icon="💬")
+st.title("Channel Agnostic Agent")
 
 # Check backend connection
 try:

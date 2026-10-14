@@ -1,5 +1,5 @@
 <#
- Starts the Channel-Agnostic Agent locally (Slack Socket Mode + Teams/web API on :8000).
+ Starts the Channel Agnostic Agent locally (Slack Socket Mode + Teams/web API on :8000).
  Usage:  .\start.ps1            # server only
          .\start.ps1 -Tunnel    # also open a public HTTPS tunnel for Teams (needs cloudflared)
          .\start.ps1 -Ingest    # (re)index data\docs first

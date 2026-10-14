@@ -1,0 +1,237 @@
+<title>Channel Agnostic Agent Architecture</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Lato:wght@400;700;900&family=Source+Serif+4:wght@400;600&display=swap">
+<style>
+  /* Layout: one A4-style sheet. Header, wide system diagram, then flow + stack side by side, status strip last. */
+  :root {
+    --bg: #edf1f6; --surface: #ffffff; --ink: #1b2a41; --muted: #4a5a70; --line: #dbe2ec;
+    --accent: #2563eb; --blue: #d6e0f7; --mint: #cff3e6; --tile: #f1f4f9;
+    --ok: #1b7f4b; --warn: #a15c00;
+    --font-body: "Lato", "Segoe UI", Arial, sans-serif;
+    --font-serif: "Source Serif 4", Georgia, serif;
+    --font-mono: "IBM Plex Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
+    color-scheme: light;
+  }
+
+  * { box-sizing: border-box; }
+  body { background: var(--bg); color: var(--ink); font-family: var(--font-body); font-size: 15px; line-height: 1.5;
+         padding-inline: 16px; padding-block: 28px 40px; }
+  .sheet { max-width: 1040px; margin: 0 auto; background: var(--surface); border: 1px solid var(--line);
+           border-radius: 18px; padding: clamp(18px, 3vw, 36px); display: grid; gap: 26px; }
+  h1, h2, h3, p { margin: 0; }
+  h1 { font-family: var(--font-serif); font-size: clamp(28px, 4.4vw, 40px); font-weight: 400; text-wrap: balance; }
+  header { background: var(--blue); border-radius: 18px; padding: clamp(16px, 3vw, 28px); text-align: center; }
+  header .lede { margin-inline: auto; color: var(--ink); }
+  .lede { color: var(--muted); max-width: 70ch; margin-top: 6px; }
+  .eyebrow { font-weight: 900; font-size: 11px; letter-spacing: 0.2em; text-transform: uppercase; color: var(--ink); margin-bottom: 8px; }
+  h2 { font-family: var(--font-serif); font-size: 20px; font-weight: 400; color: var(--ink); margin-bottom: 14px; }
+
+  .diagram { overflow-x: auto; }
+  .diagram svg { display: block; min-width: 760px; width: 100%; height: auto; }
+  svg text { font-family: var(--font-body); fill: var(--ink); }
+  svg .mono { font-family: var(--font-mono); }
+  svg .sub { fill: var(--muted); font-size: 11.5px; }
+  svg .t { font-size: 13.5px; font-weight: 900; }
+  svg .lab { font-size: 10.5px; letter-spacing: 0.14em; fill: var(--ink); font-weight: 900; text-transform: uppercase; }
+  svg .box { fill: var(--surface); stroke: #b9c6dd; stroke-width: 1.2; }
+  svg .zone { fill: var(--mint); stroke: none; }
+  svg .core { fill: var(--blue); stroke: none; }
+  svg .dash { fill: none; stroke: var(--muted); stroke-width: 1; stroke-dasharray: 4 3; }
+  svg .arrow { stroke: var(--muted); stroke-width: 1.4; fill: none; }
+  svg .arrowhead { fill: var(--muted); }
+  svg .ok { fill: var(--ok); }
+  svg .warn { fill: var(--warn); }
+
+  .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 28px; }
+  @media (max-width: 760px) { .cols { grid-template-columns: 1fr; } }
+  .cols > * { min-width: 0; }
+
+  ol.flow { margin: 0; padding: 0; list-style: none; display: grid; gap: 12px; counter-reset: step; }
+  ol.flow li { counter-increment: step; display: grid; grid-template-columns: 26px 1fr; gap: 10px; }
+  ol.flow li::before { content: counter(step); font-size: 12px; font-weight: 900; color: var(--ink); background: var(--blue);
+                       border: 0; border-radius: 50%; width: 24px; height: 24px; display: grid; place-items: center; margin-top: 1px; }
+  ol.flow b { font-weight: 900; }
+  code, .mono { font-family: var(--font-mono); font-size: 0.86em; }
+  li p, .note { color: var(--muted); font-size: 14px; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  th { text-align: left; font-weight: 900; font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); padding: 0 10px 6px 0; }
+  td { padding: 7px 10px 7px 0; border-top: 1px solid var(--line); vertical-align: top; }
+  td:first-child { white-space: nowrap; font-weight: 700; }
+  td:last-child { color: var(--muted); padding-right: 0; }
+  .tablewrap { overflow-x: auto; }
+
+  .status { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 12px 24px; }
+  .st { display: grid; grid-template-columns: 12px 1fr; gap: 10px; align-items: start; font-size: 14px; background: var(--tile); border: 1px solid var(--line); border-radius: 14px; padding: 12px 14px; }
+  .st i { width: 10px; height: 10px; border-radius: 50%; margin-top: 6px; background: var(--ok); }
+  .st.w i { background: var(--warn); }
+  .st b { font-weight: 900; display: block; }
+  .st span { color: var(--muted); }
+  .foot { font-size: 13px; color: var(--muted); display: flex; flex-wrap: wrap; gap: 6px 22px; padding-top: 14px; border-top: 1px solid var(--line); }
+
+  @page { size: A4; margin: 8mm; }
+  @media print {
+    html { zoom: 0.62; }
+    body { background: #fff; padding: 0; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    .sheet { border: 0; padding: 0; max-width: none; gap: 20px; }
+    .diagram { overflow: visible; }
+    .diagram svg { min-width: 0; }
+    .cols { grid-template-columns: 1fr 1fr !important; gap: 22px; }
+    .status { grid-template-columns: repeat(5, 1fr); gap: 10px; }
+    section, header, .st, tr, ol.flow li { break-inside: avoid; }
+  }
+</style>
+
+<main class="sheet">
+  <header>
+    <div class="eyebrow">Architecture one-pager</div>
+    <h1>Channel Agnostic Agent Architecture</h1>
+    <p class="lede">One knowledge-base question-answering core. Slack, Microsoft Teams and Google Chat plug into it through thin adapters. Channels and their credentials are added, tested and switched on from an admin page, so changing a channel needs configuration, not changes to the answering code.</p>
+  </header>
+
+  <section aria-labelledby="sys">
+    <h2 id="sys">System</h2>
+    <div class="diagram">
+      <svg viewBox="0 0 980 436" role="img" aria-label="Channels connect through adapters to a FastAPI core that routes, retrieves from Chroma and answers with an LLM">
+        <defs>
+          <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="arrowhead"/></marker>
+        </defs>
+
+        <text x="0" y="12" class="lab">Channels</text>
+        <text x="235" y="12" class="lab">Adapters</text>
+        <text x="450" y="12" class="lab">Core (FastAPI)</text>
+        <text x="800" y="12" class="lab">Models and data</text>
+
+        <!-- channels -->
+        <g>
+          <rect class="box" x="0" y="22" width="190" height="66" rx="5"/><circle class="ok" cx="16" cy="40" r="5"/>
+          <text class="t" x="30" y="45">Slack</text><text class="sub" x="14" y="68">Socket Mode, outbound only</text>
+          <rect class="box" x="0" y="108" width="190" height="66" rx="5"/><circle class="warn" cx="16" cy="126" r="5"/>
+          <text class="t" x="30" y="131">Microsoft Teams</text><text class="sub" x="14" y="154">Azure Bot, HTTPS webhook</text>
+          <rect class="box" x="0" y="194" width="190" height="66" rx="5"/><circle class="warn" cx="16" cy="212" r="5"/>
+          <text class="t" x="30" y="217">Google Chat</text><text class="sub" x="14" y="240">HTTP endpoint, 30 s reply</text>
+          <rect class="box" x="0" y="280" width="190" height="66" rx="5"/><circle class="ok" cx="16" cy="298" r="5"/>
+          <text class="t" x="30" y="303">Streamlit web UI</text><text class="sub" x="14" y="326">REST client of the same API</text>
+        </g>
+        <path class="arrow" d="M190 55 H212 V184 H233" marker-end="url(#ah)"/>
+        <path class="arrow" d="M190 141 H212"/>
+        <path class="arrow" d="M190 227 H212"/>
+        <path class="arrow" d="M190 313 H212 V184"/>
+
+        <!-- adapters -->
+        <rect class="zone" x="235" y="22" width="170" height="324" rx="6"/>
+        <text class="t" x="251" y="50">Channel adapters</text>
+        <text class="sub" x="251" y="74">one module per platform</text>
+        <g class="mono">
+          <text class="sub" x="251" y="118">1  verify signature / JWT</text>
+          <text class="sub" x="251" y="146">2  parse to Envelope</text>
+          <text class="sub" x="251" y="174">3  call core handle()</text>
+          <text class="sub" x="251" y="202">4  format reply for platform</text>
+        </g>
+        <text class="sub" x="251" y="250">Envelope: channel, workspace,</text>
+        <text class="sub" x="251" y="268">room, thread, user, text.</text>
+        <text class="sub" x="251" y="286">Memory key = channel + room</text>
+        <text class="sub" x="251" y="304">+ thread.</text>
+        <path class="arrow" d="M405 184 H448" marker-end="url(#ah)"/>
+
+        <!-- core -->
+        <rect class="core" x="450" y="22" width="310" height="324" rx="6"/>
+        <rect class="box" x="470" y="48" width="270" height="62" rx="4"/>
+        <text class="t" x="484" y="72">Route</text><text class="sub" x="484" y="92">LLM decides: search the knowledge base or chat</text>
+        <rect class="box" x="470" y="124" width="270" height="62" rx="4"/>
+        <text class="t" x="484" y="148">Retrieve</text><text class="sub" x="484" y="168">top 5 chunks, cosine score at least 0.35</text>
+        <rect class="box" x="470" y="200" width="270" height="62" rx="4"/>
+        <text class="t" x="484" y="224">Answer</text><text class="sub" x="484" y="244">from retrieved context only, cites [n]</text>
+        <rect class="dash" x="470" y="278" width="270" height="52" rx="4"/>
+        <text class="t" x="484" y="302">Memory</text><text class="sub" x="484" y="320">one file per conversation, last 6 turns</text>
+        <path class="arrow" d="M605 110 V122" marker-end="url(#ah)"/>
+        <path class="arrow" d="M605 186 V198" marker-end="url(#ah)"/>
+
+        <!-- models and data -->
+        <rect class="box" x="800" y="22" width="180" height="104" rx="5"/>
+        <text class="t" x="816" y="48">LLM</text>
+        <text class="sub" x="816" y="68">Gemini 3.8 Flash</text>
+        <text class="sub" x="816" y="86">OpenAI-compatible API</text>
+        <text class="sub" x="816" y="104">via LangChain</text>
+        <rect class="box" x="800" y="140" width="180" height="76" rx="5"/>
+        <text class="t" x="816" y="166">Chroma vector DB</text>
+        <text class="sub" x="816" y="186">MiniLM embeddings (ONNX)</text>
+        <text class="sub" x="816" y="204">local, persistent</text>
+        <rect class="box" x="800" y="262" width="180" height="84" rx="5"/>
+        <text class="t" x="816" y="288">Documents</text>
+        <text class="sub" x="816" y="308">PDF, MD, TXT in data/docs</text>
+        <text class="sub" x="816" y="326">chunked 900 / 150 overlap</text>
+
+        <path class="arrow" d="M740 79 H770 V60 H798" marker-end="url(#ah)"/>
+        <path class="arrow" d="M740 231 H775 V104 H798" marker-end="url(#ah)"/>
+        <path class="arrow" d="M740 155 H798" marker-end="url(#ah)"/>
+        <path class="arrow" d="M890 262 V218" marker-end="url(#ah)"/>
+        <text class="sub mono" x="898" y="244">ingest</text>
+
+        <!-- admin band -->
+        <text x="235" y="372" class="lab">Admin</text>
+        <rect class="box" x="235" y="380" width="525" height="48" rx="5"/>
+        <text class="t" x="251" y="401">Admin page and API</text>
+        <text class="sub" x="251" y="419">SQLite, encrypted credentials, audit log. Local only.</text>
+        <path class="arrow" d="M320 380 V350" marker-end="url(#ah)"/>
+        <text class="sub" x="332" y="368">starts, stops, reconfigures channels</text>
+      </svg>
+    </div>
+  </section>
+
+  <div class="cols">
+    <section aria-labelledby="flow">
+      <h2 id="flow">One question, end to end</h2>
+      <ol class="flow">
+        <li><div><b>Message arrives.</b><p>The adapter checks Slack's connection, a Microsoft token or a Google token, and turns the event into a common Envelope.</p></div></li>
+        <li><div><b>Route.</b><p>The model decides whether the message needs a lookup. Greetings and small talk skip retrieval; anything unsure searches. Follow-ups are rewritten into standalone queries.</p></div></li>
+        <li><div><b>Retrieve.</b><p>Chroma returns the closest chunks of the indexed documents. Nothing above the score threshold means a fixed "couldn't find this" answer and no model call.</p></div></li>
+        <li><div><b>Answer.</b><p>The model answers only from those chunks and cites them, with a fixed scope and identity prompt that treats document text as untrusted.</p></div></li>
+        <li><div><b>Reply.</b><p>The adapter formats the text for the platform, adds a Sources line (file and page), and sends it back. The turn is saved to memory.</p></div></li>
+      </ol>
+    </section>
+
+    <section aria-labelledby="tech">
+      <h2 id="tech">Technology</h2>
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th>Layer</th><th>Choice</th></tr></thead>
+          <tbody>
+            <tr><td>Language</td><td>Python 3.11</td></tr>
+            <tr><td>API</td><td>FastAPI, Uvicorn, Pydantic</td></tr>
+            <tr><td>LLM</td><td>Gemini 3.8 Flash through the OpenAI-compatible endpoint; any OpenAI-compatible router works by changing <code>.env</code></td></tr>
+            <tr><td>Orchestration</td><td>LangChain (core, openai, text-splitters)</td></tr>
+            <tr><td>Vector store</td><td>ChromaDB, persistent, cosine similarity</td></tr>
+            <tr><td>Embeddings</td><td>Chroma default, all-MiniLM-L6-v2 (ONNX, runs locally)</td></tr>
+            <tr><td>Ingestion</td><td>pypdf plus recursive text splitter</td></tr>
+            <tr><td>Slack</td><td>slack-bolt, Socket Mode</td></tr>
+            <tr><td>Teams</td><td>Bot Framework SDK (botbuilder-core), Azure Bot</td></tr>
+            <tr><td>Google Chat</td><td>google-auth token verification, HTTP endpoint</td></tr>
+            <tr><td>Web UI</td><td>Streamlit</td></tr>
+            <tr><td>Admin</td><td>FastAPI routes plus a plain HTML/CSS/JS page (no build step); SQLite through SQLAlchemy</td></tr>
+            <tr><td>Credentials</td><td>Fernet encryption (cryptography), master key in <code>.env</code>; scrypt password hashes; signed session cookies</td></tr>
+            <tr><td>Config</td><td>Admin database; <code>channels.yaml</code> and <code>.env</code> import once on first start</td></tr>
+            <tr><td>Run</td><td><code>start.ps1</code> locally; Dockerfile and compose included</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </div>
+
+  <section aria-labelledby="stat">
+    <h2 id="stat">Status</h2>
+    <div class="status">
+      <div class="st"><i></i><div><b>Slack</b><span>Verified end to end with a real workspace.</span></div></div>
+      <div class="st w"><i></i><div><b>Teams</b><span>Built and tested offline; needs an Azure Bot and an HTTPS URL.</span></div></div>
+      <div class="st w"><i></i><div><b>Google Chat</b><span>Built and tested offline; needs Google Workspace and an HTTPS URL.</span></div></div>
+      <div class="st"><i></i><div><b>Admin</b><span>Built, 55 tests pass, checked in a browser. First admin account still to be created.</span></div></div>
+      <div class="st w"><i></i><div><b>Docker</b><span>Not updated for the admin database; not run.</span></div></div>
+    </div>
+  </section>
+
+  <div class="foot">
+    <span><b>Before production:</b> authentication on the chat API, rate limits, Docker setup for the admin database, a database in place of per-conversation files, pinned dependencies.</span>
+    <span>Source: github.com/sarthakbobde/channel-agnostic-agent</span>
+  </div>
+</main>

@@ -1,4 +1,4 @@
-"""FastAPI REST API for Channel-Agnostic Agent."""
+"""FastAPI REST API for Channel Agnostic Agent."""
 import logging
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException
@@ -38,15 +38,15 @@ class ConversationHistory(BaseModel):
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Startup and shutdown events."""
-    log.info("Channel-Agnostic Agent started")
+    log.info("Channel Agnostic Agent started")
     channels.start_all()
     yield
     channels.stop_all()
-    log.info("Channel-Agnostic Agent shutdown")
+    log.info("Channel Agnostic Agent shutdown")
 
 
 app = FastAPI(
-    title="Channel-Agnostic Agent",
+    title="Channel Agnostic Agent",
     description="Retrieval-Augmented Generation chatbot engine",
     version="0.1.0",
     lifespan=lifespan,
