@@ -2,6 +2,7 @@ import json
 import re
 import time
 from pathlib import Path
+from app import global_settings
 from app.config import settings
 
 
@@ -40,7 +41,7 @@ def add(conv_id: str, role: str, content: str, meta: dict | None = None) -> None
 
 def get(conv_id: str) -> list[tuple[str, str]]:
     """Last N turns as (role, content), oldest first. Used as LLM context."""
-    msgs = _read(conv_id)[-settings.memory_max_turns * 2:]
+    msgs = _read(conv_id)[-global_settings.current().recent_turns * 2:]
     return [(m["role"], m["content"]) for m in msgs]
 
 
@@ -52,8 +53,8 @@ def get_messages(conv_id: str) -> list[dict]:
     ]
 
 
-def list_conversations() -> list[dict]:
-    """Newest first. Title = first user message."""
+def list_conversations(prefix: str = "") -> list[dict]:
+    """Newest first. Title = first user message. `prefix` limits to one person's conversations."""
     try:
         files = sorted(_dir().glob("*.txt"), key=lambda f: f.stat().st_mtime, reverse=True)
     except Exception as e:
@@ -62,6 +63,8 @@ def list_conversations() -> list[dict]:
     
     out = []
     for f in files:
+        if prefix and not f.stem.startswith(prefix):
+            continue
         try:
             title = "New chat"
             for m in _read(f.stem):

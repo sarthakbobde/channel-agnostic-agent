@@ -2,14 +2,14 @@
 :root {
   --bg: #edf1f6; --surface: #fff; --ink: #1b2a41; --muted: #4a5a70; --line: #dbe2ec;
   --blue: #d6e0f7; --mint: #cff3e6; --tile: #f1f4f9; --accent: #2563eb; --edge: #b9c6dd;
-  --ok: #1b7f4b; --ok-soft: #d9f3e5; --off: #5b6a7c; --off-soft: #e6eaf0; --bad: #b3261e; --bad-soft: #fbe1de;
+  --ok: #1b7f4b; --warn-soft: #fdf1d8; --warn: #8a5a00; --ok-soft: #d9f3e5; --off: #5b6a7c; --off-soft: #e6eaf0; --bad: #b3261e; --bad-soft: #fbe1de;
   --font: "Segoe UI", "Lato", system-ui, -apple-system, Arial, sans-serif;
   --serif: "Source Serif 4", Georgia, "Times New Roman", serif;
   color-scheme: light;
 }
 * { box-sizing: border-box; }
 body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.5 var(--font); padding: max(16px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) max(16px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left)); }
-button, input, select { font: inherit; color: inherit; }
+button, input, select, textarea { font: inherit; color: inherit; }
 .boot { max-width: 520px; margin: 60px auto; text-align: center; color: var(--muted); }
 
 .login { max-width: 380px; margin: 8vh auto 0; background: var(--surface); border: 1px solid var(--line); border-radius: 18px; padding: 28px; }
@@ -50,7 +50,9 @@ main h2 { font: 400 24px var(--serif); margin: 0 0 4px; }
 .field.wide { grid-column: 1 / -1; }
 label.l { font-weight: 700; font-size: 12.5px; }
 .help { font-size: 12px; color: var(--muted); }
-input[type=text], input[type=password], input[type=email], select { border: 1px solid var(--edge); border-radius: 10px; padding: 8px 10px; background: #fff; width: 100%; }
+input[type=text], input[type=password], input[type=email], input[type=number], select, textarea { border: 1px solid var(--edge); border-radius: 10px; padding: 8px 10px; background: #fff; width: 100%; }
+input[readonly] { background: var(--bg, #f6f7f9); }
+.check + .check { margin-left: 14px; }
 .secret { display: flex; gap: 8px; align-items: center; }
 .secret .dots { flex: 1; border: 1px dashed var(--edge); border-radius: 10px; padding: 8px 10px; background: var(--tile); color: var(--muted); }
 .url { font: 12.5px ui-monospace, Consolas, monospace; background: var(--tile); border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; overflow-wrap: anywhere; }
@@ -105,7 +107,7 @@ td.nw { white-space: nowrap; } td.wrap { overflow-wrap: anywhere; }
   .secret .dots, .secret input { flex: 1 1 100%; }
   .inline { grid-template-columns: 1fr; }
   .login { margin-top: 4vh; padding: 22px 18px; }
-  input[type=text], input[type=password], input[type=email], select { font-size: 16px; }   /* stops iOS zooming into fields */
+  input[type=text], input[type=password], input[type=email], input[type=number], select, textarea { font-size: 16px; }   /* stops iOS zooming into fields */
 }
 
 /* ---- small phone: tables become stacked cards (audit log, admins) ---- */
@@ -129,5 +131,26 @@ td.nw { white-space: nowrap; } td.wrap { overflow-wrap: anywhere; }
   .switch input { height: 26px; width: 46px; }
   .switch input::after { top: 3px; width: 20px; height: 20px; }
   .switch input:checked::after { transform: translateX(20px); }
-  input[type=text], input[type=password], input[type=email], select { min-height: 42px; }
+  input[type=text], input[type=password], input[type=email], input[type=number], select { min-height: 42px; }
 }
+
+/* ---- alerts and warnings ---- */
+.banners { display: grid; gap: 8px; margin-bottom: 14px; }
+.banner { display: flex; gap: 12px; align-items: center; justify-content: space-between; padding: 10px 14px; border-radius: 12px; font-size: 13.5px; }
+.banner.error { background: var(--bad-soft); color: var(--bad); }
+.banner.warning { background: var(--warn-soft); color: var(--warn); }
+.banner .btn { flex: 0 0 auto; }
+.msg.warn { background: var(--warn-soft); color: var(--warn); }
+.warnline { color: var(--warn); }
+.panel + .panel { margin-top: 14px; }
+.panel .check b { font-weight: 700; }
+@media (max-width: 760px) { .banner { flex-direction: column; align-items: stretch; } }
+
+.kbpick { display: flex; flex-wrap: wrap; gap: 8px 16px; }
+.kbpick .check + .check { margin-left: 0; }
+
+.hidden { display: none; }
+.docs { margin-top: 14px; border-top: 1px solid var(--edge); padding-top: 10px; }
+.docs h4 { margin: 0 0 8px; }
+.meta.bad { color: #b3261e; }
+.docs .actions { align-items: center; flex-wrap: wrap; }

@@ -1,5 +1,6 @@
 from functools import lru_cache
 import chromadb
+from app import global_settings
 from app.config import settings
 
 
@@ -15,27 +16,24 @@ def get_collection():
     )
 
 
-def retrieve_scored(query: str, top_k: int | None = None) -> list[dict]:
+def _store(kb_ids):
+    """The vector store to search. No knowledge base named -> the original collection (no database needed).
+    Several named -> only the first for now (merging across knowledge bases arrives later)."""
+    from app.knowledge import kbs
+    if not kb_ids:
+        return kbs.default_store()
+    found = kbs.resolve(None, [kb_ids[0]])
+    return kbs.store_for(found[0]) if found else kbs.default_store()
+
+
+def retrieve_scored(query: str, top_k: int | None = None, kb_ids=None) -> list[dict]:
     """Top-k chunks with similarity scores, NO threshold applied (for debugging)."""
-    col = get_collection()
-    if col.count() == 0:
-        return []
-    res = col.query(query_texts=[query], n_results=top_k or settings.top_k)
-    out = []
-    for doc, meta, dist in zip(
-        res["documents"][0], res["metadatas"][0], res["distances"][0]
-    ):
-        out.append(
-            {
-                "text": doc,
-                "source": meta.get("source"),
-                "page": meta.get("page") or None,
-                "score": round(1 - dist, 3),
-            }
-        )
-    return out
+    hits = _store(kb_ids).search(query, top_k or global_settings.current().top_k)
+    return [{"text": h["text"], "source": h["metadata"].get("source"),
+             "page": h["metadata"].get("page") or None, "score": h["score"]} for h in hits]
 
 
-def retrieve(query: str) -> list[dict]:
+def retrieve(query: str, kb_ids=None) -> list[dict]:
     """Top-k chunks that pass the score threshold."""
-    return [c for c in retrieve_scored(query) if c["score"] >= settings.score_threshold]
+    scored = retrieve_scored(query, kb_ids=kb_ids) if kb_ids else retrieve_scored(query)
+    return [c for c in scored if c["score"] >= global_settings.current().score_threshold]

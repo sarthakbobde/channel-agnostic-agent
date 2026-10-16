@@ -2,27 +2,50 @@
 name = "channel-agnostic-agent"
 version = "0.1.0"
 requires-python = ">=3.11"
+# Every version is pinned (tested together on Python 3.11). To upgrade, change a pin, run the full
+# test suite on SQLite and PostgreSQL, then commit.
 dependencies = [
-  "langchain",
-  "langchain-core",
-  "langchain-openai",
-  "langchain-text-splitters",
-  "chromadb",
-  "streamlit",
-  "pypdf",
-  "python-dotenv",
-  "fastapi",
-  "uvicorn[standard]",
-  "pydantic",
-  "pyyaml",
-  "slack-bolt",
-  "botbuilder-core",
-  "pyjwt",
-  "google-auth",
-  "requests",
-  "sqlalchemy",
-  "cryptography",
+  "fastapi==0.143.0",
+  "uvicorn[standard]==0.54.0",
+  "pydantic==2.14.1",
+  "starlette==1.7.0",
+  "python-dotenv==1.2.4",
+  "pyyaml==6.0.3",
+  "requests==2.34.2",
+  "sqlalchemy==2.1.4",
+  "alembic==1.20.0",
+  "psycopg[binary]==3.3.6",
+  "apscheduler==3.11.3",
+  "cryptography==50.0.2",
+  "pyjwt==2.15.1",
+  "langchain==1.4.4",
+  "langchain-core==1.6.9",
+  "langchain-openai==1.7.0",
+  "langchain-anthropic==1.7.6",
+  "langchain-google-genai==4.4.2",
+  "langchain-text-splitters==1.1.3",
+  "chromadb==1.5.9",
+  "pypdf==6.20.0",
+  "python-docx==1.2.0",
+  "python-pptx==1.0.2",
+  "tenacity==9.2.1",
+  "tiktoken==0.14.0",
+  "slack-bolt==1.30.0",
+  "slack-sdk==3.45.0",
+  "botbuilder-core==4.17.1",
+  "google-auth==2.61.0",
+  "streamlit==1.65.0",
 ]
 
-[tool.setuptools]
-packages = ["app"]
+[project.optional-dependencies]
+dev = [
+  "pytest==9.1.1",
+  "httpx==0.28.1",
+]
+
+[tool.setuptools.packages.find]
+include = ["app*"]
+namespaces = true
+
+[tool.setuptools.package-data]
+app = ["admin/ui/*", "migrations/*.mako", "migrations/versions/*.py"]

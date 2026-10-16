@@ -10,19 +10,21 @@ Safety rules enforced here:
 """
 import hmac
 import logging
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel
 
-from app.admin import users
+from app import global_settings
+from app.admin import roles, users
 from app.admin.auth import LoginLimiter, SessionSigner, fingerprint
 from app.channels import get_store
 from app.channels.manager import manager as default_manager
 from app.channels.store import ChannelStore
 from app.config import settings
 from app.db import Database, get_db
+from app.knowledge import kbs as knowledge
 
 log = logging.getLogger(__name__)
 COOKIE = "rag_admin"
@@ -41,6 +43,7 @@ class AdminContext:
     signer: SessionSigner
     domain: str = ""
     allow_remote: bool = False
+    require_https: bool = False
     by_email: LoginLimiter = field(default_factory=lambda: LoginLimiter(5, 300))
     by_ip: LoginLimiter = field(default_factory=lambda: LoginLimiter(20, 300))
 
@@ -57,48 +60,60 @@ def get_ctx() -> AdminContext:
         _ctx = AdminContext(db=get_db(), store=store, manager=default_manager,
                             signer=SessionSigner(settings.secret_key),
                             domain=settings.admin_email_domain,
-                            allow_remote=settings.admin_allow_remote)
+                            allow_remote=settings.admin_allow_remote,
+                            require_https=settings.admin_allow_remote and settings.admin_require_https)
     return _ctx
 
 
 # ---- guards ------------------------------------------------------------------
-def check_local(request: Request, allow_remote: bool) -> None:
+def is_https(request: Request) -> bool:
+    return request.url.scheme == "https" or request.headers.get("x-forwarded-proto", "").lower() == "https"
+
+
+def check_local(request: Request, allow_remote: bool, require_https: bool = False) -> None:
     if allow_remote:
+        if require_https and not is_https(request):
+            raise HTTPException(403, "Remote admin access requires HTTPS.")
         return
     host = (request.client.host if request.client else "") or ""
     hostname = (request.headers.get("host") or "").rsplit(":", 1)[0].strip("[]").lower()
-    if host not in LOOPBACK or hostname not in LOOPBACK \
-            or any(h in request.headers for h in PROXY_HEADERS):
+    if host not in LOOPBACK or hostname not in LOOPBACK             or any(h in request.headers for h in PROXY_HEADERS):
         raise HTTPException(403, "The admin API is only available from this machine.")
 
 
 def local_only(request: Request, ctx: AdminContext = Depends(get_ctx)) -> None:
-    check_local(request, ctx.allow_remote)
+    check_local(request, ctx.allow_remote, ctx.require_https)
 
 
 @dataclass
 class Session:
     email: str
     csrf: str
+    role: str = "admin"
+    user_id: int = 0
+    department_id: int | None = None
 
 
 def admin_session(request: Request, ctx: AdminContext = Depends(get_ctx),
                   _: None = Depends(local_only)) -> Session:
     payload = ctx.signer.read(request.cookies.get(COOKIE))
-    user = users.get_admin(ctx.db, payload["sub"]) if payload else None
-    if not payload or not user or fingerprint(user["password_hash"]) != payload.get("pw"):
+    user = users.get_user(ctx.db, payload["sub"]) if payload else None
+    if not payload or not user or not user["password_hash"]             or fingerprint(user["password_hash"]) != payload.get("pw")             or user["status"] != "Active" or user["role"] not in users.PANEL_ROLES:
         raise HTTPException(401, "Sign in required.")
     if request.method not in ("GET", "HEAD", "OPTIONS"):
         sent = request.headers.get("x-csrf-token", "")
         if not hmac.compare_digest(sent, payload["csrf"]):
             raise HTTPException(403, "Missing or invalid CSRF token.")
-    return Session(email=user["email"], csrf=payload["csrf"])
+    if not roles.allowed(user["role"], request.url.path):
+        raise HTTPException(403, "Your role does not allow this.")
+    return Session(email=user["email"], csrf=payload["csrf"], role=user["role"], user_id=user["id"],
+                   department_id=user["department_id"])
 
 
 def _set_cookie(request: Request, response: Response, ctx: AdminContext, user: dict) -> str:
     token, csrf = ctx.signer.issue(user["email"], fingerprint(user["password_hash"]))
     response.set_cookie(COOKIE, token, max_age=ctx.signer.ttl, httponly=True, samesite="strict",
-                        secure=request.url.scheme == "https", path="/admin")
+                        secure=is_https(request), path="/admin")
     return csrf
 
 
@@ -127,6 +142,7 @@ def login(body: LoginBody, request: Request, response: Response,
         raise HTTPException(401, "Invalid email or password.")
     ctx.by_email.success(email)
     csrf = _set_cookie(request, response, ctx, user)
+    users.touch_sign_in(ctx.db, user["email"])
     ctx.store.record(user["email"], "login")
     return {"email": user["email"], "role": user["role"], "csrf": csrf}
 
@@ -140,7 +156,35 @@ def logout(response: Response, s: Session = Depends(admin_session), ctx: AdminCo
 
 @router.get("/auth/me")
 def me(s: Session = Depends(admin_session)):
-    return {"email": s.email, "csrf": s.csrf}
+    return {"email": s.email, "csrf": s.csrf, "role": s.role}
+
+
+@router.get("/me/permissions")
+def my_permissions(s: Session = Depends(admin_session), ctx: AdminContext = Depends(get_ctx)):
+    """What this person may see: the UI shows only these screens (the server enforces it again)."""
+    return {"email": s.email, "role": s.role, "screens": roles.screens_for(s.role),
+            "department_id": s.department_id, "can_manage_all": roles.can_manage_everything(s.role)}
+
+
+class SetPasswordBody(BaseModel):
+    token: str
+    password: str
+
+
+@router.post("/auth/set-password")
+def set_password_with_link(body: SetPasswordBody, request: Request, ctx: AdminContext = Depends(get_ctx),
+                           _: None = Depends(local_only)):
+    """Choose a password with a one-time link an Admin gave you. No sign-in needed; rate-limited."""
+    ip = request.client.host if request.client else "?"
+    if ctx.by_ip.blocked(ip):
+        raise HTTPException(429, "Too many attempts. Try again in a few minutes.")
+    try:
+        user = users.redeem_set_password_link(ctx.db, body.token, body.password)
+    except ValueError as e:
+        ctx.by_ip.failure(ip)
+        raise HTTPException(400, str(e))
+    ctx.store.record(user["email"], "password.set", user["email"], "via one-time link")
+    return {"ok": True, "email": user["email"]}
 
 
 @router.post("/auth/password")
@@ -195,10 +239,28 @@ def _view(ctx: AdminContext, typ: str) -> dict:
         choices = {f.name: list(f.choices) for f in k.SPEC if f.choices}
         fields = [{**f, **({"choices": choices[f["name"]]} if f["name"] in choices else {})}
                   for f in pv["fields"]]
+    if any(f["kind"] == "kbs" for f in fields):
+        choices = [{"id": b["id"], "name": b["name"]} for b in knowledge.list_kbs(ctx.db)]
+        default = next((b["id"] for b in knowledge.list_kbs(ctx.db) if b["is_default"]), None)
+        for f in fields:
+            if f["kind"] == "kbs":
+                f["choices"] = choices
+                if not f.get("value"):
+                    f["value"] = [default] if default is not None else []      # empty means the default knowledge base
     return {"type": typ, "title": k.title or typ, "configured": pv is not None,
             "enabled": bool(pv and pv["enabled"]), "running": ctx.manager.get(typ) is not None,
             "updated_at": pv["updated_at"] if pv else None, "webhook_path": k.webhook_path,
             "fields": fields}
+
+
+def _check_kbs(ctx: AdminContext, typ: str, values: dict) -> None:
+    """Knowledge base pickers must hold ids of knowledge bases that exist."""
+    existing = {b["id"] for b in knowledge.list_kbs(ctx.db)}
+    for f in _klass(ctx, typ).SPEC:
+        if f.kind == "kbs" and values.get(f.name) is not None:
+            ids = values[f.name]
+            if not isinstance(ids, list) or any(isinstance(i, bool) or not isinstance(i, int) or i not in existing for i in ids):
+                raise HTTPException(422, f"{f.label}: choose from the knowledge bases that exist.")
 
 
 @router.get("/channels")
@@ -217,6 +279,7 @@ def save_channel(typ: str, body: ChannelUpdate, s: Session = Depends(admin_sessi
     """Validate and, if enabled, start the channel BEFORE saving. A failure leaves both the
     stored settings and the working connection untouched."""
     _klass(ctx, typ)
+    _check_kbs(ctx, typ, body.values)
     try:
         merged = ctx.store.merged_config(typ, body.values)
     except ValueError as e:
@@ -296,3 +359,24 @@ def remove_admin(email: str, s: Session = Depends(admin_session), ctx: AdminCont
         raise HTTPException(404, "No such admin.")
     ctx.store.record(s.email, "admin.remove", users.normalize_email(email))
     return {"ok": True}
+
+
+# ---- global settings ------------------------------------------------------------
+class SettingsUpdate(BaseModel):
+    values: dict[str, Any]
+
+
+@router.get("/settings")
+def get_settings(_: Session = Depends(admin_session), ctx: AdminContext = Depends(get_ctx)):
+    return global_settings.view(ctx.db)
+
+
+@router.put("/settings")
+def put_settings(body: SettingsUpdate, s: Session = Depends(admin_session), ctx: AdminContext = Depends(get_ctx)):
+    try:
+        before, after = global_settings.update(body.values, s.email, ctx.db)
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+    changes = [f"{k}: {v} -> {asdict(after)[k]}" for k, v in asdict(before).items() if asdict(after)[k] != v]
+    ctx.store.record(s.email, "settings.update", "global", "; ".join(changes) or "no changes")
+    return global_settings.view(ctx.db)

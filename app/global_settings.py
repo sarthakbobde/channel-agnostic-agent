@@ -1,0 +1,154 @@
+"""Runtime-editable settings that used to be .env lines (top-k, score threshold, history, chunking).
+
+One row in `global_settings`, created on first read from the .env values (so an upgrade keeps
+behaving exactly as before). Readers call `current()`; a 2-second cache means an admin's change
+reaches every reader within seconds, with no restart. If the database cannot be read, the .env
+values are used and a warning is logged, so answering never stops because of this table.
+"""
+import logging
+import threading
+import time
+from dataclasses import asdict, dataclass
+
+from sqlalchemy.exc import IntegrityError
+
+from app.config import settings as env
+from app.db import Database, GlobalSettings, get_db
+
+log = logging.getLogger(__name__)
+CACHE_SECONDS = 2.0
+
+
+@dataclass(frozen=True)
+class Snapshot:
+    top_k: int
+    score_threshold: float
+    recent_turns: int
+    chunk_size: int
+    chunk_overlap: int
+    max_retention_days: int
+
+
+# What the admin screen shows and what is accepted. `integer` fields reject fractions.
+SPEC = (
+    {"name": "top_k", "label": "Passages retrieved per question", "min": 1, "max": 50, "step": 1, "integer": True,
+     "help": "How many of the closest document passages are sent to the model. Default 5."},
+    {"name": "score_threshold", "label": "Minimum similarity score", "min": 0.0, "max": 1.0, "step": 0.01, "integer": False,
+     "help": "Passages scoring below this are ignored; if none pass, the assistant says it could not find the answer. Default 0.35."},
+    {"name": "recent_turns", "label": "Recent turns sent with each question", "min": 1, "max": 50, "step": 1, "integer": True,
+     "help": "How many of the latest question-and-answer pairs the model sees. Default 6."},
+    {"name": "chunk_size", "label": "Chunk size (characters)", "min": 100, "max": 8000, "step": 50, "integer": True,
+     "help": "How large each document passage is when documents are indexed. Applies to the next indexing run. Default 900."},
+    {"name": "chunk_overlap", "label": "Chunk overlap (characters)", "min": 0, "max": 7999, "step": 10, "integer": True,
+     "help": "How much neighbouring passages share. Must be smaller than the chunk size. Default 150."},
+    {"name": "max_retention_days", "label": "Maximum retention (days)", "min": 1, "max": 3650, "step": 1, "integer": True,
+     "help": "The longest any department may keep conversations. Departments choose their own value up to this. Default 365."},
+)
+_BY_NAME = {f["name"]: f for f in SPEC}
+
+_cache: dict[int, tuple[float, Snapshot]] = {}
+_lock = threading.Lock()
+_warned_at = 0.0
+
+
+def defaults() -> Snapshot:
+    """The .env values (also the first-run seed)."""
+    return Snapshot(top_k=env.top_k, score_threshold=env.score_threshold, recent_turns=env.memory_max_turns,
+                    chunk_size=env.chunk_size, chunk_overlap=env.chunk_overlap,
+                    max_retention_days=env.max_retention_days)
+
+
+def _snapshot(row: GlobalSettings) -> Snapshot:
+    return Snapshot(row.top_k, row.score_threshold, row.recent_turns, row.chunk_size, row.chunk_overlap,
+                    row.max_retention_days)
+
+
+def _read(db: Database) -> tuple[Snapshot, GlobalSettings]:
+    for _ in range(2):
+        with db.session() as s:
+            row = s.get(GlobalSettings, 1)
+            if row is not None:
+                return _snapshot(row), row
+            try:
+                s.add(GlobalSettings(id=1, updated_by="system (seeded from .env)", **asdict(defaults())))
+                s.flush()
+            except IntegrityError:           # another process seeded it first
+                s.rollback()
+    raise RuntimeError("could not read or seed global settings")
+
+
+def invalidate() -> None:
+    with _lock:
+        _cache.clear()
+
+
+def current(db: Database | None = None) -> Snapshot:
+    global _warned_at
+    try:
+        db = db or get_db()
+        now = time.monotonic()
+        with _lock:
+            hit = _cache.get(id(db))
+        if hit and now - hit[0] < CACHE_SECONDS:
+            return hit[1]
+        snap, _ = _read(db)
+        with _lock:
+            _cache[id(db)] = (now, snap)
+        return snap
+    except Exception:
+        if time.monotonic() - _warned_at > 60:           # do not flood the log on every question
+            _warned_at = time.monotonic()
+            log.warning("global settings unavailable; using .env defaults", exc_info=True)
+        return defaults()
+
+
+def validate(values: dict, base: Snapshot) -> dict:
+    """Clean and check submitted values; returns only the fields to change. Raises ValueError
+    with a message an admin can act on."""
+    unknown = sorted(set(values) - set(_BY_NAME))
+    if unknown:
+        raise ValueError("Unknown setting: " + ", ".join(unknown))
+    clean = {}
+    for name, raw in values.items():
+        f = _BY_NAME[name]
+        if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+            raise ValueError(f"{f['label']} must be a number.")
+        if f["integer"]:
+            if raw != int(raw):
+                raise ValueError(f"{f['label']} must be a whole number.")
+            raw = int(raw)
+        else:
+            raw = float(raw)
+        if not f["min"] <= raw <= f["max"]:
+            raise ValueError(f"{f['label']} must be between {f['min']} and {f['max']}.")
+        clean[name] = raw
+    merged = {**asdict(base), **clean}
+    if merged["chunk_overlap"] >= merged["chunk_size"]:
+        raise ValueError("Chunk overlap must be smaller than the chunk size.")
+    return clean
+
+
+def view(db: Database | None = None) -> dict:
+    """The settings screen: field definitions with current values."""
+    db = db or get_db()
+    snap, row = _read(db)
+    values = asdict(snap)
+    fields = [{"name": f["name"], "label": f["label"], "kind": "number", "help": f["help"],
+               "min": f["min"], "max": f["max"], "step": f["step"], "value": values[f["name"]]} for f in SPEC]
+    return {"fields": fields, "updated_at": row.updated_at, "updated_by": row.updated_by}
+
+
+def update(values: dict, actor: str, db: Database | None = None) -> tuple[Snapshot, Snapshot]:
+    """Apply changes. Returns (before, after). Raises ValueError for invalid input."""
+    db = db or get_db()
+    before, _ = _read(db)
+    clean = validate(values, before)
+    if clean:
+        with db.session() as s:
+            row = s.get(GlobalSettings, 1)
+            for k, v in clean.items():
+                setattr(row, k, v)
+            row.updated_by = actor
+        invalidate()
+    after, _ = _read(db)
+    return before, after

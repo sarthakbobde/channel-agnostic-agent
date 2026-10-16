@@ -28,7 +28,7 @@ def _decide(message: str, history: list[tuple[str, str]]) -> dict:
     raw = get_chat_model().invoke([
         SystemMessage(content=DECIDE_PROMPT),
         HumanMessage(content=f"Conversation:\n{convo}\n\nLatest message: {message}"),
-    ]).content
+    ], purpose="router").content
     try:
         d = json.loads(re.search(r"\{.*\}", raw, re.S).group(0))
         do_search = str(d.get("search", True)).strip().lower() not in {"false", "0", "no"}
@@ -40,7 +40,7 @@ def _decide(message: str, history: list[tuple[str, str]]) -> dict:
     return {"search": do_search, "query": query if do_search else ""}
 
 
-def chat_stream(message: str, conv_id: str) -> tuple[Iterator[str], dict]:
+def chat_stream(message: str, conv_id: str, kb_ids=None) -> tuple[Iterator[str], dict]:
     """Routing + retrieval happen now; the answer streams from the returned iterator.
     The turn is saved to the DB once the iterator is fully consumed.
     meta = {searched, query, sources}"""
@@ -48,7 +48,7 @@ def chat_stream(message: str, conv_id: str) -> tuple[Iterator[str], dict]:
     decision = _decide(message, history)
 
     if decision["search"]:
-        chunks = rag.search(decision["query"])
+        chunks = rag.search(decision["query"], kb_ids) if kb_ids else rag.search(decision["query"])
         sources = rag.format_sources(chunks)
         tokens = rag.stream_grounded(decision["query"], chunks)
     else:
@@ -68,9 +68,9 @@ def chat_stream(message: str, conv_id: str) -> tuple[Iterator[str], dict]:
     return gen(), meta
 
 
-def chat(message: str, conv_id: str) -> dict:
+def chat(message: str, conv_id: str, kb_ids=None) -> dict:
     """Non-streaming wrapper: {answer, searched, query, sources}."""
-    tokens, meta = chat_stream(message, conv_id)
+    tokens, meta = chat_stream(message, conv_id, kb_ids)
     return {"answer": "".join(tokens), **meta}
 
 

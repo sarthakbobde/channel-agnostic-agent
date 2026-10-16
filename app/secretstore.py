@@ -56,6 +56,15 @@ class FernetSecretStore(SecretStore):
                               "configured keys.") from None
 
 
+def default_store() -> "FernetSecretStore | None":
+    """The store built from APP_SECRET_KEY, or None when no (valid) key is configured."""
+    from app.config import settings
+    try:
+        return FernetSecretStore(settings.secret_key)
+    except SecretError:
+        return None
+
+
 def generate_key() -> str:
     return Fernet.generate_key().decode("ascii")
 

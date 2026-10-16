@@ -5,7 +5,6 @@ import pytest
 
 from app.channels.manager import ChannelManager
 from app.channels.store import ChannelStore
-from app.db import Database
 from app.secretstore import FernetSecretStore, SecretError, generate_key
 
 TOKEN = "xoxb-VERY-SECRET-1234567890"
@@ -18,13 +17,13 @@ def key():
 
 
 @pytest.fixture
-def store(tmp_path, key):
+def store(new_db, key):
     mgr = ChannelManager()
-    return ChannelStore(Database(tmp_path / "admin.db"), FernetSecretStore(key),
-                        lambda t: mgr.adapter_class(t).SPEC)
+    return ChannelStore(new_db(), FernetSecretStore(key), lambda t: mgr.adapter_class(t).SPEC)
 
 
 def _db_bytes(tmp_path) -> bytes:
+    """Raw SQLite files (including the write-ahead log); empty on other backends."""
     return b"".join(open(p, "rb").read() for p in glob.glob(str(tmp_path / "admin.db*")))
 
 
@@ -59,11 +58,13 @@ def test_key_rotation(key):
 
 
 # ---- channel store ----------------------------------------------------------
-def test_secrets_are_encrypted_at_rest(store, tmp_path):
+def test_secrets_are_encrypted_at_rest(store, tmp_path, db_text):
     store.save("slack", enabled=True, values={"bot_token": TOKEN, "app_token": APP_TOKEN,
                                               "show_sources": True}, actor="admin@x.com")
     raw = _db_bytes(tmp_path)
     assert TOKEN.encode() not in raw and APP_TOKEN.encode() not in raw
+    dump = db_text(store.db)
+    assert TOKEN not in dump and APP_TOKEN not in dump and "gAAAA" in dump          # ciphertext is there
     enabled, cfg = store.runtime_config("slack")
     assert enabled and cfg["bot_token"] == TOKEN and cfg["app_token"] == APP_TOKEN
     assert cfg["show_sources"] is True
@@ -128,13 +129,13 @@ LEGACY = {"defaults": {"show_sources": True},
                        "mystery": {"enabled": True}}}
 
 
-def test_import_once_seeds_database(store, tmp_path):
+def test_import_once_seeds_database(store, tmp_path, db_text):
     assert store.import_config_once(LEGACY) == ["slack", "teams"]      # unknown type skipped
     enabled, cfg = store.runtime_config("slack")
     assert enabled and cfg["bot_token"] == TOKEN and cfg["show_sources"] is True
     t_enabled, t_cfg = store.runtime_config("teams")
     assert not t_enabled and "app_id" not in t_cfg                       # empty values not stored
-    assert TOKEN.encode() not in _db_bytes(tmp_path)
+    assert TOKEN.encode() not in _db_bytes(tmp_path) and TOKEN not in db_text(store.db)
     assert any(e["action"] == "import" and e["actor"] == "system" for e in store.recent_audit())
 
 

@@ -12,6 +12,7 @@ REGISTRY = {
     "slack": ("app.channels.slack", "SlackAdapter"),
     "teams": ("app.channels.teams", "TeamsAdapter"),
     "gchat": ("app.channels.gchat", "GChatAdapter"),
+    "web": ("app.channels.web", "WebAdapter"),
 }
 
 

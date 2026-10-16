@@ -14,6 +14,7 @@ from app.db import AuditLog, Channel, Database, Meta, Secret
 from app.secretstore import SecretStore
 
 log = logging.getLogger(__name__)
+OWNER = "channel"          # secrets.owner_type for channel credentials
 
 
 class ChannelStore:
@@ -57,10 +58,10 @@ class ChannelStore:
                 if spec[name].secret:
                     if val in (None, ""):
                         continue                                    # keep what is stored
-                    row = s.scalar(select(Secret).where(Secret.channel_type == typ, Secret.name == name))
+                    row = s.scalar(select(Secret).where(Secret.owner_type == OWNER, Secret.owner_id == typ, Secret.name == name))
                     token = self.secrets.encrypt(str(val))
                     if row is None:
-                        s.add(Secret(channel_type=typ, name=name, ciphertext=token))
+                        s.add(Secret(owner_type=OWNER, owner_id=typ, name=name, ciphertext=token))
                     else:
                         row.ciphertext = token
                     self._audit(s, actor, "secret.replace", typ, f"{name} replaced")
@@ -82,7 +83,7 @@ class ChannelStore:
             ch = s.scalar(select(Channel).where(Channel.type == typ))
             if ch is None:
                 return False
-            for row in s.scalars(select(Secret).where(Secret.channel_type == typ)):
+            for row in s.scalars(select(Secret).where(Secret.owner_type == OWNER, Secret.owner_id == typ)):
                 s.delete(row)
             s.delete(ch)
             self._audit(s, actor, "channel.delete", typ)
@@ -100,7 +101,7 @@ class ChannelStore:
             if ch is None:
                 return None
             cfg = dict(ch.config or {})
-            for row in s.scalars(select(Secret).where(Secret.channel_type == typ)):
+            for row in s.scalars(select(Secret).where(Secret.owner_type == OWNER, Secret.owner_id == typ)):
                 cfg[row.name] = self.secrets.decrypt(row.ciphertext)
             return ch.enabled, cfg
 
@@ -136,7 +137,7 @@ class ChannelStore:
             ch = s.scalar(select(Channel).where(Channel.type == typ))
             if ch is None:
                 return None
-            set_secrets = set(s.scalars(select(Secret.name).where(Secret.channel_type == typ)))
+            set_secrets = set(s.scalars(select(Secret.name).where(Secret.owner_type == OWNER, Secret.owner_id == typ)))
             fields = []
             for f in spec.values():
                 item = {"name": f.name, "label": f.label, "kind": f.kind, "secret": f.secret,

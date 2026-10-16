@@ -61,8 +61,8 @@ and questions about the conversation itself, using the conversation history.
 - Keep replies short and friendly. When describing what you can do, give examples such as
   "leave policy, expense rules, IT help and contractor guidelines" (match your real documents)."""
 
-def search(query: str) -> list[dict]:
-    return retrieve(query)
+def search(query: str, kb_ids=None) -> list[dict]:
+    return retrieve(query, kb_ids)
 
 
 def format_sources(chunks: list[dict]) -> list[dict]:
@@ -84,7 +84,7 @@ def stream_grounded(question: str, chunks: list[dict]) -> Iterator[str]:
     )
     msgs = [SystemMessage(content=f"{SYSTEM_PROMPT}\n\nCONTEXT:\n{context}"),
             HumanMessage(content=question)]
-    for part in get_chat_model().stream(msgs):
+    for part in get_chat_model().stream(msgs, purpose="answer"):
         if part.content:
             yield part.content
 
@@ -95,6 +95,6 @@ def stream_direct(message: str, history: list[tuple[str, str]]) -> Iterator[str]
     for role, content in history:
         msgs.append(HumanMessage(content=content) if role == "user" else AIMessage(content=content))
     msgs.append(HumanMessage(content=message))
-    for part in get_chat_model().stream(msgs):
+    for part in get_chat_model().stream(msgs, purpose="answer"):
         if part.content:
             yield part.content

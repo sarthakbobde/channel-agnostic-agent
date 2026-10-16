@@ -125,7 +125,7 @@ def real():
 def test_real_types_expose_specs(real):
     m, _ = real
     specs = m.specs()
-    assert set(specs) == {"slack", "teams", "gchat"}
+    assert set(specs) == {"slack", "teams", "gchat", "web"}
     assert any(f.secret for f in specs["slack"][1])
 
 
