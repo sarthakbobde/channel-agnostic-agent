@@ -27,6 +27,7 @@ class Snapshot:
     chunk_size: int
     chunk_overlap: int
     max_retention_days: int
+    prompt_max_chars: int
 
 
 # What the admin screen shows and what is accepted. `integer` fields reject fractions.
@@ -43,6 +44,8 @@ SPEC = (
      "help": "How much neighbouring passages share. Must be smaller than the chunk size. Default 150."},
     {"name": "max_retention_days", "label": "Maximum retention (days)", "min": 1, "max": 3650, "step": 1, "integer": True,
      "help": "The longest any department may keep conversations. Departments choose their own value up to this. Default 365."},
+    {"name": "prompt_max_chars", "label": "Department prompt limit (characters)", "min": 200, "max": 20000, "step": 100, "integer": True,
+     "help": "The longest prompt a department can save. Longer ones are rejected. Default 4000."},
 )
 _BY_NAME = {f["name"]: f for f in SPEC}
 
@@ -55,12 +58,12 @@ def defaults() -> Snapshot:
     """The .env values (also the first-run seed)."""
     return Snapshot(top_k=env.top_k, score_threshold=env.score_threshold, recent_turns=env.memory_max_turns,
                     chunk_size=env.chunk_size, chunk_overlap=env.chunk_overlap,
-                    max_retention_days=env.max_retention_days)
+                    max_retention_days=env.max_retention_days, prompt_max_chars=env.prompt_max_chars)
 
 
 def _snapshot(row: GlobalSettings) -> Snapshot:
     return Snapshot(row.top_k, row.score_threshold, row.recent_turns, row.chunk_size, row.chunk_overlap,
-                    row.max_retention_days)
+                    row.max_retention_days, row.prompt_max_chars)
 
 
 def _read(db: Database) -> tuple[Snapshot, GlobalSettings]:

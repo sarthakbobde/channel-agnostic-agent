@@ -184,6 +184,22 @@ class KBAccess(Base):
     group_id: Mapped[int] = mapped_column(Integer, primary_key=True)
 
 
+class Prompt(Base):
+    """A version of a prompt. Never edited after it is saved; at most one per (scope, department) is Published."""
+    __tablename__ = "prompts"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    scope: Mapped[str] = mapped_column(String(16))                      # base-answer | base-chat | dept
+    department_id: Mapped[int] = mapped_column(Integer, default=0)      # 0 for the base prompts
+    version: Mapped[int] = mapped_column(Integer)
+    status: Mapped[str] = mapped_column(String(10), default="Draft")    # Draft | Published | Archived
+    text: Mapped[str] = mapped_column(Text, default="")
+    created_by: Mapped[str] = mapped_column(String(254), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    published_by: Mapped[str | None] = mapped_column(String(254), nullable=True)
+    published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    __table_args__ = (UniqueConstraint("scope", "department_id", "version", name="uq_prompt_version"),)
+
+
 class SetPasswordToken(Base):
     """One-time link for choosing a password (new user or reset). Only a hash of the token is stored."""
     __tablename__ = "set_password_tokens"
@@ -220,6 +236,7 @@ class GlobalSettings(Base):
     updated_by: Mapped[str] = mapped_column(String(254), default="system")
     approved_providers: Mapped[list] = mapped_column(JSON, default=list)    # provider types an Admin approved (D15)
     max_retention_days: Mapped[int] = mapped_column(Integer, default=365)   # upper limit for any department
+    prompt_max_chars: Mapped[int] = mapped_column(Integer, default=4000)    # longest department prompt
 
 
 class JobLock(Base):

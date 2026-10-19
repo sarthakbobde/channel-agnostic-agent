@@ -23,12 +23,12 @@ Reply with ONLY JSON, no other text:
 {"search": true, "query": "..."}"""
 
 
-def _decide(message: str, history: list[tuple[str, str]]) -> dict:
+def _decide(message: str, history: list[tuple[str, str]], purpose: str = "router") -> dict:
     convo = "\n".join(f"{r}: {c}" for r, c in history) or "(none)"
     raw = get_chat_model().invoke([
         SystemMessage(content=DECIDE_PROMPT),
         HumanMessage(content=f"Conversation:\n{convo}\n\nLatest message: {message}"),
-    ], purpose="router").content
+    ], purpose=purpose).content
     try:
         d = json.loads(re.search(r"\{.*\}", raw, re.S).group(0))
         do_search = str(d.get("search", True)).strip().lower() not in {"false", "0", "no"}
@@ -40,20 +40,20 @@ def _decide(message: str, history: list[tuple[str, str]]) -> dict:
     return {"search": do_search, "query": query if do_search else ""}
 
 
-def chat_stream(message: str, conv_id: str, kb_ids=None) -> tuple[Iterator[str], dict]:
+def chat_stream(message: str, conv_id: str | None, kb_ids=None, preview: bool = False) -> tuple[Iterator[str], dict]:
     """Routing + retrieval happen now; the answer streams from the returned iterator.
     The turn is saved to the DB once the iterator is fully consumed.
     meta = {searched, query, sources}"""
-    history = memory.get(conv_id)
-    decision = _decide(message, history)
+    history = [] if preview else memory.get(conv_id)           # a preview starts from nothing and leaves nothing behind
+    decision = _decide(message, history, "preview-router" if preview else "router")
 
     if decision["search"]:
         chunks = rag.search(decision["query"], kb_ids) if kb_ids else rag.search(decision["query"])
         sources = rag.format_sources(chunks)
-        tokens = rag.stream_grounded(decision["query"], chunks)
+        tokens = rag.stream_grounded(decision["query"], chunks, **({"purpose": "preview-answer"} if preview else {}))
     else:
         sources = []
-        tokens = rag.stream_direct(message, history)
+        tokens = rag.stream_direct(message, history, **({"purpose": "preview-answer"} if preview else {}))
 
     meta = {"searched": decision["search"], "query": decision["query"], "sources": sources}
 
@@ -62,8 +62,9 @@ def chat_stream(message: str, conv_id: str, kb_ids=None) -> tuple[Iterator[str],
         for tok in tokens:
             parts.append(tok)
             yield tok
-        memory.add(conv_id, "user", message)
-        memory.add(conv_id, "assistant", "".join(parts), meta)
+        if not preview:
+            memory.add(conv_id, "user", message)
+            memory.add(conv_id, "assistant", "".join(parts), meta)
 
     return gen(), meta
 

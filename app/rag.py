@@ -1,6 +1,7 @@
 from typing import Iterator
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from app.llm import get_chat_model
+from app import prompts
 from app.retriever import retrieve
 
 FALLBACK = "I couldn't find this in the knowledge base."
@@ -73,7 +74,7 @@ def format_sources(chunks: list[dict]) -> list[dict]:
     ]
 
 
-def stream_grounded(question: str, chunks: list[dict]) -> Iterator[str]:
+def stream_grounded(question: str, chunks: list[dict], purpose: str = "answer") -> Iterator[str]:
     """Answer from retrieved chunks. No chunks -> fallback, no LLM call."""
     if not chunks:
         yield FALLBACK
@@ -82,19 +83,19 @@ def stream_grounded(question: str, chunks: list[dict]) -> Iterator[str]:
         f"[{i}] ({c['source']}{', p.' + str(c['page']) if c['page'] else ''})\n{c['text']}"
         for i, c in enumerate(chunks, 1)
     )
-    msgs = [SystemMessage(content=f"{SYSTEM_PROMPT}\n\nCONTEXT:\n{context}"),
+    msgs = [SystemMessage(content=prompts.assemble("answer", context)),
             HumanMessage(content=question)]
-    for part in get_chat_model().stream(msgs, purpose="answer"):
+    for part in get_chat_model().stream(msgs, purpose=purpose):
         if part.content:
             yield part.content
 
 
-def stream_direct(message: str, history: list[tuple[str, str]]) -> Iterator[str]:
+def stream_direct(message: str, history: list[tuple[str, str]], purpose: str = "answer") -> Iterator[str]:
     """Answer without searching (small talk, questions about the chat itself)."""
-    msgs = [SystemMessage(content=DIRECT_PROMPT)]
+    msgs = [SystemMessage(content=prompts.assemble("chat"))]
     for role, content in history:
         msgs.append(HumanMessage(content=content) if role == "user" else AIMessage(content=content))
     msgs.append(HumanMessage(content=message))
-    for part in get_chat_model().stream(msgs, purpose="answer"):
+    for part in get_chat_model().stream(msgs, purpose=purpose):
         if part.content:
             yield part.content

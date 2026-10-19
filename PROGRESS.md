@@ -312,6 +312,21 @@ alert but do not fall back; Ollama only through the compatible-endpoint option; 
 * Delete and replace remove the old chunks immediately (tested).
 * Admin screens: Upcoming list refreshed to the remaining phases (prompts, guardrails, conversations, chunking strategies, embedding models, vector stores, usage and cost, reports).
 
+## 13. Phase 5: prompts
+
+* **Prompts in the database** (`prompts` table, migration 0012, `app/prompts.py`): two base prompts, **answering** (from documents) and **conversation**,
+  seeded from the text that used to be fixed in `app/rag.py` (the code text stays as the seed and as a last resort if the database cannot be read),
+  plus one optional **department prompt** per department.
+* **Assembly order**: base prompt, department prompt, a line saying the base rules take priority, then the retrieved context. With no department prompt
+  the result is byte-for-byte what it was before. A department prompt that says "ignore previous instructions" cannot displace the base (tested).
+  The asker's department decides which department prompt applies.
+* **Versions**: every save is a new Draft, nothing is overwritten; Publish makes a Draft live and archives the previous one (one Published at a time);
+  Rollback re-publishes an Archived version. A draft does nothing until published; changes apply on the next question (no cache, no restart).
+* **Who**: the base prompts are Admin only (Editors get 403, even for reading). A department's prompt: an Admin or an Editor of that department.
+  Department prompts are limited to `prompt_max_chars` (Settings, default 4000, range 200 to 20000); base prompts to 20000. Over-limit saves are rejected with a clear message.
+* **Preview**: "Try it" runs the normal pipeline with the text in the editor; nothing is published, no conversation is written, and model calls are tagged `preview-router` / `preview-answer`.
+* **Screen**: Prompts (Admins: both base prompts and every department; Editors: their departments). Audit: save, publish, rollback and preview (lengths and versions only, never the text).
+
 ## How to run
 
 ```powershell

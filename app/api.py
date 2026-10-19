@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-from app import channels, chat_auth, chat_service, identity, memory
+from app import channels, chat_auth, chat_service, identity, memory, prompts
 from app.jobs import scheduler
 from app.providers import seed as provider_seed
 from app.knowledge import documents as knowledge_documents, kbs as knowledge_kbs
@@ -48,6 +48,10 @@ async def lifespan(app: FastAPI):
     channels.start_all()
     provider_seed.run()
     knowledge_kbs.run_startup()
+    try:
+        prompts.seed()
+    except Exception:
+        log.exception("could not seed the prompts; the built-in text is used")
     scheduler.start()
     if settings.admin_port:
         admin_listener.start()

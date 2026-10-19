@@ -61,3 +61,7 @@ this file.
 | 4b | How the filter is built | Document ids are computed from the database and sent as `doc_id in [...]` to the store. | Chroma cannot match a person or group inside a metadata string; this also reflects group changes with no re-embedding. |
 | 4b | Tests that fake the store | They need a document record; retrieval only returns passages of known documents (fail closed). | A fixture `open_document` provides one. |
 | 4b | CLI `ingest` settings | It follows the active index version, not the global chunk settings. | Strategies are never mixed in one index (3c). |
+| 5 | Two base prompts | Answering and conversation are separate Admin-only prompts. | The assistant already behaves differently in the two modes; the plan mentions one. |
+| 5 | Which department prompt applies | The asker's department. | Matches how usage and retention are attributed. |
+| 5 | Empty department prompt | Allowed: publishing an empty one removes the department's additions. | A way to switch it off without deleting history. |
+| 5 | Base prompts hidden from Editors | Editors cannot read the base prompt. | Plan says Admin only; it also avoids teaching prompt-injection wording. |

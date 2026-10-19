@@ -296,7 +296,7 @@ def test_settings_view_update_and_audit(env):
     _, h = login(c)
     view = c.get("/admin/api/settings").json()
     by = {f["name"]: f for f in view["fields"]}
-    assert set(by) == {"top_k", "score_threshold", "recent_turns", "chunk_size", "chunk_overlap", "max_retention_days"}
+    assert set(by) == {"top_k", "score_threshold", "recent_turns", "chunk_size", "chunk_overlap", "max_retention_days", "prompt_max_chars"}
     assert (by["top_k"]["value"], by["score_threshold"]["value"], by["recent_turns"]["value"]) == (5, 0.35, 6)
     assert all(f["kind"] == "number" and f["help"] for f in view["fields"])
 

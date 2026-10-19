@@ -19,13 +19,14 @@ from app.admin.departments_api import router as departments_router
 from app.admin.documents_api import router as documents_router
 from app.admin.groups_api import router as groups_router
 from app.admin.kbs_api import router as kbs_router
+from app.admin.prompts_api import router as prompts_router
 from app.admin.providers_api import router as providers_router
 from app.admin.ui import router as ui_router
 from app.admin.users_api import router as users_router
 from app.config import settings
 
 log = logging.getLogger(__name__)
-ROUTERS = (admin_router, providers_router, users_router, departments_router, kbs_router, documents_router, groups_router, ui_router)
+ROUTERS = (admin_router, providers_router, users_router, departments_router, kbs_router, documents_router, groups_router, prompts_router, ui_router)
 
 
 def include_admin(app: FastAPI) -> None:

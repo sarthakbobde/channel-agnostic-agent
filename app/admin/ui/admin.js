@@ -122,10 +122,9 @@
   }
 
   // ---- shell ----------------------------------------------------------------------
-  var TABS = [["channels", "Channels"], ["settings", "Settings"], ["providers", "Providers"], ["knowledge", "Knowledge bases"], ["groups", "Groups"], ["departments", "Departments"], ["users", "Users"], ["audit", "Audit log"], ["account", "Account"]];
+  var TABS = [["channels", "Channels"], ["settings", "Settings"], ["providers", "Providers"], ["knowledge", "Knowledge bases"], ["groups", "Groups"], ["prompts", "Prompts"], ["departments", "Departments"], ["users", "Users"], ["audit", "Audit log"], ["account", "Account"]];
   // Planned, not built yet: shown greyed out so admins can see what is coming. [label, tooltip]
   var UPCOMING = [
-    ["Prompts", "Upcoming (phase 5): edit the base prompt (Admins) and department prompts (Editors) with versions, publish, rollback and a safe preview. Today the prompt is fixed in the code."],
     ["Guardrails", "Upcoming (phase 6): block prompt injection, toxic and banned-topic questions, mask personal data, and check answers before they are sent. Banned topics are stored per department but not enforced yet."],
     ["Conversations", "Upcoming (phase 7): conversation memory in the database with summaries, retention enforced per department, and an audited export (off by default). Today history is kept in text files."],
     ["Chunking strategies", "Upcoming (phase 8): per page, by heading and semantic chunking, with a preview. Today: fixed size (900 characters, 150 overlap), set per knowledge base."],
@@ -154,7 +153,7 @@
       tabs);
     var main = h("main", {});
     mount(h("div", { class: "app" }, nav, main));
-    var view = { channels: viewChannels, settings: viewSettings, providers: viewProviders, knowledge: viewKnowledge, groups: viewGroups, departments: viewDepartments, users: viewUsers, audit: viewAudit, account: viewAccount }[state.tab];
+    var view = { channels: viewChannels, settings: viewSettings, providers: viewProviders, knowledge: viewKnowledge, groups: viewGroups, prompts: viewPrompts, departments: viewDepartments, users: viewUsers, audit: viewAudit, account: viewAccount }[state.tab];
     view(main);
     loadAlerts(main);
   }
@@ -1121,6 +1120,138 @@
       } catch (err) { if (me) holder.replaceChildren(msg("bad", err.message)); }
     }
     await load();
+  }
+
+  // ---- prompts -------------------------------------------------------------------------
+  // One editor for one prompt (a base prompt or a department's): text box, save draft, publish, preview, versions.
+  function promptEditor(opts) {
+    var box = h("div", { class: "panel" });
+    var area = h("textarea", { id: "pt_" + opts.scope + "_" + opts.department_id, rows: "12", spellcheck: "false", "aria-label": opts.title });
+    var counter = h("span", { class: "meta" });
+    var live = h("div", { class: "meta" });
+    var out = h("div", { "aria-live": "polite" });
+    var table = h("div", {});
+    var previewOut = h("div", { "aria-live": "polite" });
+    var versions = [];
+    var q = "?scope=" + encodeURIComponent(opts.scope) + "&department_id=" + opts.department_id;
+
+    function count() {
+      var n = area.value.trim().length;
+      counter.textContent = n + " / " + opts.limit + " characters";
+      counter.className = n > opts.limit ? "meta bad" : "meta";
+    }
+    area.addEventListener("input", count);
+
+    async function saveDraft() {
+      return api("POST", "/prompts/drafts", { scope: opts.scope, department_id: opts.department_id, text: area.value });
+    }
+    async function refresh(notice) {
+      try {
+        var r = await api("GET", "/prompts/versions" + q);
+        versions = r.versions;
+        var pub = versions.filter(function (v) { return v.status === "Published"; })[0];
+        var draft = versions.filter(function (v) { return v.status === "Draft"; })[0];
+        live.textContent = pub ? "Live: version " + pub.version + ", published " + when(pub.published_at) + " by " + (pub.published_by || "?")
+          : (opts.scope === "dept" ? "No department prompt is live. The base prompt is used on its own." : "Using the built-in text.");
+        if (notice !== "keep") { area.value = draft ? draft.text : pub ? pub.text : ""; count(); }
+        var body = h("tbody", {});
+        versions.forEach(function (v) {
+          var kind = v.status === "Published" ? "ok" : v.status === "Draft" ? "off" : "bad";
+          body.appendChild(h("tr", {},
+            h("td", { "data-label": "Version" }, "v" + v.version),
+            h("td", { "data-label": "Status" }, h("span", { class: "pill " + kind }, v.status)),
+            h("td", { class: "wrap", "data-label": "Saved by" }, v.created_by),
+            h("td", { class: "nw", "data-label": "Saved" }, when(v.created_at)),
+            h("td", { class: "nw", "data-label": "Size" }, v.chars + " chars"),
+            h("td", { class: "act" },
+              h("button", { type: "button", class: "btn small", onclick: function () { area.value = v.text; count(); out.replaceChildren(msg("ok", "Version " + v.version + " is in the box. Save it as a draft or publish it.")); } }, "Load"),
+              v.status === "Draft" ? confirmButton("Publish", "Confirm publish", async function () { await doPublish(v.id); }, true) : null,
+              v.status === "Archived" ? confirmButton("Roll back", "Confirm roll back", async function () { await doRollback(v.id); }, true) : null)));
+        });
+        table.replaceChildren(versions.length ? h("div", { class: "tablewrap" }, h("table", {}, h("thead", {}, h("tr", {},
+          ["Version", "Status", "Saved by", "Saved", "Size", ""].map(function (t) { return h("th", {}, t); }))), body)) : null);
+      } catch (err) { if (me) out.replaceChildren(msg("bad", err.message)); }
+    }
+    async function doPublish(id) {
+      try { var r = await api("POST", "/prompts/versions/" + id + "/publish", {}); await refresh(); out.replaceChildren(msg("ok", "Published version " + r.version + ". It is used from the next question.")); if (opts.onChange) opts.onChange(); }
+      catch (err) { if (me) out.replaceChildren(msg("bad", err.message)); }
+    }
+    async function doRollback(id) {
+      try { var r = await api("POST", "/prompts/versions/" + id + "/rollback", {}); await refresh(); out.replaceChildren(msg("ok", "Rolled back to version " + r.version + ". It is used from the next question.")); if (opts.onChange) opts.onChange(); }
+      catch (err) { if (me) out.replaceChildren(msg("bad", err.message)); }
+    }
+
+    var saveBtn = h("button", { type: "button", class: "btn", onclick: async function () {
+      out.replaceChildren(msg("wait", "Saving…"));
+      try { var v = await saveDraft(); await refresh("keep"); out.replaceChildren(msg("ok", "Saved as draft version " + v.version + ". Users are not affected until you publish.")); }
+      catch (err) { if (me) out.replaceChildren(msg("bad", err.message)); }
+    } }, "Save as draft");
+    var publishBtn = confirmButton("Save and publish", "Confirm: publish now", async function () {
+      out.replaceChildren(msg("wait", "Publishing…"));
+      try { var v = await saveDraft(); await doPublish(v.id); }
+      catch (err) { if (me) out.replaceChildren(msg("bad", err.message)); }
+    }, true);
+
+    var question = h("input", { type: "text", id: "pq_" + opts.scope + "_" + opts.department_id, placeholder: "Type a test question", autocomplete: "off", "aria-label": "Test question" });
+    var tryBtn = h("button", { type: "button", class: "btn", onclick: async function () {
+      previewOut.replaceChildren(msg("wait", "Asking with the text in the box…"));
+      try {
+        var r = await api("POST", "/prompts/preview", { scope: opts.scope, department_id: opts.department_id, text: area.value, question: question.value });
+        previewOut.replaceChildren(h("div", { class: "panel" }, h("b", {}, "Preview answer"), h("p", {}, r.answer),
+          r.sources && r.sources.length ? h("div", { class: "meta" }, "Sources: " + r.sources.map(function (s) { return s.source + (s.page ? " p." + s.page : ""); }).join(", ")) : null,
+          h("div", { class: "meta" }, "Not saved to any conversation. Users are not affected.")));
+      } catch (err) { if (me) previewOut.replaceChildren(msg("bad", err.message)); }
+    } }, "Try it");
+
+    box.appendChild(h("h3", {}, opts.title));
+    box.appendChild(live);
+    box.appendChild(h("div", { class: "field wide" }, area, counter));
+    box.appendChild(h("div", { class: "actions" }, saveBtn, publishBtn));
+    box.appendChild(out);
+    box.appendChild(h("h4", {}, "Try it before publishing"));
+    box.appendChild(h("p", { class: "note" }, "Runs the normal answering steps with the text in the box. Nothing is published or saved to a conversation."));
+    box.appendChild(h("div", { class: "actions" }, question, tryBtn));
+    box.appendChild(previewOut);
+    box.appendChild(h("h4", {}, "Versions"));
+    box.appendChild(table);
+    refresh();
+    return box;
+  }
+
+  async function viewPrompts(main) {
+    var isAdmin = state.perm && state.perm.can_manage_all;
+    main.appendChild(h("h2", {}, "Prompts"));
+    main.appendChild(h("p", { class: "sub" }, isAdmin
+      ? "The base prompts set who the assistant is and how it answers; only Admins change them and a department cannot override them. A department prompt adds tone and focus for that department. Every save is a new draft, nothing goes live until you publish, and you can roll back in one step."
+      : "Your department's prompt adds tone and focus on top of the base prompt, which always takes priority. Every save is a new draft; nothing goes live until you publish, and you can roll back in one step."));
+    var holder = h("div", {}, msg("wait", "Loading…"));
+    main.appendChild(holder);
+    try {
+      var o = await api("GET", "/prompts");
+      var kids = [];
+      if (isAdmin) {
+        kids.push(h("h3", {}, "Base prompts"));
+        o.base.forEach(function (b) {
+          kids.push(promptEditor({ scope: b.scope, department_id: 0, title: b.title, limit: o.base_limit }));
+        });
+      }
+      kids.push(h("h3", {}, "Department prompts"));
+      if (!o.departments.length) kids.push(h("p", { class: "sub" }, "You are not an editor of any department yet. Ask an Admin."));
+      else {
+        var slot = h("div", {});
+        var choices = o.departments.map(function (d) { return [d.department_id, d.department + (d.published ? " (v" + d.published.version + " live)" : " (none)")]; });
+        var pick = selectOf(choices, choices[0][0], function () { show(); }, "Department");
+        pick.id = "pt_dept";
+        function show() {
+          var d = o.departments.filter(function (x) { return String(x.department_id) === pick.value; })[0];
+          slot.replaceChildren(promptEditor({ scope: "dept", department_id: d.department_id, title: "Prompt for " + d.department, limit: o.limit }));
+        }
+        if (o.departments.length > 1) kids.push(h("div", { class: "field" }, h("label", { class: "l", for: "pt_dept" }, "Department"), pick));
+        kids.push(slot);
+        show();
+      }
+      holder.replaceChildren.apply(holder, kids);
+    } catch (err) { if (me) holder.replaceChildren(msg("bad", err.message)); }
   }
 
   // ---- departments -----------------------------------------------------------------
