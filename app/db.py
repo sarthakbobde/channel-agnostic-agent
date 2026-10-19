@@ -238,6 +238,35 @@ class GuardrailEvent(Base):
     count: Mapped[int] = mapped_column(Integer, default=1)
 
 
+class Conversation(Base):
+    """One conversation (a Web UI chat or a channel thread). The id is the conversation id the channel uses.
+    `summary` and `summarised_upto` are used by the long-chat summary (part 7b)."""
+    __tablename__ = "conversations"
+    id: Mapped[str] = mapped_column(String(200), primary_key=True)
+    channel: Mapped[str] = mapped_column(String(16), default="other")
+    owner_user_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    owner_email: Mapped[str] = mapped_column(String(254), default="")
+    department_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    department: Mapped[str] = mapped_column(String(80), default="")
+    title: Mapped[str] = mapped_column(String(120), default="")
+    summary: Mapped[str] = mapped_column(Text, default="")
+    summarised_upto: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, index=True)
+
+
+class Message(Base):
+    """One message. The text is the MASKED text from the guardrails. `complete` is false for an answer that never finished."""
+    __tablename__ = "messages"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    conversation_id: Mapped[str] = mapped_column(String(200), index=True)
+    role: Mapped[str] = mapped_column(String(10))
+    content: Mapped[str] = mapped_column(Text, default="")
+    meta: Mapped[dict] = mapped_column(JSON, default=dict)
+    complete: Mapped[bool] = mapped_column(Boolean, default=True)
+    ts: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
 class SetPasswordToken(Base):
     """One-time link for choosing a password (new user or reset). Only a hash of the token is stored."""
     __tablename__ = "set_password_tokens"

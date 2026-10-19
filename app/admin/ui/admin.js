@@ -122,11 +122,11 @@
   }
 
   // ---- shell ----------------------------------------------------------------------
-  var TABS = [["channels", "Channels"], ["settings", "Settings"], ["providers", "Providers"], ["knowledge", "Knowledge bases"], ["groups", "Groups"], ["prompts", "Prompts"], ["guardrails", "Guardrails"], ["departments", "Departments"], ["users", "Users"], ["audit", "Audit log"], ["account", "Account"]];
+  var TABS = [["channels", "Channels"], ["settings", "Settings"], ["providers", "Providers"], ["knowledge", "Knowledge bases"], ["groups", "Groups"], ["prompts", "Prompts"], ["guardrails", "Guardrails"], ["conversations", "Conversations"], ["departments", "Departments"], ["users", "Users"], ["audit", "Audit log"], ["account", "Account"]];
   // Planned, not built yet: shown greyed out so admins can see what is coming. [label, tooltip]
   var UPCOMING = [
     ["Model-based detection", "Upcoming (later): detection models for prompt-injection and toxic language, to catch paraphrases and other languages. Today these checks are rule-based (known phrasing and word lists)."],
-    ["Conversations", "Upcoming (phase 7): conversation memory in the database with summaries, retention enforced per department, and an audited export (off by default). Today history is kept in text files."],
+    ["Summaries, retention and export", "Upcoming (phase 7, second part): long chats summarised in the background, conversations deleted automatically after each department's retention period, and an audited export that is off by default."],
     ["Chunking strategies", "Upcoming (phase 8): per page, by heading and semantic chunking, with a preview. Today: fixed size (900 characters, 150 overlap), set per knowledge base."],
     ["Embedding models", "Upcoming (phase 8): OpenAI, Azure OpenAI, Cohere and multilingual models, with cost tracking. Today: the built-in local MiniLM model."],
     ["Vector stores", "Upcoming (phase 8): pgvector and Azure AI Search, with health checks. Today: ChromaDB."],
@@ -153,7 +153,7 @@
       tabs);
     var main = h("main", {});
     mount(h("div", { class: "app" }, nav, main));
-    var view = { channels: viewChannels, settings: viewSettings, providers: viewProviders, knowledge: viewKnowledge, groups: viewGroups, prompts: viewPrompts, guardrails: viewGuardrails, departments: viewDepartments, users: viewUsers, audit: viewAudit, account: viewAccount }[state.tab];
+    var view = { channels: viewChannels, settings: viewSettings, providers: viewProviders, knowledge: viewKnowledge, groups: viewGroups, prompts: viewPrompts, guardrails: viewGuardrails, conversations: viewConversations, departments: viewDepartments, users: viewUsers, audit: viewAudit, account: viewAccount }[state.tab];
     view(main);
     loadAlerts(main);
   }
@@ -1278,6 +1278,79 @@
     }
     try { show(await api("GET", "/guardrails")); }
     catch (err) { if (me) holder.replaceChildren(msg("bad", err.message)); }
+  }
+
+  // ---- conversations (Admin) -------------------------------------------------------------
+  async function viewConversations(main) {
+    main.appendChild(h("h2", {}, "Conversations"));
+    main.appendChild(h("p", { class: "sub" }, "Stored conversations from every channel. Personal data was masked before it was stored. Opening or deleting one is recorded in the audit log."));
+    var filters = h("div", { class: "form" });
+    var dept = h("select", { id: "cv_dept", "aria-label": "Department" }, h("option", { value: "", text: "All departments" }));
+    var chan = selectOf([["", "All channels"], ["web", "Web UI"], ["slack", "Slack"], ["teams", "Teams"], ["gchat", "Google Chat"], ["other", "Other"]], "", null, "Channel");
+    chan.id = "cv_chan";
+    var person = h("input", { type: "text", id: "cv_person", placeholder: "Part of an email", autocomplete: "off", "aria-label": "Person" });
+    var from = h("input", { type: "date", id: "cv_from", "aria-label": "From date" });
+    var to = h("input", { type: "date", id: "cv_to", "aria-label": "To date" });
+    var list = h("div", {});
+    var detail = h("div", {});
+    var page = 0, size = 25;
+
+    async function load() {
+      var q = "?limit=" + size + "&offset=" + (page * size) + "&department=" + encodeURIComponent(dept.value) + "&channel=" + encodeURIComponent(chan.value)
+        + "&person=" + encodeURIComponent(person.value) + "&date_from=" + from.value + "&date_to=" + to.value;
+      try {
+        var r = await api("GET", "/conversations" + q);
+        if (dept.options.length === 1) r.departments.forEach(function (d) { dept.appendChild(h("option", { value: d, text: d })); });
+        var body = h("tbody", {});
+        r.conversations.forEach(function (c) {
+          body.appendChild(h("tr", {},
+            h("td", { class: "wrap", "data-label": "Conversation" }, h("b", {}, c.title), h("div", { class: "meta" }, c.person)),
+            h("td", { "data-label": "Channel" }, c.channel),
+            h("td", { "data-label": "Department" }, c.department || "–"),
+            h("td", { class: "nw", "data-label": "Messages" }, String(c.messages)),
+            h("td", { class: "nw", "data-label": "Last activity" }, when(c.updated_at)),
+            h("td", { class: "act" },
+              h("button", { type: "button", class: "btn small", onclick: function () { open(c.id); } }, "Open"),
+              confirmButton("Delete", "Confirm delete", async function () {
+                try { await api("DELETE", "/conversations/" + encodeURIComponent(c.id)); detail.replaceChildren(msg("ok", "Deleted.")); load(); }
+                catch (err) { if (me) detail.replaceChildren(msg("bad", err.message)); }
+              }, true))));
+        });
+        var pages = Math.max(1, Math.ceil(r.total / size));
+        list.replaceChildren(
+          r.conversations.length ? h("div", { class: "tablewrap" }, h("table", {}, h("thead", {}, h("tr", {},
+            ["Conversation", "Channel", "Department", "Messages", "Last activity", ""].map(function (t) { return h("th", {}, t); }))), body))
+            : h("p", { class: "sub" }, "No conversations match."),
+          h("div", { class: "actions" },
+            h("button", { type: "button", class: "btn small", disabled: page === 0, onclick: function () { page--; load(); } }, "Previous"),
+            h("span", { class: "meta" }, "Page " + (page + 1) + " of " + pages + " · " + r.total + " conversations"),
+            h("button", { type: "button", class: "btn small", disabled: page + 1 >= pages, onclick: function () { page++; load(); } }, "Next")));
+      } catch (err) { if (me) list.replaceChildren(msg("bad", err.message)); }
+    }
+    async function open(id) {
+      detail.replaceChildren(msg("wait", "Loading…"));
+      try {
+        var r = await api("GET", "/conversations/" + encodeURIComponent(id));
+        detail.replaceChildren(h("div", { class: "panel" },
+          h("h3", {}, r.title || "Conversation"), h("div", { class: "meta" }, r.person + " · " + r.channel + (r.department ? " · " + r.department : "")),
+          r.messages.map(function (m) {
+            return h("div", { class: "field wide" }, h("div", { class: "l" }, m.role === "user" ? "Question" : "Answer" + (m.incomplete ? " (interrupted)" : "")),
+              h("div", {}, m.content));
+          }),
+          h("div", { class: "actions" }, h("button", { type: "button", class: "btn small", onclick: function () { detail.replaceChildren(); } }, "Close"))));
+      } catch (err) { if (me) detail.replaceChildren(msg("bad", err.message)); }
+    }
+    var go = h("button", { type: "button", class: "btn", onclick: function () { page = 0; load(); } }, "Apply filters");
+    filters.appendChild(h("div", { class: "field" }, h("label", { class: "l", for: "cv_dept" }, "Department"), dept));
+    filters.appendChild(h("div", { class: "field" }, h("label", { class: "l", for: "cv_chan" }, "Channel"), chan));
+    filters.appendChild(h("div", { class: "field" }, h("label", { class: "l", for: "cv_person" }, "Person"), person));
+    filters.appendChild(h("div", { class: "field" }, h("label", { class: "l", for: "cv_from" }, "From"), from));
+    filters.appendChild(h("div", { class: "field" }, h("label", { class: "l", for: "cv_to" }, "To"), to));
+    main.appendChild(filters);
+    main.appendChild(h("div", { class: "actions" }, go));
+    main.appendChild(detail);
+    main.appendChild(list);
+    load();
   }
 
   // ---- departments -----------------------------------------------------------------

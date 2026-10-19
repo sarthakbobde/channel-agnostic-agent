@@ -109,8 +109,8 @@ def test_retrieval_uses_top_k_and_threshold_from_settings(default_db_settings, m
     assert len(retriever.retrieve("q")) == 2 and asked["n"] == 5
 
 
-def test_memory_window_follows_recent_turns(default_db_settings, tmp_path, monkeypatch):
-    monkeypatch.setattr(memory, "settings", dataclasses.replace(env, chat_dir=str(tmp_path)))
+def test_memory_window_follows_recent_turns(default_db_settings):
+    memory.delete("c")
     for i in range(8):
         memory.add("c", "user", f"q{i}")
         memory.add("c", "assistant", f"a{i}")

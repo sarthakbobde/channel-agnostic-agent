@@ -143,22 +143,33 @@ def test_router_sends_history_and_latest_message(monkeypatch):
 
 # ---- the whole turn: routing, retrieval, memory ------------------------------------------
 @pytest.fixture
-def chat_dir(tmp_path, monkeypatch):
-    monkeypatch.setattr(memory, "settings", dataclasses.replace(settings, chat_dir=str(tmp_path)))
-    return tmp_path
+def chat_dir():
+    """Conversation memory lives in the (shared test) database now; start and finish each test with none."""
+    from sqlalchemy import delete
+    from app.db import Conversation, Message, get_db
+
+    def wipe():
+        with get_db().session() as s:
+            s.execute(delete(Message))
+            s.execute(delete(Conversation))
+    wipe()
+    yield
+    wipe()
 
 
-def test_turn_with_search_saves_both_messages_only_after_streaming(monkeypatch, chat_dir):
+def test_turn_with_search_saves_the_question_first_and_the_answer_when_complete(monkeypatch, chat_dir):
     monkeypatch.setattr(chat_service, "get_chat_model", lambda: FakeModel(reply='{"search": true, "query": "leave"}'))
     monkeypatch.setattr(rag, "search", lambda q: [chunk("18 days", score=0.8)])
     monkeypatch.setattr(rag, "get_chat_model", lambda: FakeModel(parts=["18 ", "days [1]"]))
     tokens, meta = chat_service.chat_stream("how many leaves", "conv1")
     assert meta["searched"] is True and meta["query"] == "leave"
     assert meta["sources"][0]["source"] == "HR-Policy.pdf"
-    assert memory.get("conv1") == []                                   # nothing saved yet
+    before = memory.get_messages("conv1")                              # the question is already saved, the answer is waiting
+    assert [(m["role"], m["content"]) for m in before][0] == ("user", "how many leaves") and before[1].get("incomplete") is True
     assert "".join(tokens) == "18 days [1]"
     saved = memory.get("conv1")
     assert saved == [("user", "how many leaves"), ("assistant", "18 days [1]")]
+    assert "incomplete" not in memory.get_messages("conv1")[1]
 
 
 def test_turn_without_search_uses_history_and_no_sources(monkeypatch, chat_dir):
@@ -176,8 +187,8 @@ def test_turn_without_search_uses_history_and_no_sources(monkeypatch, chat_dir):
     assert msgs[-1].content == "thanks"
 
 
-def test_cut_off_reply_loses_the_turn_today(monkeypatch, chat_dir):
-    """Known limitation (BRD gap #44): the turn is written only after the stream completes."""
+def test_cut_off_reply_keeps_the_question_and_marks_the_answer_incomplete(monkeypatch, chat_dir):
+    """BRD gap #44 closed: a turn is never lost when the model fails part-way."""
     monkeypatch.setattr(chat_service, "get_chat_model", lambda: FakeModel(reply='{"search": true, "query": "q"}'))
     monkeypatch.setattr(rag, "search", lambda q: [chunk("t")])
 
@@ -189,10 +200,13 @@ def test_cut_off_reply_loses_the_turn_today(monkeypatch, chat_dir):
     tokens, _ = chat_service.chat_stream("q", "c3")
     with pytest.raises(RuntimeError):
         "".join(tokens)
-    assert memory.get("c3") == []
+    saved = memory.get_messages("c3")
+    assert saved[0]["role"] == "user" and saved[0]["content"] == "q"                    # the question is kept
+    assert saved[1].get("incomplete") is True and saved[1]["content"] == "part"         # what arrived is kept, marked incomplete
+    assert memory.get("c3") == []                                                       # a dangling question is not sent to the model
 
 
-# ---- memory: last 6 turns, safe file names --------------------------------------------------
+# ---- memory: last 6 turns, odd ids --------------------------------------------------
 def test_memory_returns_only_the_last_six_turns_oldest_first(chat_dir):
     for i in range(10):
         memory.add("c4", "user", f"q{i}")
@@ -203,10 +217,9 @@ def test_memory_returns_only_the_last_six_turns_oldest_first(chat_dir):
     assert len(memory.get_messages("c4")) == 20                        # full history is still stored
 
 
-def test_conversation_ids_cannot_escape_the_chat_folder(chat_dir):
-    memory.add("../../evil", "user", "x")
-    names = [p.name for p in chat_dir.iterdir()]
-    assert names == ["evil.txt"] and not (chat_dir.parent / "evil.txt").exists()
+def test_odd_conversation_ids_are_just_data(chat_dir):
+    memory.add("../../evil'; DROP TABLE messages;--", "user", "x")
+    assert memory.list_conversations()[0]["id"] == "../../evil'; DROP TABLE messages;--" and memory.get_messages("c4") == []
 
 
 def test_conversation_title_is_the_first_user_message(chat_dir):

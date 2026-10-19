@@ -368,6 +368,22 @@ PyTorch, transformers and LLM Guard are NOT installed yet (part 6b); their memor
   (for example about phishing emails) is blocked. Model-based detection is a later addition (candidates reviewed: LLM Guard, whose pins would downgrade `cryptography`
   and `presidio-analyzer`; an ONNX-only route; Laya, an open ModernBERT-based model). Nothing was downloaded for this part.
 
+## 15. Phase 7, part 7a: conversation memory in the database
+
+* **Tables** `conversations` and `messages` (migration 0015). `app/memory.py` now reads and writes the database; the text files are no longer written.
+  A conversation records its channel, owner (person, email, department), title and times; it also has `summary` and `summarised_upto` columns that part 7b uses.
+* **A turn can no longer be lost**: the masked question is saved before any model runs, together with an empty answer row marked incomplete; the answer row is filled in
+  and marked complete as soon as the finished answer exists (before it is handed over). If the model fails or the process is killed mid-answer, the question stays and the
+  answer stays incomplete (with what had arrived, unless the answer checks were still collecting it). Tested by killing a real process mid-answer.
+  A question whose answer never finished is not sent back to the model as history. Concurrent writers are safe (tested with 6 threads on one conversation).
+* A **blocked question and a preview** are not stored.
+* **Old files**: `chats/*.txt` are imported once at start (repeatable; an existing conversation is skipped), masked on the way in because they predate the guardrails, with the
+  owner worked out from the `web-<user id>-` file name. The folder is left in place as a backup; delete it when you are satisfied (it holds the unmasked originals).
+* **Access**: unchanged for the Web UI (each person sees, reads and deletes only their own; the prefix `web-<id>-` scopes it); deletions through the chat API are now audited.
+  Channel conversations (Slack, Teams, Google Chat) are stored with the sender as owner when they match a person in the Users list.
+* **Conversations screen** (Admin only): filter by department, channel, person (part of an email) and date, paging, open (shows masked text; audited as `conversation.view`,
+  never containing message text), delete (audited).
+
 ## How to run
 
 ```powershell

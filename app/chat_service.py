@@ -3,7 +3,7 @@ import logging
 import re
 from typing import Iterator
 from langchain_core.messages import HumanMessage, SystemMessage
-from app import guardrails, memory, rag
+from app import guardrails, identity, memory, rag
 from app.llm import get_chat_model
 
 log = logging.getLogger(__name__)
@@ -42,39 +42,56 @@ def _decide(message: str, history: list[tuple[str, str]], purpose: str = "router
 
 def chat_stream(message: str, conv_id: str | None, kb_ids=None, preview: bool = False) -> tuple[Iterator[str], dict]:
     """Routing + retrieval happen now; the answer streams from the returned iterator.
-    The turn is saved to the DB once the iterator is fully consumed.
+    The question is saved before any model runs; the answer is saved as soon as it is complete (or kept, marked
+    incomplete, if it never finishes). A blocked question is not stored.
     meta = {searched, query, sources}"""
     gate = guardrails.guard_input(message)
     if gate.blocked:                                           # no model is called, and nothing is stored
         return iter([gate.reply]), {"searched": False, "query": "", "sources": [], "blocked": True}
     message = gate.text                                        # personal data is masked from here on: model, history, logs
     history = [] if preview else memory.get(conv_id)           # a preview starts from nothing and leaves nothing behind
-    decision = _decide(message, history, "preview-router" if preview else "router")
+    turn = None if preview else memory.begin_turn(conv_id, message, identity.current())   # the question is saved BEFORE any model runs
+    try:
+        decision = _decide(message, history, "preview-router" if preview else "router")
 
-    if decision["search"]:
-        chunks = rag.search(decision["query"], kb_ids) if kb_ids else rag.search(decision["query"])
-        sources = rag.format_sources(chunks)
-        tokens = rag.stream_grounded(decision["query"], chunks, **({"purpose": "preview-answer"} if preview else {}))
-    else:
-        sources = []
-        tokens = rag.stream_direct(message, history, **({"purpose": "preview-answer"} if preview else {}))
+        if decision["search"]:
+            chunks = rag.search(decision["query"], kb_ids) if kb_ids else rag.search(decision["query"])
+            sources = rag.format_sources(chunks)
+            tokens = rag.stream_grounded(decision["query"], chunks, **({"purpose": "preview-answer"} if preview else {}))
+        else:
+            sources = []
+            tokens = rag.stream_direct(message, history, **({"purpose": "preview-answer"} if preview else {}))
+    except Exception:
+        if turn:
+            memory.fail_turn(turn)
+        raise
 
     meta = {"searched": decision["search"], "query": decision["query"], "sources": sources}
+    checked = guardrails.output_active()
 
     def gen() -> Iterator[str]:
         parts: list[str] = []
-        if guardrails.output_active():
-            # the answer is checked as a whole before anyone sees it, so it is collected first
-            final = guardrails.guard_output("".join(tokens), len(sources), decision["search"])
-            parts.append(final)
-            yield final
-        else:
-            for tok in tokens:
-                parts.append(tok)
-                yield tok
-        if not preview:
-            memory.add(conv_id, "user", message)
-            memory.add(conv_id, "assistant", "".join(parts), meta)
+        try:
+            if checked:
+                # the answer is checked as a whole before anyone sees it, so it is collected first
+                collected: list[str] = []
+                for tok in tokens:
+                    collected.append(tok)
+                final = guardrails.guard_output("".join(collected), len(sources), decision["search"])
+                parts.append(final)
+                if turn:
+                    memory.finish_turn(turn, final, meta)       # saved before it is handed over, so it cannot be lost
+                yield final
+            else:
+                for tok in tokens:
+                    parts.append(tok)
+                    yield tok
+        except BaseException:
+            if turn:                       # the model failed or the caller went away: keep what arrived, marked incomplete
+                memory.fail_turn(turn, "".join(parts))
+            raise
+        if turn and not checked:
+            memory.finish_turn(turn, "".join(parts), meta)
 
     return gen(), meta
 

@@ -54,6 +54,12 @@ async def lifespan(app: FastAPI):
     except Exception:
         log.exception("could not seed the prompts; the built-in text is used")
     try:
+        imported = memory.import_files()
+        if imported["imported"]:
+            log.info("imported %d conversations from the old text files (kept as a backup)", imported["imported"])
+    except Exception:
+        log.exception("could not import the old conversation files")
+    try:
         guardrails.seed()
         threading.Thread(target=guardrails.warm_up, name="guardrail-warm-up", daemon=True).start()
     except Exception:
@@ -111,6 +117,15 @@ def openapi_schema(request: Request):
 def swagger_ui(request: Request):
     check_local(request, allow_remote=False)
     return get_swagger_ui_html(openapi_url="/openapi.json", title=f"{app.title} API")
+
+
+def _audit(actor: str, action: str, target: str, detail: str = "") -> None:
+    try:
+        store = channels.get_store()
+        if store:
+            store.record(actor, action, target, detail)
+    except Exception:
+        log.warning("could not audit %s", action, exc_info=True)
 
 
 def _conv(caller: Caller, conv_id: str) -> str:
@@ -171,7 +186,9 @@ def get_conversation(conv_id: str, caller: Caller = Depends(require_chat_caller)
 def delete_conversation(conv_id: str, caller: Caller = Depends(require_chat_caller)):
     """Delete a conversation."""
     try:
-        memory.delete(_conv(caller, conv_id))
+        removed = memory.delete(_conv(caller, conv_id))
+        if removed:
+            _audit(caller.email or "service token", "conversation.delete", _conv(caller, conv_id))
         return {"status": "deleted", "conv_id": conv_id}
     except Exception as e:
         log.error(f"Error deleting conversation: {e}", exc_info=True)

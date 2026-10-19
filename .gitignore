@@ -24,3 +24,4 @@ admin_data/
 # backups and uploaded originals
 chroma_db.bak-*/
 data/kb_files/
+chats.bak-*/
