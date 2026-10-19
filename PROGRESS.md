@@ -494,8 +494,8 @@ PyTorch, transformers and LLM Guard are NOT installed yet (part 6b); their memor
 - **Load and concurrency:** `tests/test_hardening.py` runs 12 people x 5 turns and 30 people in one conversation in parallel;
   no turn lost, none left incomplete. It found a real race (two threads creating the guardrail settings row at once), now fixed.
 - **Restart:** a container whose server process was killed was restarted by `unless-stopped` (restart count 1), became
-  healthy again and kept its volume data; a manual stop stayed stopped. Checked on the existing `caa-boot-rag` image, which
-  predates this phase (rebuilding means reinstalling all packages, which I did not do without approval).
+  healthy again and kept its volume data; a manual stop stayed stopped. Checked first on an older image, then again on a
+  freshly built one (19 October, after fixing two conflicting package pins): crash restarted, clean restart healthy, data kept.
 - **Both databases:** the full suite runs on SQLite and PostgreSQL (`TEST_DB=postgres`, throwaway container).
 - Migration 0022 (rate limit setting).
 

@@ -11,7 +11,7 @@ Date: 19 October 2026. Plan: `docs/development-plan-v3.md`, phases 0 to 11. Per-
 | What the tests include | unit and integration tests, 16 phase feature checks, 3 end-to-end scenarios, a security pass (23 tests), exposure and hardening tests |
 | Live server (this machine) | running on `127.0.0.1:8000`, database at migration 0022, `/health` ok, 3 stored secrets all decrypt with the current key, document search answers |
 | Live answers | **not working until the model provider has credit.** The only provider is the Gemini key from `.env`, which answers HTTP 402 (prepayment depleted) |
-| Last commit | `ee2e37b`. Nothing since is uncommitted except this report and the progress notes |
+| Branch | `phases-0-11-complete` on GitHub (`origin`) |
 
 ## What only a person can do
 
@@ -28,7 +28,7 @@ Date: 19 October 2026. Plan: `docs/development-plan-v3.md`, phases 0 to 11. Per-
 | 9 | Move `chroma_db`, `chats` and `admin_data` out of OneDrive | Owner | OneDrive sync can lock SQLite files |
 | 10 | Privacy sign-off before turning conversation export on (it is off) | Privacy owner | Decision D7 |
 | 11 | Try the keyed services with real keys: Azure AI Search, OpenAI / Azure OpenAI / Cohere embeddings, Anthropic, Azure OpenAI chat | Owner | They are built to each service's documented format and tested against stand-ins only |
-| 12 | Rebuild the Docker image and repeat the restart check | Owner | I verified the restart behaviour only on the existing, older image; a rebuild reinstalls every package, which I did not do without your approval |
+| 12 | ~~Rebuild the Docker image and repeat the restart check~~ **Done on 19 October.** The rebuild first failed because two pinned packages conflicted; fixed in `bce0759`. On the new image (541 MB) a killed server was restarted by the container, `docker restart` came back healthy, the data and migration 0022 survived both, and a manual stop stayed stopped. A blank install logs one harmless traceback at start-up: a Slack channel seeded from the environment with no tokens fails to start (other channels are unaffected) | Owner | |
 | 13 | Docker housekeeping: a 631 MB pgvector image and `postgres:16-alpine` are cached, and Docker Desktop is running | Owner | Disk space, only if wanted |
 
 ## Decisions still marked Proposed
