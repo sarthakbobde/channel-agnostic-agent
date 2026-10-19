@@ -166,6 +166,21 @@ def my_permissions(s: Session = Depends(admin_session), ctx: AdminContext = Depe
             "department_id": s.department_id, "can_manage_all": roles.can_manage_everything(s.role)}
 
 
+@router.get("/me/alerts")
+def my_alerts(s: Session = Depends(admin_session), ctx: AdminContext = Depends(get_ctx)):
+    from app import alerts
+    return alerts.active(ctx.db, None if s.role == "admin" else s.email)
+
+
+@router.post("/me/alerts/{alert_id}/resolve")
+def resolve_my_alert(alert_id: int, s: Session = Depends(admin_session), ctx: AdminContext = Depends(get_ctx)):
+    from app import alerts
+    if not alerts.resolve_id(ctx.db, alert_id, None if s.role == "admin" else s.email):
+        raise HTTPException(404, "No such open alert.")
+    ctx.store.record(s.email, "alert.resolve", str(alert_id))
+    return {"ok": True}
+
+
 class SetPasswordBody(BaseModel):
     token: str
     password: str
@@ -322,6 +337,24 @@ def delete_channel(typ: str, s: Session = Depends(admin_session), ctx: AdminCont
 
 
 # ---- audit & admins ----------------------------------------------------------
+@router.get("/audit/search")
+def audit_search(actor: str = "", action: str = "", target: str = "", date_from: str = "", date_to: str = "",
+                 limit: int = 50, offset: int = 0, _: Session = Depends(admin_session), ctx: AdminContext = Depends(get_ctx)):
+    """Filter the audit log by person, action (a prefix such as 'prompt.'), target and dates, with paging."""
+    from datetime import datetime, timedelta, timezone
+
+    def day(text, end=False):
+        if not text:
+            return None
+        try:
+            d = datetime.fromisoformat(text).replace(tzinfo=timezone.utc)
+        except ValueError:
+            raise HTTPException(422, "Dates look like 2026-10-31.")
+        return d + timedelta(days=1) if end else d
+    return ctx.store.search_audit(actor=actor, action=action, target=target, date_from=day(date_from), date_to=day(date_to, True),
+                                  limit=max(1, min(limit, 200)), offset=max(0, offset))
+
+
 @router.get("/audit")
 def audit(limit: int = 100, _: Session = Depends(admin_session), ctx: AdminContext = Depends(get_ctx)):
     return ctx.store.recent_audit(max(1, min(limit, 500)))

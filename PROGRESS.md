@@ -418,6 +418,59 @@ PyTorch, transformers and LLM Guard are NOT installed yet (part 6b); their memor
 * Limits: heading detection in Word depends on the file using real Heading styles; PDFs have no heading information, so by heading uses their pages; semantic chunking uses the built-in local model for now
   (a per-knowledge-base embedding model comes in part 8b).
 
+### Phase 8, part 8b: embedding models per knowledge base
+
+* **Models** (`app/knowledge/embeddings.py`, each with a SPEC form, `validate()` and `test()` that reports the vector size): the built-in local MiniLM (default, unchanged);
+  **Local multilingual** (`intfloat/multilingual-e5-small`, MIT, quantized ONNX through onnxruntime; no PyTorch; 129 MB, downloaded once into `MODELS_DIR` by an Admin on request;
+  English, Hindi and Spanish questions find the right passages); **OpenAI** (uses the key of an OpenAI or OpenAI-compatible provider under LLM Providers, never copied);
+  **Azure OpenAI** (endpoint, deployment, api-version, key); **Cohere** (key, model; documents and queries use the right input type). The API adapters were exercised against a fake service,
+  not against the real OpenAI, Azure or Cohere, because no such keys exist here.
+* **Per knowledge base**: the chosen model and its non-secret settings are saved on the knowledge base; secrets are stored encrypted per knowledge base and are write-only (never returned,
+  never in an audit entry or error). Saving first **tests** the model: if the test fails nothing is stored. The index version remembers the model it was built with, and **questions are
+  embedded with the active version's model**, so changing the model means a rebuild (existing estimate / build beside / switch / rollback); until the switch the old model keeps answering.
+  Semantic chunking uses the knowledge base's own model.
+* **Cost and usage**: every embedding call (documents and questions) is recorded as usage kind `embedding` with the knowledge base, the department, the tokens the service reported
+  (or an estimate) and, when a price is entered under Providers, the cost. The rebuild estimate shows the model's approximate list price (a note says to check yours) and a data-leaves-the-company
+  warning for the API models.
+* Errors: a rate limit (429) or server error is retried with backoff (up to 4 attempts); a rejected key or bad model name is not retried. Keys are scrubbed from every message.
+* New runtime dependencies pinned: `httpx`, `onnxruntime`, `tokenizers` (all were already installed through Chroma).
+
+### Phase 8, part 8c: vector stores (ChromaDB, PostgreSQL + pgvector, Azure AI Search)
+
+* **Stores** (`app/knowledge/storeadapters.py`, registry `STORE_TYPES`), chosen per knowledge base (columns `store`, `store_config`; recorded on every index version; migration 0019), with a form drawn from each
+  store's SPEC, `validate()` and `test()`; secrets (the connection string, the Azure admin key) are stored encrypted per knowledge base, write-only, scrubbed from every message.
+  * **ChromaDB**: built in, the default; nothing to configure.
+  * **PostgreSQL + pgvector**: connection string (or, if empty, the admin database when that is PostgreSQL) and a schema. One table per index version (`caa_kb_<id>_v<n>`) with an HNSW cosine index; filters are
+    SQL `WHERE` on the metadata with bound parameters; `update_metadata` is a jsonb merge. **Verified against a real PostgreSQL 16 + pgvector 0.8.7** (a throwaway Docker container, since removed).
+  * **Azure AI Search**: endpoint, index name, admin key. Creates the index on first write (vector field, HNSW cosine), OData filters, `merge` for metadata updates. Built to Microsoft's documented REST API and tested
+    only against an in-memory stand-in: **not verified against a live Azure service**.
+* **A store change is a rebuild**: the new index is built in the new store beside the old one, used only when complete, and can be rolled back. Questions always go to the store of the ACTIVE index version. Pruning old versions,
+  deleting a knowledge base and failed builds clean up in whichever store each version lives in (including the pgvector tables).
+* **Store health**: a check every 5 minutes (scheduler, under the database lock) pings every knowledge base's active store; an unreachable store raises an Admin alert ("The vector store of 'X' is not answering") that clears itself
+  when it answers again and never contains a connection string. The Knowledge bases screen shows reachable / not reachable, chunks, size and last indexed per knowledge base.
+* **Contract tests** (`tests/test_store_contract.py`, 34 cases): the same checks run against Chroma, pgvector (when `TEST_PGVECTOR_URL` is set) and the Azure stand-in: add/search ranking, idempotent add, equality and `in`
+  filters (applied inside the search, an empty allow-list matches nothing, quotes and SQL text are data), delete by document, in-place `update_metadata` (same vector, merged metadata), `replace_metadata`, count/stats/health/paging,
+  delete of the whole index. The first run found one real difference (Chroma refuses an empty `in` list); it now returns nothing like the others.
+
+## 17. Phase 9: usage, cost, reports and alerts
+
+- **9a, usage and cost:** every model call (answers, routing, summaries, previews, embeddings) is recorded. The **Usage and cost**
+  tab groups by provider, model, department, knowledge base, purpose, kind, day or month, with a date range. Cost uses only
+  hand-entered prices (Admin); calls without a price are counted as *unpriced* so totals are never mistaken for the whole truth.
+  Local models record cost 0. Editors see only their own departments.
+- **9b, alerts:** alerts carry an audience. New: *indexing failed* (to the uploader and the Admins, clears itself when the file
+  indexes or is deleted) and *channel down* (checked every 2 minutes). Together with the earlier store-unreachable, fallback
+  and provider-key alerts this covers the BRD list. Optional notifications (off by default): a https webhook and/or email for
+  each NEW alert (Settings, Admin only; address and password stored encrypted, never returned or audited).
+- **9c, audit and reports:** the **Audit log** can be filtered by person, action (prefix), target and date, with paging
+  (`GET /audit/search`). New **Reports** tab (Admin): guardrail events by check, direction, action and department; per
+  knowledge base documents by status, chunks, size, last indexed, answered vs not-found and embedding tokens; per channel
+  status, conversations and last activity. Chat answers now remember which knowledge bases were searched
+  (`kb_ids` in the message meta); older answers are not counted in answered/not-found.
+- Audit coverage checked: sign-in and failed sign-in, configuration changes, prompt save/publish/rollback, document upload,
+  replace, move, delete and access changes, conversation view/export/delete, retention runs. Secrets are never logged.
+- Migrations 0020 (alert audience) and 0021 (audit target length 64 to 254).
+
 ## How to run
 
 ```powershell

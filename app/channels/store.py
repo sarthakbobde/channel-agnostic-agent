@@ -155,6 +155,29 @@ class ChannelStore:
             return [{"ts": r.ts, "actor": r.actor, "action": r.action,
                      "target": r.target, "detail": r.detail} for r in rows]
 
+    def search_audit(self, *, actor: str = "", action: str = "", target: str = "", date_from=None, date_to=None,
+                     limit: int = 50, offset: int = 0) -> dict:
+        """Filtered, paged audit rows (newest first) plus the lists of people and actions to filter by."""
+        from sqlalchemy import func
+        q = select(AuditLog)
+        if actor:
+            q = q.where(func.lower(AuditLog.actor).like("%" + actor.lower().replace("%", "") + "%"))
+        if action:
+            q = q.where(AuditLog.action.like(action.replace("%", "") + "%"))
+        if target:
+            q = q.where(func.lower(AuditLog.target).like("%" + target.lower().replace("%", "") + "%"))
+        if date_from is not None:
+            q = q.where(AuditLog.ts >= date_from)
+        if date_to is not None:
+            q = q.where(AuditLog.ts < date_to)
+        with self.db.session() as s:
+            total = s.scalar(select(func.count()).select_from(q.subquery())) or 0
+            rows = s.scalars(q.order_by(AuditLog.id.desc()).limit(limit).offset(offset))
+            out = [{"id": r.id, "ts": r.ts, "actor": r.actor, "action": r.action, "target": r.target, "detail": r.detail} for r in rows]
+            actors = [a for (a,) in s.execute(select(AuditLog.actor).distinct().order_by(AuditLog.actor)).all()]
+            actions = [a for (a,) in s.execute(select(AuditLog.action).distinct().order_by(AuditLog.action)).all()]
+        return {"total": total, "rows": out, "actors": actors, "actions": actions}
+
     # ---- one-time import --------------------------------------------------
     def import_config_once(self, cfg: dict, *, actor: str = "system") -> list[str]:
         """Seed the database from the legacy channels.yaml (+ environment) on first run.

@@ -70,6 +70,12 @@ def chat_stream(message: str, conv_id: str | None, kb_ids=None, preview: bool = 
         raise
 
     meta = {"searched": decision["search"], "query": decision["query"], "sources": sources}
+    if decision["search"]:
+        try:
+            from app.knowledge import kbs as _kbs
+            meta["kb_ids"] = [k["id"] for k in _kbs.resolve(None, kb_ids or [])]
+        except Exception:
+            pass
     checked = guardrails.output_active()
 
     def gen() -> Iterator[str]:

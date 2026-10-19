@@ -215,6 +215,7 @@ def delete(db: Database, doc_id: int) -> dict:
     shutil.rmtree(doc_dir(d["kb_id"], doc_id), ignore_errors=True)
     from app.knowledge import access
     access.clear(db, doc_id)
+    _clear_failed(db, doc_id)
     with db.session() as s:
         row = s.get(Document, doc_id)
         if row is not None:
@@ -299,11 +300,34 @@ def index_document(db: Database, doc_id: int) -> None:
         add_in_batches(store, ids, texts, metas)
         access.sync_chunks(db, d)
         _set(db, doc_id, status="Indexed", error="", chunks=n, indexed_at=_now())
+        _clear_failed(db, doc_id)
         log.info("indexed document %s (%s): %d chunks", doc_id, d["name"], n)
     except Exception as e:
         log.warning("indexing document %s failed: %s", doc_id, e, exc_info=not isinstance(e, ValueError))
         message = str(e) if isinstance(e, ValueError) else f"{type(e).__name__}: {str(e)[:300]}"
         _set(db, doc_id, status="Failed", error=message[:500])
+        _alert_failed(db, doc_id, message)
+
+
+def _alert_failed(db: Database, doc_id: int, message: str) -> None:
+    try:
+        from app import alerts
+        d = get(db, doc_id)
+        kb = kbs.get_kb(db, d["kb_id"]) if d else None
+        if d:
+            alerts.raise_alert(db, f"doc_failed:{doc_id}", "indexing_failed",
+                               f"'{d['name']}'" + (f" in '{kb['name']}'" if kb else "") + f" could not be indexed: {message[:200]}", "error",
+                               audience=d.get("uploaded_by") if "@" in (d.get("uploaded_by") or "") else "")
+    except Exception:
+        log.warning("could not raise the indexing alert", exc_info=True)
+
+
+def _clear_failed(db: Database, doc_id: int) -> None:
+    try:
+        from app import alerts
+        alerts.resolve_key(db, f"doc_failed:{doc_id}")
+    except Exception:
+        log.warning("could not clear the indexing alert", exc_info=True)
 
 
 def enqueue(doc_id: int) -> None:

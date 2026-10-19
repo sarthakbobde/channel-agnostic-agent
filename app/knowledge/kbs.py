@@ -21,7 +21,8 @@ DEFAULT_NAME = "Company knowledge"
 def _view(kb: KnowledgeBase) -> dict:
     return {"id": kb.id, "name": kb.name, "description": kb.description, "department_id": kb.department_id,
             "collection": kb.collection, "chunk_size": kb.chunk_size, "chunk_overlap": kb.chunk_overlap,
-            "chunk_strategy": kb.chunk_strategy or "recursive",
+            "chunk_strategy": kb.chunk_strategy or "recursive", "embedding": kb.embedding or "chroma-default",
+            "embedding_config": kb.embedding_config or {}, "store": kb.store or "chroma", "store_config": kb.store_config or {},
             "is_default": kb.is_default, "created_at": kb.created_at, "updated_at": kb.updated_at}
 
 
@@ -62,9 +63,32 @@ def department_name(db: Database, department_id: int) -> str:
 
 
 # ---- stores ----------------------------------------------------------------------------------
-def store_for(kb: dict) -> ChromaStore:
+STORE_SECRET_OWNER = "kb-store"
+
+
+def _active_spec(kb: dict):
+    """(store type, non-secret settings) of the knowledge base's active index version."""
+    from app.knowledge import versions
+    try:
+        v = versions.active(get_db(), kb["id"]) if kb.get("id") else None
+    except Exception:
+        v = None
+    return ((v.get("store") or "chroma"), (v.get("store_config") or {})) if v else ("chroma", {})
+
+
+def store_for(kb: dict, embedder="auto", store="auto"):
+    """The store of a knowledge base's ACTIVE index. Questions are embedded with the model that index was built with
+    (None = Chroma embeds itself with the built-in model). Pass `embedder` / `store=(type, settings)` to open a specific index,
+    for example one being built or one that belongs to an older version."""
     from app import retriever          # late import: the retriever depends on this module
+    from app.knowledge import embeddings, storeadapters
+    if embedder == "auto":
+        embedder = embeddings.active_for(kb) if kb.get("id") else None
+    stype, sconfig = _active_spec(kb) if store == "auto" else store
     name = kb["collection"]
+    if stype != "chroma":
+        secrets = embeddings.load_kb_secrets(get_db(), kb["id"], STORE_SECRET_OWNER) if kb.get("id") else {}
+        return storeadapters.build_remote(stype, name, sconfig, secrets, embedder or embeddings.get())
     if name == settings.collection:
         getter = lambda: retriever.get_collection()          # noqa: E731  (looked up each call so it can be swapped in tests)
     else:
@@ -76,7 +100,7 @@ def store_for(kb: dict) -> ChromaStore:
         except Exception:
             log.info("collection %s was already gone", name)
 
-    return ChromaStore(getter, drop)
+    return ChromaStore(getter, drop, embeddings=embedder)
 
 
 def default_store() -> ChromaStore:
@@ -133,7 +157,8 @@ def create_kb(db: Database, name: str, description: str, department_id: int, chu
 
 
 def update_kb(db: Database, kb_id: int, *, name=None, description=None, department_id=None,
-              chunk_size="keep", chunk_overlap="keep", chunk_strategy=None) -> tuple[dict, dict]:
+              chunk_size="keep", chunk_overlap="keep", chunk_strategy=None, embedding=None, embedding_config=None,
+              store=None, store_config=None) -> tuple[dict, dict]:
     """Returns (before, after). `chunk_size` / `chunk_overlap`: "keep" leaves as is, None = inherit global."""
     with db.session() as s:
         kb = s.get(KnowledgeBase, kb_id)
@@ -162,6 +187,12 @@ def update_kb(db: Database, kb_id: int, *, name=None, description=None, departme
         if chunk_strategy is not None:
             check_strategy(chunk_strategy)
             kb.chunk_strategy = chunk_strategy
+        if embedding is not None:
+            kb.embedding = embedding
+            kb.embedding_config = embedding_config or {}
+        if store is not None:
+            kb.store = store
+            kb.store_config = store_config or {}
         s.flush()
         return before, _view(kb)
 
@@ -191,8 +222,10 @@ def delete_kb(db: Database, kb_id: int) -> dict:
     from app.db import KBAccess
     with db.session() as s:
         s.execute(_delete(KBAccess).where(KBAccess.kb_id == kb_id))
-    from app.knowledge import versions
+    from app.knowledge import embeddings, versions
     versions.purge_kb(db, kb_id)
+    embeddings.clear_kb_secrets(db, kb_id)
+    embeddings.clear_kb_secrets(db, kb_id, STORE_SECRET_OWNER)
     unbound = []
     with db.session() as s:
         for c in s.scalars(select(Channel)):

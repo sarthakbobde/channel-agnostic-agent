@@ -14,6 +14,7 @@ import uvicorn
 from fastapi import FastAPI
 from fastapi.responses import RedirectResponse
 
+from app.admin.alerts_api import router as alerts_router
 from app.admin.api import router as admin_router
 from app.admin.conversations_api import router as conversations_router
 from app.admin.departments_api import router as departments_router
@@ -24,11 +25,13 @@ from app.admin.kbs_api import router as kbs_router
 from app.admin.prompts_api import router as prompts_router
 from app.admin.providers_api import router as providers_router
 from app.admin.ui import router as ui_router
+from app.admin.reports_api import router as reports_router
+from app.admin.usage_api import router as usage_router
 from app.admin.users_api import router as users_router
 from app.config import settings
 
 log = logging.getLogger(__name__)
-ROUTERS = (admin_router, providers_router, users_router, departments_router, kbs_router, documents_router, groups_router, prompts_router, guardrails_router, conversations_router, ui_router)
+ROUTERS = (admin_router, providers_router, users_router, departments_router, kbs_router, documents_router, groups_router, prompts_router, guardrails_router, conversations_router, usage_router, alerts_router, reports_router, ui_router)
 
 
 def include_admin(app: FastAPI) -> None:

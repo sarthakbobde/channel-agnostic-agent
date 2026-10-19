@@ -173,7 +173,7 @@ class ProviderStore:
 
     # ---- approved provider types (D15) ----------------------------------------------------
     def approved(self) -> list[str]:
-        global_settings.current(self.db)                       # makes sure the settings row exists
+        global_settings._read(self.db)                          # makes sure the settings row exists (not the cached copy)
         with self.db.session() as s:
             return list(s.get(GlobalSettings, 1).approved_providers or [])
 
@@ -181,7 +181,7 @@ class ProviderStore:
         unknown = sorted(set(types) - set(REGISTRY))
         if unknown:
             raise ValueError("Unknown provider type: " + ", ".join(unknown))
-        global_settings.current(self.db)
+        global_settings._read(self.db)
         with self.db.session() as s:
             in_use = {p.type for p in s.scalars(select(LLMProvider))}
             blocked = sorted(in_use - set(types))

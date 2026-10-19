@@ -85,3 +85,18 @@ this file.
 | 8a | Semantic chunking | Written in-house on top of the embedder (sentence breaks at the 90th percentile of distance). | Avoids the `langchain-experimental` dependency. |
 | 8a | Tiny sections | Folded into the section before; never across pages or slides. | Keeps heading paths accurate and slides separate. |
 | 8a | Vector stores for now | Chroma and pgvector are built; other stores are configurable adapters. | Project owner's decision: Chroma and pgvector now, others via configuration. |
+| 8b | Local multilingual model | e5-small quantized ONNX (129 MB) through onnxruntime instead of PyTorch. | Same reasoning as for guardrails: small, no PyTorch. Downloaded with the owner's agreement. |
+| 8b | Embedding secrets | Stored encrypted per knowledge base (OpenAI instead reuses the LLM Providers key). | One key per knowledge base is simple; rotating it applies to all of its index versions. |
+| 8b | Embedding prices | A small built-in table of approximate list prices for the estimate; recorded costs use only prices entered by hand. | The estimate is a guide; recorded cost must not guess. |
+| 8b | API adapters | Built to each service's documented request format and tested against a fake service. | No OpenAI, Azure or Cohere keys exist here; real calls need a live test with your keys. |
+| 8c | Stores built now | ChromaDB and pgvector are fully working; Azure AI Search is a configurable adapter. | Project owner's decision: Chroma and pgvector now, others via configuration. |
+| 8c | pgvector driver | Plain SQL through psycopg (already installed); no `pgvector` Python package. | One less dependency; vectors are sent as text and cast. |
+| 8c | Azure AI Search | Built to the documented REST API (version 2024-07-01), tested against a stand-in, flagged on the screen as not live-verified. | No Azure account exists here. |
+| 8c | Azure filters | Only `doc_id` can be filtered. | That is all the access filter and clean-up need. |
+| 9a | Cost | Only hand-entered prices; unpriced calls are counted and shown. Local models cost 0. | Nothing is guessed. |
+| 9b | Alert audience | An alert can be for the Admins or one person (the uploader). | Editors should not see other departments' problems. |
+| 9b | Notifications | Webhook (https only) and email, off by default, NEW alerts only, minimum severity setting. | Avoids repeat noise; webhook addresses are secrets. |
+| 9b | Channel health | Checked every 2 minutes; alert clears itself. | Quick enough to notice an outage. |
+| 9c | Audit search | Action filter is a prefix; target column widened to 254. | Targets such as `Knowledge base / file name` exceeded 64. |
+| 9c | Answered vs not-found | Counted from answers saved after this change (they record `kb_ids`). | Older answers do not say which knowledge base was used. |
+| 8c | Store health cadence | Every 5 minutes. | Quick enough to catch an outage, light enough not to load the stores. |

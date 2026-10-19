@@ -13,7 +13,7 @@ from sqlalchemy import select
 from app import global_settings
 from app.admin.api import AdminContext, Session, admin_session, get_ctx
 from app.db import Department, DepartmentEditor
-from app.knowledge import access, chunkers, documents, embeddings, kbs, parsers, versions
+from app.knowledge import access, chunkers, documents, embeddings, kbs, parsers, storeadapters, versions
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/admin/api", tags=["admin"])
@@ -26,6 +26,55 @@ class KBIn(BaseModel):
     chunk_size: int | None = None
     chunk_overlap: int | None = None
     chunk_strategy: str | None = None
+    embedding: str | None = None
+    embedding_config: dict | None = None
+    embedding_secrets: dict | None = None
+    store: str | None = None
+    store_config: dict | None = None
+    store_secrets: dict | None = None
+
+
+def _last_indexed(ctx: AdminContext, kb_id: int):
+    from sqlalchemy import func
+    from app.db import Document
+    with ctx.db.session() as s:
+        return s.scalar(select(func.max(Document.indexed_at)).where(Document.kb_id == kb_id))
+
+
+def _store_options() -> list[dict]:
+    out = []
+    for n, cls in storeadapters.STORE_TYPES.items():
+        out.append({"name": n, "title": cls.title, "warning": cls.warning,
+                    "fields": [{"name": f.name, "label": f.label, "kind": f.kind, "secret": f.secret, "required": f.required,
+                                "help": f.help, "default": f.default} for f in cls.SPEC]})
+    return out
+
+
+def _embedding_options(ctx: AdminContext) -> list[dict]:
+    """Every embedding model with the form to configure it (drawn from its SPEC)."""
+    names = []
+    try:
+        secrets = embeddings._secret_store()
+        if secrets is not None:
+            from app.providers.store import ProviderStore
+            names = [p["name"] for p in ProviderStore(ctx.db, secrets).list_all() if p["type"] in ("openai", "openai_compatible")]
+    except Exception:
+        log.warning("could not list providers for the embedding form", exc_info=True)
+    out = []
+    for n, cls in embeddings.REGISTRY.items():
+        fields = []
+        for f in cls.SPEC:
+            item = {"name": f.name, "label": f.label, "kind": f.kind, "secret": f.secret, "required": f.required, "help": f.help, "default": f.default}
+            if f.name == "provider":
+                item["choices"] = names
+            elif f.choices:
+                item["choices"] = list(f.choices)
+            fields.append(item)
+        out.append({"name": n, "title": cls.title, "builtin": cls.builtin, "warning": cls.warning, "fields": fields,
+                    "ready": (cls.available() if hasattr(cls, "available") else True),
+                    "needs_download": hasattr(cls, "available") and not cls.available(),
+                    "prices": cls.PRICES})
+    return out
 
 
 def _my_departments(ctx: AdminContext, sess: Session) -> list[dict]:
@@ -43,13 +92,24 @@ def _visible(ctx: AdminContext, sess: Session) -> list[dict]:
 
 
 def _present(ctx: AdminContext, kb: dict, names: dict) -> dict:
+    health = {"ok": True, "message": ""}
     try:
-        stats = kbs.store_for(kb).stats()
-    except Exception:
+        active_store = kbs.store_for(kb)
+        stats = active_store.stats()
+        ok_, msg_ = active_store.health()
+        health = {"ok": ok_, "message": msg_ if not ok_ else ""}
+    except Exception as e:
         log.warning("could not read stats for knowledge base %s", kb["id"], exc_info=True)
         stats = {"chunks": None, "documents": None}
+        health = {"ok": False, "message": "The store could not be reached (" + type(e).__name__ + ")."}
     return {**kb, "department": names.get(kb["department_id"], ""), "chunks": stats["chunks"],
-            "documents": stats["documents"], "status_counts": documents.counts(ctx.db, kb["id"]), "index": versions.summary(ctx.db, kb), "embedding": embeddings.DEFAULT, "store": "chroma",
+            "documents": stats["documents"], "status_counts": documents.counts(ctx.db, kb["id"]), "index": versions.summary(ctx.db, kb), "embedding": kb["embedding"], "embedding_config": kb["embedding_config"],
+            "embedding_secrets_set": embeddings.kb_secret_names(ctx.db, kb["id"]),
+            "store": kb["store"], "store_config": kb["store_config"],
+            "store_secrets_set": embeddings.kb_secret_names(ctx.db, kb["id"], kbs.STORE_SECRET_OWNER),
+            "active_store": (versions.active(ctx.db, kb["id"]) or {}).get("store"), "health": health,
+            "size_bytes": stats.get("size_bytes"), "last_indexed": _last_indexed(ctx, kb["id"]),
+            "active_embedding": (versions.active(ctx.db, kb["id"]) or {}).get("embedding"),
             "bound_channels": kbs.channels_using(ctx.db, kb["id"])}
 
 
@@ -62,7 +122,7 @@ def list_kbs(sess: Session = Depends(admin_session), ctx: AdminContext = Depends
     return {"kbs": [_present(ctx, k, names) for k in _visible(ctx, sess)],
             "departments": depts, "global": {"chunk_size": gs.chunk_size, "chunk_overlap": gs.chunk_overlap},
             "strategies": [{"name": n, **v} for n, v in chunkers.STRATEGIES.items()],
-            "embeddings": [{"name": n, "title": c.title} for n, c in embeddings.REGISTRY.items()]}
+            "embeddings": _embedding_options(ctx), "stores": _store_options()}
 
 
 def _can(ctx: AdminContext, sess: Session, department_id: int) -> bool:
@@ -88,6 +148,124 @@ def create(body: KBIn, sess: Session = Depends(admin_session), ctx: AdminContext
     return _present(ctx, kb, names)
 
 
+def _checked_embedding(ctx: AdminContext, kb: dict, name: str, config: dict, secrets: dict) -> tuple[str, dict]:
+    """Validate and TEST an embedding model; only then are its secrets stored. Returns (name, non-secret settings)."""
+    if name not in embeddings.REGISTRY:
+        raise HTTPException(422, "Unknown embedding model.")
+    cls = embeddings.REGISTRY[name]
+    allowed = {f.name for f in cls.SPEC}
+    unknown = sorted((set(config) | set(secrets)) - allowed)
+    if unknown:
+        raise HTTPException(422, "Unknown settings: " + ", ".join(unknown))
+    config = {k: v for k, v in config.items() if v not in (None, "")}
+    secret_names = {f.name for f in cls.SPEC if f.secret}
+    stored = embeddings.load_kb_secrets(ctx.db, kb["id"]) if kb["id"] else {}
+    merged_secrets = {**{k: v for k, v in stored.items() if k in secret_names}, **{k: v for k, v in secrets.items() if v}}
+    problems = cls.validate(config, merged_secrets)
+    if problems:
+        raise HTTPException(422, "; ".join(problems))
+    if "dimensions" in config:
+        try:
+            config["dimensions"] = int(config["dimensions"])
+        except (TypeError, ValueError):
+            raise HTTPException(422, "Vector size must be a whole number.")
+    model = embeddings.build(name, config, kb, ctx.db, extra_secrets=merged_secrets)
+    model.usage = None                                                  # a connection test is not billed work to record
+    ok, message = model.test()
+    if not ok:
+        raise HTTPException(422, "The embedding model did not work: " + message)
+    try:
+        embeddings.save_kb_secrets(ctx.db, kb["id"], {k: v for k, v in secrets.items() if k in secret_names})
+    except ValueError as e:
+        raise HTTPException(503, str(e))
+    return name, config
+
+
+def _merged_store_secrets(ctx: AdminContext, kb_id: int, cls, secrets: dict) -> dict:
+    names = {f.name for f in cls.SPEC if f.secret}
+    stored = embeddings.load_kb_secrets(ctx.db, kb_id, kbs.STORE_SECRET_OWNER)
+    return {**{k: v for k, v in stored.items() if k in names}, **{k: v for k, v in secrets.items() if v and k in names}}
+
+
+def _checked_store(ctx: AdminContext, kb: dict, name: str, config: dict, secrets: dict) -> tuple[str, dict]:
+    if name not in storeadapters.STORE_TYPES:
+        raise HTTPException(422, "Unknown vector store.")
+    cls = storeadapters.STORE_TYPES[name]
+    allowed = {f.name for f in cls.SPEC}
+    unknown = sorted((set(config) | set(secrets)) - allowed)
+    if unknown:
+        raise HTTPException(422, "Unknown settings: " + ", ".join(unknown))
+    config = {k: v for k, v in config.items() if v not in (None, "")}
+    merged = _merged_store_secrets(ctx, kb["id"], cls, secrets)
+    problems = cls.validate(config, merged)
+    if problems:
+        raise HTTPException(422, "; ".join(problems))
+    ok, message = cls.test(config, merged)
+    if not ok:
+        raise HTTPException(422, "The vector store did not work: " + message)
+    try:
+        embeddings.save_kb_secrets(ctx.db, kb["id"], {k: v for k, v in secrets.items() if k in {f.name for f in cls.SPEC if f.secret}}, kbs.STORE_SECRET_OWNER)
+    except ValueError as e:
+        raise HTTPException(503, str(e))
+    return name, config
+
+
+@router.post("/kbs/{kb_id}/store/test")
+def test_store(kb_id: int, body: KBIn, sess: Session = Depends(admin_session), ctx: AdminContext = Depends(get_ctx)):
+    """Try a vector store's connection without saving anything."""
+    _kb_for(ctx, sess, kb_id)
+    name = body.store or "chroma"
+    if name not in storeadapters.STORE_TYPES:
+        raise HTTPException(422, "Unknown vector store.")
+    cls = storeadapters.STORE_TYPES[name]
+    config = {k: v for k, v in (body.store_config or {}).items() if v not in (None, "")}
+    merged = _merged_store_secrets(ctx, kb_id, cls, body.store_secrets or {})
+    problems = cls.validate(config, merged)
+    if problems:
+        return {"ok": False, "message": "; ".join(problems)}
+    ok, message = cls.test(config, merged)
+    return {"ok": ok, "message": message}
+
+
+@router.post("/kbs/{kb_id}/embedding/test")
+def test_embedding(kb_id: int, body: KBIn, sess: Session = Depends(admin_session), ctx: AdminContext = Depends(get_ctx)):
+    """Try an embedding model without saving anything; reports the vector size."""
+    kb = _kb_for(ctx, sess, kb_id)
+    name = body.embedding or kb["embedding"]
+    if name not in embeddings.REGISTRY:
+        raise HTTPException(422, "Unknown embedding model.")
+    cls = embeddings.REGISTRY[name]
+    config = {k: v for k, v in (body.embedding_config or {}).items() if v not in (None, "")}
+    secret_names = {f.name for f in cls.SPEC if f.secret}
+    stored = embeddings.load_kb_secrets(ctx.db, kb_id)
+    merged = {**{k: v for k, v in stored.items() if k in secret_names}, **{k: v for k, v in (body.embedding_secrets or {}).items() if v}}
+    problems = cls.validate(config, merged)
+    if problems:
+        return {"ok": False, "message": "; ".join(problems)}
+    model = embeddings.build(name, config, kb, ctx.db, extra_secrets=merged)
+    model.usage = None
+    ok, message = model.test()
+    return {"ok": ok, "message": message}
+
+
+@router.post("/kbs/{kb_id}/embedding/download")
+async def download_embedding(kb_id: int, sess: Session = Depends(admin_session), ctx: AdminContext = Depends(get_ctx)):
+    """Download the local multilingual model (about 129 MB). Admin only; recorded in the audit log."""
+    _kb_for(ctx, sess, kb_id)
+    if sess.role != "admin":
+        raise HTTPException(403, "Only Admins can download models.")
+    cls = embeddings.LocalMultilingualEmbeddings
+    if cls.available():
+        return {"ok": True, "message": "The model is already downloaded."}
+    try:
+        await run_in_threadpool(cls.download)
+    except Exception as e:
+        log.warning("model download failed", exc_info=True)
+        raise HTTPException(502, f"The download failed ({type(e).__name__}). Check the network and try again.")
+    ctx.store.record(sess.email, "embedding.download", "multilingual-e5-small", "intfloat/multilingual-e5-small from huggingface.co")
+    return {"ok": True, "message": "Downloaded."}
+
+
 @router.put("/kbs/{kb_id}")
 def update(kb_id: int, body: KBIn, sess: Session = Depends(admin_session), ctx: AdminContext = Depends(get_ctx)):
     current = kbs.get_kb(ctx.db, kb_id)
@@ -96,22 +274,29 @@ def update(kb_id: int, body: KBIn, sess: Session = Depends(admin_session), ctx: 
     sent = body.model_fields_set
     if body.department_id is not None and not _can(ctx, sess, body.department_id):
         raise HTTPException(403, "You can only move a knowledge base to a department you edit.")
+    emb_name = emb_config = None
+    if "embedding" in sent and body.embedding:
+        emb_name, emb_config = _checked_embedding(ctx, current, body.embedding, body.embedding_config or {}, body.embedding_secrets or {})
+    store_name = store_config = None
+    if "store" in sent and body.store:
+        store_name, store_config = _checked_store(ctx, current, body.store, body.store_config or {}, body.store_secrets or {})
     try:
         before, after = kbs.update_kb(
             ctx.db, kb_id, name=body.name if "name" in sent else None,
             description=body.description if "description" in sent else None, department_id=body.department_id,
             chunk_size=body.chunk_size if "chunk_size" in sent else "keep",
             chunk_overlap=body.chunk_overlap if "chunk_overlap" in sent else "keep",
-            chunk_strategy=body.chunk_strategy if "chunk_strategy" in sent else None)
+            chunk_strategy=body.chunk_strategy if "chunk_strategy" in sent else None,
+            embedding=emb_name, embedding_config=emb_config, store=store_name, store_config=store_config)
     except ValueError as e:
         raise HTTPException(422, str(e))
-    changes = [f"{k}: {before[k]} -> {after[k]}" for k in ("name", "description", "department_id", "chunk_size", "chunk_overlap", "chunk_strategy")
+    changes = [f"{k}: {before[k]} -> {after[k]}" for k in ("name", "description", "department_id", "chunk_size", "chunk_overlap", "chunk_strategy", "embedding", "store")
                if before[k] != after[k]]
     ctx.store.record(sess.email, "kb.update", after["name"], "; ".join(changes) or "no changes")
     with ctx.db.session() as s:
         names = dict(s.execute(select(Department.id, Department.name)).all())
     out = _present(ctx, after, names)
-    if any(before[k] != after[k] for k in ("chunk_size", "chunk_overlap", "chunk_strategy")):
+    if any(before[k] != after[k] for k in ("chunk_size", "chunk_overlap", "chunk_strategy", "embedding", "embedding_config", "store", "store_config")):
         out["note"] = "The index keeps its current settings until you rebuild it."
     return out
 

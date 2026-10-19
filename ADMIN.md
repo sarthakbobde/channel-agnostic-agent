@@ -179,6 +179,13 @@ All under `/admin/api`, JSON, cookie + `X-CSRF-Token` header for changes.
 | `GET /conversations`, `GET/DELETE /conversations/{id}` (under `/admin/api`, Admin only) | Browse, open and delete stored conversations; opening and deleting are audited |
 | `GET /conversations/retention/status`, `POST /conversations/retention/run`, `POST /conversations/export` (Admin only) | Retention status and run, and the audited export (off by default) |
 | `POST /kbs/{id}/chunk-preview` (multipart: file, strategy, chunk_size, chunk_overlap) | Preview the chunks a strategy makes from a sample file; nothing is saved |
+| `POST /kbs/{id}/embedding/test`, `POST /kbs/{id}/embedding/download` (Admin) | Try an embedding model without saving; download the local multilingual model |
+| `POST /kbs/{id}/store/test` | Try a vector store's connection without saving anything |
+| `GET /usage?group=&date_from=&date_to=`, `GET/PUT /prices`, `DELETE /prices/{id}` | Usage and cost (Editors: own departments); prices are Admin only |
+| `GET/PUT /alert-sinks`, `POST /alert-sinks/test` | Optional webhook and email notifications for new alerts (Admin only) |
+| `GET /me/alerts`, `POST /me/alerts/{id}/resolve` | Alerts meant for you (Admins: all) |
+| `GET /audit/search?actor=&action=&target=&date_from=&date_to=&limit=&offset=` | Filtered, paged audit log (Admin only) |
+| `GET /reports/guardrails`, `/reports/knowledge` (date range), `/reports/channels` | Reports (Admin only) |
 | `GET/POST /admins`, `DELETE /admins/{email}` | Older admin endpoints, kept for compatibility |
 
 ## Running the admin on its own port, and remote access

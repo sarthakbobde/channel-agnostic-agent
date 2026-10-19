@@ -9,6 +9,8 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from app import channels, chat_auth, chat_service, guardrails, identity, memory, prompts, retention, summaries
+from app.knowledge import storehealth
+from app.channels import health as channel_health
 from app.jobs import scheduler
 from app.providers import seed as provider_seed
 from app.knowledge import documents as knowledge_documents, kbs as knowledge_kbs
@@ -67,6 +69,8 @@ async def lifespan(app: FastAPI):
     scheduler.start()
     try:
         retention.register()
+        storehealth.register()
+        channel_health.register()
     except Exception:
         log.exception("could not schedule the retention job")
     if settings.admin_port:

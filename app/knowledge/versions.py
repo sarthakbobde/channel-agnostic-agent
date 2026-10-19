@@ -38,7 +38,7 @@ def _now() -> datetime:
 
 def _view(v: KBIndexVersion) -> dict:
     return {"id": v.id, "kb_id": v.kb_id, "version": v.version, "collection": v.collection, "chunk_size": v.chunk_size,
-            "chunk_overlap": v.chunk_overlap, "chunk_strategy": v.chunk_strategy or "recursive", "embedding": v.embedding, "store": v.store, "status": v.status,
+            "chunk_overlap": v.chunk_overlap, "chunk_strategy": v.chunk_strategy or "recursive", "embedding": v.embedding, "embedding_config": v.embedding_config or {}, "store_config": v.store_config or {}, "store": v.store, "status": v.status,
             "is_active": v.is_active, "chunks": v.chunks, "documents": v.documents, "progress_done": v.progress_done,
             "progress_total": v.progress_total, "error": v.error, "created_by": v.created_by, "created_at": v.created_at,
             "finished_at": v.finished_at, "retired_at": v.retired_at, "seconds": v.seconds}
@@ -73,6 +73,13 @@ def building(db: Database, kb_id: int) -> dict | None:
         return _view(v) if v else None
 
 
+def store_of(v: dict, kb: dict | None = None):
+    """The store a given index version lives in (Chroma, pgvector, ...), with the embedding model it was built with."""
+    kb = kb or {"id": v["kb_id"]}
+    return kbs.store_for({"collection": v["collection"], "id": v["kb_id"]}, embedder=embeddings.for_version(v, kb, get_db()),
+                         store=(v.get("store") or "chroma", v.get("store_config") or {}))
+
+
 def rebuilding(db: Database, kb_id: int) -> bool:
     return building(db, kb_id) is not None
 
@@ -81,7 +88,8 @@ def desired(db: Database, kb: dict) -> dict:
     """What a rebuild would build with: the knowledge base's chunk settings (or the global ones) and the embedding model."""
     size, overlap = chunkers.effective(kb.get("chunk_size"), kb.get("chunk_overlap"), db)
     return {"chunk_size": size, "chunk_overlap": overlap, "chunk_strategy": kb.get("chunk_strategy") or "recursive",
-            "embedding": embeddings.DEFAULT, "store": "chroma"}
+            "embedding": kb.get("embedding") or embeddings.DEFAULT, "embedding_config": kb.get("embedding_config") or {},
+            "store": kb.get("store") or "chroma", "store_config": kb.get("store_config") or {}}
 
 
 def active_chunker(db: Database, kb: dict) -> chunkers.Chunker:
@@ -89,7 +97,8 @@ def active_chunker(db: Database, kb: dict) -> chunkers.Chunker:
     v = active(db, kb["id"])
     if v is None:
         return chunkers.for_kb(kb, db)
-    return chunkers.build(v["chunk_strategy"], v["chunk_size"], v["chunk_overlap"])
+    embedder = embeddings.for_version(v, kb, db) if v["chunk_strategy"] == "semantic" and v["embedding"] != embeddings.DEFAULT else None
+    return chunkers.build(v["chunk_strategy"], v["chunk_size"], v["chunk_overlap"], embedder)
 
 
 def out_of_date(db: Database, kb: dict) -> bool:
@@ -97,7 +106,7 @@ def out_of_date(db: Database, kb: dict) -> bool:
     if v is None:
         return False
     d = desired(db, kb)
-    return any(v[k] != d[k] for k in ("chunk_size", "chunk_overlap", "chunk_strategy", "embedding", "store"))
+    return any(v[k] != d[k] for k in ("chunk_size", "chunk_overlap", "chunk_strategy", "embedding", "embedding_config", "store", "store_config"))
 
 
 def summary(db: Database, kb: dict) -> dict:
@@ -120,7 +129,7 @@ def init_for(db: Database, kb: dict, chunks: int | None = None) -> dict:
             chunks = 0
     with db.session() as s:
         v = KBIndexVersion(kb_id=kb["id"], version=1, collection=kb["collection"], chunk_size=d["chunk_size"],
-                           chunk_overlap=d["chunk_overlap"], chunk_strategy=d["chunk_strategy"], embedding=d["embedding"], store=d["store"], status="Ready",
+                           chunk_overlap=d["chunk_overlap"], chunk_strategy=d["chunk_strategy"], embedding=d["embedding"], embedding_config=d["embedding_config"], store=d["store"], store_config=d["store_config"], status="Ready",
                            is_active=True, chunks=chunks, documents=0, created_by="system", finished_at=_now())
         s.add(v)
         s.flush()
@@ -139,7 +148,7 @@ def recover_interrupted(db: Database | None = None) -> int:
     with db.session() as s:
         rows = [_view(v) for v in s.scalars(select(KBIndexVersion).where(KBIndexVersion.status == "Building"))]
     for v in rows:
-        kbs.store_for({"collection": v["collection"]}).delete()
+        store_of(v).delete()
         _finish(db, v["id"], status="Failed", error="Interrupted by a server restart. Start the rebuild again.")
     return len(rows)
 
@@ -152,7 +161,7 @@ def estimate(db: Database, kb_id: int) -> dict:
     if kb is None:
         raise ValueError("No such knowledge base.")
     d = desired(db, kb)
-    chunker = chunkers.build(d["chunk_strategy"], d["chunk_size"], d["chunk_overlap"])
+    chunker = chunkers.build(d["chunk_strategy"], d["chunk_size"], d["chunk_overlap"])        # (semantic chunking is estimated as fixed size: it embeds sentences to find breaks)
     department = kbs.department_name(db, kb["department_id"])
     chunks = chars = 0
     docs = problems = 0
@@ -168,15 +177,16 @@ def estimate(db: Database, kb_id: int) -> dict:
         chunks += len(texts)
         chars += sum(len(t) for t in texts)
     tokens = chars // CHARS_PER_TOKEN
-    model = embeddings.REGISTRY[d["embedding"]]
+    model_cls = embeddings.REGISTRY[d["embedding"]]
+    model = embeddings.get(d["embedding"], d["embedding_config"])
     last = next((v for v in list_versions(db, kb_id) if v["seconds"] and v["chunks"]), None)
     rate = (last["chunks"] / last["seconds"]) if last else DEFAULT_CHUNKS_PER_SECOND
-    price = model.cost_per_million_tokens
+    price = model.price_per_million()
     return {"documents": docs, "chunks": chunks, "tokens": tokens, "seconds": round(chunks / rate) if rate else None,
-            "cost_usd": None if price is None else round(tokens / 1_000_000 * price, 4),
-            "model": model.title, "skipped_documents": problems, "target": d,
+            "cost_usd": None if price is None else round(tokens / 1_000_000 * price, 6),
+            "model": model_cls.title, "warning": model_cls.warning, "skipped_documents": problems, "target": d,
             "note": ("Embedding runs on this machine, so there is no charge." if price == 0 else
-                     "Cost is not known for this embedding model." if price is None else "Cost is an estimate.")
+                     "Cost is not known for this embedding model." if price is None else "Cost uses the model's approximate list price; your plan may differ.")
                     + (" Time is measured from the last build." if last else " Time is a rough guess until a build has been measured.")}
 
 
@@ -199,12 +209,12 @@ def start_rebuild(db: Database, kb_id: int, actor: str) -> dict:
         number = max([n for (n,) in s.execute(select(KBIndexVersion.version).where(KBIndexVersion.kb_id == kb_id))] or [0]) + 1
         collection = f"kb_{kb_id}_v{number}"
         v = KBIndexVersion(kb_id=kb_id, version=number, collection=collection, chunk_size=d["chunk_size"],
-                           chunk_overlap=d["chunk_overlap"], chunk_strategy=d["chunk_strategy"], embedding=d["embedding"], store=d["store"],
+                           chunk_overlap=d["chunk_overlap"], chunk_strategy=d["chunk_strategy"], embedding=d["embedding"], embedding_config=d["embedding_config"], store=d["store"], store_config=d["store_config"],
                            status="Building", is_active=False, created_by=actor)
         s.add(v)
         s.flush()
         view = _view(v)
-    kbs.store_for({"collection": collection}).delete()           # a leftover collection of the same name must not leak in
+    store_of(view).delete()           # a leftover collection of the same name must not leak in
     _audit(actor, "kb.rebuild.start", kb["name"], f"version {number}: {d['chunk_strategy']}, chunk {d['chunk_size']}/{d['chunk_overlap']}")
     threading.Thread(target=_build, args=(db, view["id"], actor), name=f"rebuild-{kb_id}", daemon=True).start()
     return view
@@ -238,9 +248,10 @@ def _build(db: Database, vid: int, actor: str) -> None:
     with db.session() as s:
         v = _view(s.get(KBIndexVersion, vid))
     kb = kbs.get_kb(db, v["kb_id"])
-    store = kbs.store_for({"collection": v["collection"]})
+    embedder = embeddings.for_version(v, kb, db)
+    store = store_of(v, kb)
     try:
-        chunker = chunkers.build(v["chunk_strategy"], v["chunk_size"], v["chunk_overlap"])
+        chunker = chunkers.build(v["chunk_strategy"], v["chunk_size"], v["chunk_overlap"], embedder if v["chunk_strategy"] == "semantic" else None)
         department = kbs.department_name(db, kb["department_id"])
         docs = [d for d in documents.list_for_kb(db, kb["id"]) if d["status"] == "Indexed"]
         _progress(db, vid, progress_total=len(docs))
@@ -309,12 +320,15 @@ def prune(db: Database, kb_id: int) -> list[int]:
     with db.session() as s:
         rows = list(s.scalars(select(KBIndexVersion).where(KBIndexVersion.kb_id == kb_id, KBIndexVersion.status == "Ready",
                                                            KBIndexVersion.is_active.is_(False)).order_by(KBIndexVersion.version.desc())))
-        doomed = [(r.id, r.collection, r.version) for r in rows[1:]]
-        for rid, _, _ in doomed:
-            s.delete(s.get(KBIndexVersion, rid))
-    for _, collection, version in doomed:
-        kbs.store_for({"collection": collection}).delete()
-        removed.append(version)
+        doomed = [_view(r) for r in rows[1:]]
+        for v in doomed:
+            s.delete(s.get(KBIndexVersion, v["id"]))
+    for v in doomed:
+        try:
+            store_of(v).delete()
+        except Exception:
+            log.warning("could not remove the old index %s (version %s)", v["collection"], v["version"], exc_info=True)
+        removed.append(v["version"])
     return removed
 
 
@@ -380,9 +394,12 @@ def purge_kb(db: Database, kb_id: int) -> int:
     """Delete every version's collection and record of a knowledge base."""
     with db.session() as s:
         rows = list(s.scalars(select(KBIndexVersion).where(KBIndexVersion.kb_id == kb_id)))
-        names = [r.collection for r in rows]
+        views = [_view(r) for r in rows]
         for r in rows:
             s.delete(r)
-    for name in names:
-        kbs.store_for({"collection": name}).delete()
-    return len(names)
+    for v in views:
+        try:
+            store_of(v).delete()
+        except Exception:
+            log.warning("could not remove the index %s", v["collection"], exc_info=True)
+    return len(views)

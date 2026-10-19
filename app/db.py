@@ -100,6 +100,10 @@ class KnowledgeBase(Base):
     chunk_size: Mapped[int | None] = mapped_column(Integer, nullable=True)
     chunk_overlap: Mapped[int | None] = mapped_column(Integer, nullable=True)
     chunk_strategy: Mapped[str] = mapped_column(String(16), default="recursive")
+    embedding: Mapped[str] = mapped_column(String(40), default="chroma-default")
+    embedding_config: Mapped[dict] = mapped_column(JSON, default=dict)     # non-secret settings; secrets are stored encrypted
+    store: Mapped[str] = mapped_column(String(20), default="chroma")
+    store_config: Mapped[dict] = mapped_column(JSON, default=dict)
     is_default: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)
@@ -137,7 +141,9 @@ class KBIndexVersion(Base):
     chunk_overlap: Mapped[int] = mapped_column(Integer)
     chunk_strategy: Mapped[str] = mapped_column(String(16), default="recursive")
     embedding: Mapped[str] = mapped_column(String(40), default="chroma-default")
+    embedding_config: Mapped[dict] = mapped_column(JSON, default=dict)
     store: Mapped[str] = mapped_column(String(20), default="chroma")
+    store_config: Mapped[dict] = mapped_column(JSON, default=dict)
     status: Mapped[str] = mapped_column(String(12), default="Building")       # Building | Ready | Failed | Cancelled
     is_active: Mapped[bool] = mapped_column(Boolean, default=False)
     chunks: Mapped[int] = mapped_column(Integer, default=0)
@@ -288,7 +294,7 @@ class AuditLog(Base):
     ts: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, index=True)
     actor: Mapped[str] = mapped_column(String(254))
     action: Mapped[str] = mapped_column(String(64))
-    target: Mapped[str] = mapped_column(String(64), default="")
+    target: Mapped[str] = mapped_column(String(254), default="")
     detail: Mapped[str] = mapped_column(Text, default="")
 
 
@@ -391,6 +397,7 @@ class Alert(Base):
     count: Mapped[int] = mapped_column(Integer, default=1)
     resolved: Mapped[bool] = mapped_column(Boolean, default=False)
     resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    audience: Mapped[str] = mapped_column(String(254), default="")        # '' = Admins only; an email = that person sees it too
 
 
 class Database:

@@ -14,6 +14,7 @@ services:
       - rag_chats:/app/chats
       - rag_chroma_db:/app/chroma_db
       - rag_kb_files:/app/data/kb_files
+      - rag_models:/app/models
       - ./data/docs:/app/data/docs:ro
       - ./channels.yaml:/app/channels.yaml:ro
     environment:
@@ -50,6 +51,7 @@ services:
       - CHAT_DIR=/app/chats
       - CHROMA_PATH=/app/chroma_db
       - DOCS_DIR=/app/data/kb_files
+      - MODELS_DIR=/app/models
       - MAX_UPLOAD_MB=${MAX_UPLOAD_MB:-25}
       - COLLECTION_NAME=${COLLECTION_NAME:-docs}
       # First-run seeds for Global Settings (edit them afterwards on the admin Settings screen)
@@ -68,4 +70,6 @@ volumes:
   rag_chroma_db:
     driver: local
   rag_kb_files:
+    driver: local
+  rag_models:
     driver: local

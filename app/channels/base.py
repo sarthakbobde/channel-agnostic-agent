@@ -59,6 +59,11 @@ class Adapter(ABC):
         """Handle an inbound HTTP request (webhook channels only)."""
         raise NotImplementedError
 
+    def healthy(self) -> bool:
+        """Is the connection to the platform alive right now? Webhook channels have nothing to hold open, so they are healthy
+        while running; socket channels override this."""
+        return True
+
     def test(self) -> tuple[bool, str]:
         """Check the credentials against the platform. Returns (ok, message)."""
         return True, "No connection test available for this channel."

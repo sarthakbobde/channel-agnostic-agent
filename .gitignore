@@ -25,3 +25,6 @@ admin_data/
 chroma_db.bak-*/
 data/kb_files/
 chats.bak-*/
+
+# downloaded embedding models
+models/

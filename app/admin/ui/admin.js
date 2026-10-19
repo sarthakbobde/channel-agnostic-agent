@@ -122,14 +122,10 @@
   }
 
   // ---- shell ----------------------------------------------------------------------
-  var TABS = [["channels", "Channels"], ["settings", "Settings"], ["providers", "Providers"], ["knowledge", "Knowledge bases"], ["groups", "Groups"], ["prompts", "Prompts"], ["guardrails", "Guardrails"], ["conversations", "Conversations"], ["departments", "Departments"], ["users", "Users"], ["audit", "Audit log"], ["account", "Account"]];
+  var TABS = [["channels", "Channels"], ["settings", "Settings"], ["providers", "Providers"], ["knowledge", "Knowledge bases"], ["groups", "Groups"], ["prompts", "Prompts"], ["guardrails", "Guardrails"], ["conversations", "Conversations"], ["usage", "Usage and cost"], ["reports", "Reports"], ["departments", "Departments"], ["users", "Users"], ["audit", "Audit log"], ["account", "Account"]];
   // Planned, not built yet: shown greyed out so admins can see what is coming. [label, tooltip]
   var UPCOMING = [
-    ["Model-based detection", "Upcoming (later): detection models for prompt-injection and toxic language, to catch paraphrases and other languages. Today these checks are rule-based (known phrasing and word lists)."],
-    ["Embedding models", "Upcoming (phase 8): OpenAI, Azure OpenAI, Cohere and multilingual models, with cost tracking. Today: the built-in local MiniLM model."],
-    ["Vector stores", "Upcoming (phase 8): pgvector and Azure AI Search, with health checks. Today: ChromaDB."],
-    ["Usage and cost", "Upcoming (phase 9): tokens and cost by provider, model, department and knowledge base, by day and month, with an editable price list."],
-    ["Reports", "Upcoming (phase 9): guardrail, knowledge base and channel reports, and an audit log you can filter by person, action and date."]
+    ["Model-based detection", "Upcoming (later): detection models for prompt-injection and toxic language, to catch paraphrases and other languages. Today these checks are rule-based (known phrasing and word lists)."]
   ];
 
   function renderShell() {
@@ -151,7 +147,7 @@
       tabs);
     var main = h("main", {});
     mount(h("div", { class: "app" }, nav, main));
-    var view = { channels: viewChannels, settings: viewSettings, providers: viewProviders, knowledge: viewKnowledge, groups: viewGroups, prompts: viewPrompts, guardrails: viewGuardrails, conversations: viewConversations, departments: viewDepartments, users: viewUsers, audit: viewAudit, account: viewAccount }[state.tab];
+    var view = { channels: viewChannels, settings: viewSettings, providers: viewProviders, knowledge: viewKnowledge, groups: viewGroups, prompts: viewPrompts, guardrails: viewGuardrails, conversations: viewConversations, usage: viewUsage, reports: viewReports, departments: viewDepartments, users: viewUsers, audit: viewAudit, account: viewAccount }[state.tab];
     view(main);
     loadAlerts(main);
   }
@@ -356,6 +352,59 @@
     }
     try { show(await api("GET", "/settings")); }
     catch (err) { if (me) holder.replaceChildren(msg("bad", err.message)); }
+
+    // optional notifications: where new alerts are also sent (off by default)
+    var sinkBox = h("div", { class: "panel" });
+    async function loadSinks(notice) {
+      try {
+        var c = await api("GET", "/alert-sinks");
+        var wOn = h("input", { type: "checkbox", id: "as_w", checked: c.webhook_enabled });
+        var wUrl = h("input", { type: "password", id: "as_wurl", autocomplete: "off", placeholder: c.secrets_set.indexOf("webhook_url") >= 0 ? "set (type a new one to replace)" : "https://hooks.slack.com/…" });
+        var mOn = h("input", { type: "checkbox", id: "as_m", checked: c.smtp_enabled });
+        var host = h("input", { type: "text", id: "as_host", value: c.smtp_host, autocomplete: "off" });
+        var port = h("input", { type: "number", id: "as_port", value: c.smtp_port, min: 1, max: 65535 });
+        var user = h("input", { type: "text", id: "as_user", value: c.smtp_user, autocomplete: "off" });
+        var pw = h("input", { type: "password", id: "as_pw", autocomplete: "new-password", placeholder: c.secrets_set.indexOf("smtp_password") >= 0 ? "set (type a new one to replace)" : "" });
+        var from = h("input", { type: "email", id: "as_from", value: c.smtp_from, autocomplete: "off" });
+        var to = h("input", { type: "text", id: "as_to", value: (c.smtp_to || []).join(", "), placeholder: "comma-separated", autocomplete: "off" });
+        var sev = selectOf([["warning", "Warnings and errors"], ["error", "Errors only"]], c.min_severity, null, "Send");
+        sev.id = "as_sev";
+        var out = h("div", { "aria-live": "polite" });
+        var save = h("button", { type: "button", class: "btn primary", onclick: async function () {
+          out.replaceChildren(msg("wait", "Saving…"));
+          try {
+            var secrets = {};
+            if (wUrl.value) secrets.webhook_url = wUrl.value;
+            if (pw.value) secrets.smtp_password = pw.value;
+            await api("PUT", "/alert-sinks", { values: { webhook_enabled: wOn.checked, smtp_enabled: mOn.checked, smtp_host: host.value, smtp_port: Number(port.value), smtp_user: user.value,
+              smtp_from: from.value, smtp_to: to.value.split(",").map(function (x) { return x.trim(); }).filter(Boolean), min_severity: sev.value }, secrets: secrets });
+            await loadSinks(msg("ok", "Saved."));
+          } catch (err) { if (me) out.replaceChildren(msg("bad", err.message)); }
+        } }, "Save");
+        var test = h("button", { type: "button", class: "btn", onclick: async function () {
+          out.replaceChildren(msg("wait", "Sending a test…"));
+          try { var r = await api("POST", "/alert-sinks/test", {}); out.replaceChildren(msg(Object.keys(r.results).every(function (k) { return r.results[k] === "sent"; }) && Object.keys(r.results).length ? "ok" : "bad",
+            r.message || Object.keys(r.results).map(function (k) { return k + ": " + r.results[k]; }).join(", "))); }
+          catch (err) { if (me) out.replaceChildren(msg("bad", err.message)); }
+        } }, "Send a test");
+        sinkBox.replaceChildren(h("h3", {}, "Alert notifications"),
+          h("p", { class: "note" }, "Alerts always appear as banners on this page. You can also have each NEW alert sent to a chat webhook (Slack-compatible) and/or by email. Off by default; addresses and passwords are stored encrypted."),
+          h("div", { class: "form" },
+            h("div", { class: "field" }, h("label", { class: "check", for: "as_w" }, wOn, "Send to a webhook")),
+            h("div", { class: "field wide" }, h("label", { class: "l", for: "as_wurl" }, "Webhook address"), wUrl),
+            h("div", { class: "field" }, h("label", { class: "check", for: "as_m" }, mOn, "Send by email")),
+            h("div", { class: "field" }, h("label", { class: "l", for: "as_host" }, "Mail server"), host),
+            h("div", { class: "field" }, h("label", { class: "l", for: "as_port" }, "Port"), port),
+            h("div", { class: "field" }, h("label", { class: "l", for: "as_user" }, "User name"), user),
+            h("div", { class: "field" }, h("label", { class: "l", for: "as_pw" }, "Password"), pw),
+            h("div", { class: "field" }, h("label", { class: "l", for: "as_from" }, "From"), from),
+            h("div", { class: "field wide" }, h("label", { class: "l", for: "as_to" }, "To"), to),
+            h("div", { class: "field" }, h("label", { class: "l", for: "as_sev" }, "Send"), sev)),
+          h("div", { class: "actions" }, save, test), out, notice || null);
+      } catch (err) { if (me) sinkBox.replaceChildren(msg("bad", err.message)); }
+    }
+    main.appendChild(sinkBox);
+    loadSinks();
   }
 
   function flash(el, kind, text) { el.replaceChildren(msg(kind, text)); }
@@ -377,14 +426,14 @@
   // Open alerts (a provider out of credit, a fallback in use, ...) shown above every screen.
   async function loadAlerts(main) {
     try {
-      var list = await api("GET", "/alerts");
+      var list = await api("GET", "/me/alerts");
       if (!list.length) return;
       var box = h("div", { class: "banners", role: "region", "aria-label": "Alerts" });
       list.forEach(function (a) {
         var row = h("div", { class: "banner " + a.severity },
           h("span", {}, a.message + (a.count > 1 ? " (" + a.count + " times)" : "")),
           h("button", { type: "button", class: "btn small", onclick: async function () {
-            try { await api("POST", "/alerts/" + a.id + "/resolve", {}); row.remove(); if (!box.children.length) box.remove(); }
+            try { await api("POST", "/me/alerts/" + a.id + "/resolve", {}); row.remove(); if (!box.children.length) box.remove(); }
             catch (err) { /* leave it */ }
           } }, "Dismiss"));
         box.appendChild(row);
@@ -561,22 +610,93 @@
   // ---- audit ----------------------------------------------------------------------
   async function viewAudit(main) {
     main.appendChild(h("h2", {}, "Audit log"));
-    main.appendChild(h("p", { class: "sub" }, "Who changed what and when. Secret values are never recorded."));
+    main.appendChild(h("p", { class: "sub" }, "Who changed what and when. Secret values are never recorded. Filter by person, action, target and date."));
+    var PAGE = 50, offset = 0, first = true;
+    var actor = selectOf([["", "Anyone"]], "", function () { offset = 0; load(); }, "Person");
+    actor.id = "au_actor";
+    var action = selectOf([["", "Any action"]], "", function () { offset = 0; load(); }, "Action");
+    action.id = "au_action";
+    var target = h("input", { type: "search", id: "au_target", placeholder: "target contains…", autocomplete: "off", "aria-label": "Target contains",
+      onchange: function () { offset = 0; load(); } });
+    var from = h("input", { type: "date", id: "au_from", "aria-label": "From date", onchange: function () { offset = 0; load(); } });
+    var to = h("input", { type: "date", id: "au_to", "aria-label": "To date", onchange: function () { offset = 0; load(); } });
     var holder = h("div", {}, msg("wait", "Loading…"));
+    main.appendChild(h("div", { class: "filters" }, actor, action, target, from, to));
     main.appendChild(holder);
-    try {
-      var rows = await api("GET", "/audit?limit=200");
+
+    function fill(sel, items, label) {
+      var keep = sel.value;
+      sel.replaceChildren(h("option", { value: "" }, label));
+      items.forEach(function (x) { sel.appendChild(h("option", { value: x }, x)); });
+      sel.value = items.indexOf(keep) >= 0 ? keep : "";
+    }
+    async function load() {
+      var q = "?actor=" + encodeURIComponent(actor.value) + "&action=" + encodeURIComponent(action.value) + "&target=" + encodeURIComponent(target.value)
+        + "&date_from=" + from.value + "&date_to=" + to.value + "&limit=" + PAGE + "&offset=" + offset;
+      try {
+        var r = await api("GET", "/audit/search" + q);
+        if (first) { fill(actor, r.actors, "Anyone"); fill(action, r.actions, "Any action"); first = false; }
+        var body = h("tbody", {});
+        r.rows.forEach(function (x) {
+          body.appendChild(h("tr", {}, h("td", { class: "nw", "data-label": "Time" }, when(x.ts)),
+            h("td", { class: "wrap", "data-label": "Actor" }, x.actor),
+            h("td", { class: "nw", "data-label": "Action" }, x.action),
+            h("td", { class: "wrap", "data-label": "Target" }, x.target),
+            h("td", { class: "wrap", "data-label": "Detail" }, x.detail)));
+        });
+        var last = Math.min(offset + PAGE, r.total);
+        var prev = h("button", { type: "button", class: "btn", disabled: offset === 0, onclick: function () { offset = Math.max(0, offset - PAGE); load(); } }, "Previous");
+        var next = h("button", { type: "button", class: "btn", disabled: last >= r.total, onclick: function () { offset += PAGE; load(); } }, "Next");
+        holder.replaceChildren(
+          r.rows.length ? h("div", { class: "tablewrap" }, h("table", {},
+            h("thead", {}, h("tr", {}, ["Time", "Actor", "Action", "Target", "Detail"].map(function (c) { return h("th", {}, c); }))), body)) : h("p", { class: "sub" }, "Nothing matches."),
+          h("div", { class: "actions" }, prev, next, h("span", { class: "meta", "aria-live": "polite" }, r.total ? (offset + 1) + "–" + last + " of " + r.total : "0 results")));
+      } catch (err) { if (me) holder.replaceChildren(msg("bad", err.message)); }
+    }
+    load();
+  }
+
+  // ---- reports ---------------------------------------------------------------------
+  async function viewReports(main) {
+    main.appendChild(h("h2", {}, "Reports"));
+    main.appendChild(h("p", { class: "sub" }, "Summaries of guardrail activity, knowledge bases and channels, taken straight from what is stored."));
+    var from = h("input", { type: "date", id: "rp_from", "aria-label": "From date", onchange: function () { load(); } });
+    var to = h("input", { type: "date", id: "rp_to", "aria-label": "To date", onchange: function () { load(); } });
+    var holder = h("div", {}, msg("wait", "Loading…"));
+    main.appendChild(h("div", { class: "filters" }, h("label", { for: "rp_from" }, "From"), from, h("label", { for: "rp_to" }, "To"), to));
+    main.appendChild(holder);
+    function n(x) { return Number(x).toLocaleString(); }
+    function table(cols, rows) {
       var body = h("tbody", {});
       rows.forEach(function (r) {
-        body.appendChild(h("tr", {}, h("td", { class: "nw", "data-label": "Time" }, when(r.ts)),
-          h("td", { class: "wrap", "data-label": "Actor" }, r.actor),
-          h("td", { class: "nw", "data-label": "Action" }, r.action),
-          h("td", { class: "nw", "data-label": "Target" }, r.target),
-          h("td", { class: "wrap", "data-label": "Detail" }, r.detail)));
+        body.appendChild(h("tr", {}, r.map(function (c, i) { return h("td", { class: "wrap", "data-label": cols[i] }, c === null || c === undefined ? "–" : String(c)); })));
       });
-      holder.replaceChildren(h("div", { class: "tablewrap" }, h("table", {},
-        h("thead", {}, h("tr", {}, ["Time", "Actor", "Action", "Target", "Detail"].map(function (t) { return h("th", {}, t); }))), body)));
-    } catch (err) { if (me) holder.replaceChildren(msg("bad", err.message)); }
+      return rows.length ? h("div", { class: "tablewrap" }, h("table", {}, h("thead", {}, h("tr", {}, cols.map(function (c) { return h("th", {}, c); }))), body)) : h("p", { class: "sub" }, "Nothing yet.");
+    }
+    function bytes(x) { return x < 1024 ? x + " B" : x < 1048576 ? (x / 1024).toFixed(1) + " KB" : (x / 1048576).toFixed(1) + " MB"; }
+    async function load() {
+      var q = "?date_from=" + from.value + "&date_to=" + to.value;
+      try {
+        var g = await api("GET", "/reports/guardrails" + q);
+        var k = await api("GET", "/reports/knowledge" + q);
+        var c = await api("GET", "/reports/channels");
+        function counts(list) { return table(["Name", "Times"], list.map(function (x) { return [x.name, n(x.count)]; })); }
+        holder.replaceChildren(
+          h("div", { class: "panel" }, h("h3", {}, "Guardrails (" + n(g.total) + " events)"),
+            h("h4", {}, "By check"), counts(g.by_check), h("h4", {}, "By direction"), counts(g.by_direction),
+            h("h4", {}, "By action"), counts(g.by_action), h("h4", {}, "By department"), counts(g.by_department)),
+          h("div", { class: "panel" }, h("h3", {}, "Knowledge bases"),
+            table(["Knowledge base", "Documents", "Chunks", "Size", "Last indexed", "Answered", "Not found", "Embedding tokens"],
+              k.rows.map(function (x) {
+                return [x.name, Object.keys(x.by_status).map(function (s) { return x.by_status[s] + " " + s.toLowerCase(); }).join(", ") || "none", n(x.chunks), bytes(x.size_bytes),
+                  x.last_indexed ? when(x.last_indexed) : "never", n(x.answered), n(x.not_found), n(x.embedding_tokens)];
+              }))),
+          h("div", { class: "panel" }, h("h3", {}, "Channels"),
+            table(["Channel", "Switched on", "Running", "Conversations", "Last activity"],
+              c.rows.map(function (x) { return [x.title, x.enabled ? "yes" : "no", x.running ? "yes" : "no", n(x.conversations), x.last_activity ? when(x.last_activity) : "never"]; }))));
+      } catch (err) { if (me) holder.replaceChildren(msg("bad", err.message)); }
+    }
+    load();
   }
 
   // ---- set-password page (opened from a one-time link: /admin#setpw=<token>) ---------------
@@ -941,6 +1061,137 @@
       return box;
     }
 
+    // ---- embedding model of this knowledge base -----------------------------------------------
+    function embeddingPanel(k, data) {
+      var box = h("div", { class: "docs" });
+      var out = h("div", { "aria-live": "polite" });
+      var form = h("div", {});
+      var info = h("div", {});
+      var options = data.embeddings;
+      var pick = selectOf(options.map(function (o) { return [o.name, o.title]; }), k.embedding, null, "Embedding model");
+      pick.id = "em" + k.id;
+      var current = null;                                              // { opt, sf, defaults }
+
+      function draw() {
+        var opt = options.filter(function (o) { return o.name === pick.value; })[0];
+        var same = pick.value === k.embedding;
+        var defaults = {};
+        var fields = opt.fields.map(function (f) {
+          if (f.default !== null && f.default !== undefined && f.default !== "") defaults[f.name] = f.default;
+          var v = same && k.embedding_config[f.name] !== undefined ? k.embedding_config[f.name] : (f.default === null || f.default === undefined ? "" : f.default);
+          return Object.assign({}, f, { value: v, is_set: same && k.embedding_secrets_set.indexOf(f.name) >= 0, kind: f.kind === "number" ? "text" : f.kind });
+        });
+        var sf = specForm(fields);
+        current = { opt: opt, sf: sf, defaults: defaults };
+        var kids = [];
+        if (opt.warning) kids.push(h("div", { class: "meta bad" }, opt.warning));
+        if (opt.fields.length) kids.push(sf.el);
+        if (opt.needs_download) {
+          kids.push(h("p", { class: "note" }, "This model must be downloaded once (about 129 MB, from huggingface.co/intfloat/multilingual-e5-small, MIT licence). It then runs on this machine."));
+          if (state.perm && state.perm.can_manage_all) kids.push(h("div", { class: "actions" }, h("button", { type: "button", class: "btn", onclick: async function () {
+            out.replaceChildren(msg("wait", "Downloading… this can take a minute."));
+            try { var r = await api("POST", "/kbs/" + k.id + "/embedding/download", {}); opt.needs_download = false; out.replaceChildren(msg("ok", r.message)); draw(); }
+            catch (err) { if (me) out.replaceChildren(msg("bad", err.message)); }
+          } }, "Download the model")));
+        }
+        form.replaceChildren.apply(form, kids);
+        info.replaceChildren(h("div", { class: "meta" }, "The current index was built with: " + (options.filter(function (o) { return o.name === k.active_embedding; })[0] || { title: k.active_embedding || "?" }).title
+          + (k.embedding !== k.active_embedding ? ". The chosen model is different, so the index needs a rebuild." : ".")));
+      }
+      function collect() {
+        var vals = Object.assign({}, current.defaults, current.sf.collect());
+        var secrets = {}, config = {};
+        current.opt.fields.forEach(function (f) {
+          if (vals[f.name] === undefined) return;
+          if (f.secret) secrets[f.name] = vals[f.name]; else config[f.name] = vals[f.name];
+        });
+        return { embedding: pick.value, embedding_config: config, embedding_secrets: secrets };
+      }
+      pick.addEventListener("change", draw);
+      var test = h("button", { type: "button", class: "btn", onclick: async function () {
+        out.replaceChildren(msg("wait", "Testing…"));
+        try { var r = await api("POST", "/kbs/" + k.id + "/embedding/test", collect()); out.replaceChildren(msg(r.ok ? "ok" : "bad", r.message)); }
+        catch (err) { if (me) out.replaceChildren(msg("bad", err.message)); }
+      } }, "Test");
+      var save = h("button", { type: "button", class: "btn primary", onclick: async function () {
+        out.replaceChildren(msg("wait", "Testing and saving…"));
+        try { var r = await api("PUT", "/kbs/" + k.id, collect()); out.replaceChildren(msg("ok", "Saved. Rebuild the index below to start using it; until then the current index keeps answering.")); }
+        catch (err) { if (me) out.replaceChildren(msg("bad", err.message)); }
+      } }, "Save");
+      box.appendChild(h("h4", {}, "Embedding model"));
+      box.appendChild(h("p", { class: "note" }, "Turns document text into vectors for searching. Changing it needs a rebuild of the index (see below); questions keep using the model the current index was built with until the switch."));
+      box.appendChild(h("div", { class: "field wide" }, h("label", { class: "l", for: "em" + k.id }, "Model"), pick));
+      box.appendChild(info);
+      box.appendChild(form);
+      box.appendChild(h("div", { class: "actions" }, test, save));
+      box.appendChild(out);
+      draw();
+      return box;
+    }
+
+    // ---- vector store of this knowledge base --------------------------------------------------
+    function storePanel(k, data) {
+      var box = h("div", { class: "docs" });
+      var out = h("div", { "aria-live": "polite" });
+      var form = h("div", {});
+      var options = data.stores;
+      var title = function (n) { return (options.filter(function (o) { return o.name === n; })[0] || { title: n || "?" }).title; };
+      var pick = selectOf(options.map(function (o) { return [o.name, o.title]; }), k.store, null, "Vector store");
+      pick.id = "vs" + k.id;
+      var current = null;
+
+      function draw() {
+        var opt = options.filter(function (o) { return o.name === pick.value; })[0];
+        var same = pick.value === k.store;
+        var fields = opt.fields.map(function (f) {
+          var v = same && k.store_config[f.name] !== undefined ? k.store_config[f.name] : (f.default === null || f.default === undefined ? "" : f.default);
+          return Object.assign({}, f, { value: v, is_set: same && k.store_secrets_set.indexOf(f.name) >= 0 });
+        });
+        var defaults = {};
+        opt.fields.forEach(function (f) { if (f.default !== null && f.default !== undefined && f.default !== "") defaults[f.name] = f.default; });
+        var sf = specForm(fields);
+        current = { opt: opt, sf: sf, defaults: defaults };
+        var kids = [];
+        if (opt.warning) kids.push(h("div", { class: "meta bad" }, opt.warning));
+        if (opt.fields.length) kids.push(sf.el);
+        form.replaceChildren.apply(form, kids);
+      }
+      function collect() {
+        var vals = Object.assign({}, current.defaults, current.sf.collect());
+        var secrets = {}, config = {};
+        current.opt.fields.forEach(function (f) {
+          if (vals[f.name] === undefined) return;
+          if (f.secret) secrets[f.name] = vals[f.name]; else config[f.name] = vals[f.name];
+        });
+        return { store: pick.value, store_config: config, store_secrets: secrets };
+      }
+      pick.addEventListener("change", draw);
+      var size = k.size_bytes ? " · " + (k.size_bytes >= 1048576 ? (k.size_bytes / 1048576).toFixed(1) + " MB" : Math.max(1, Math.round(k.size_bytes / 1024)) + " KB") : "";
+      var status = h("div", { class: "meta" }, h("span", { class: "pill " + (k.health && k.health.ok ? "ok" : "bad") }, k.health && k.health.ok ? "Reachable" : "Not reachable"),
+        " Active index in " + title(k.active_store) + " · " + (k.chunks === null ? "?" : k.chunks) + " chunks" + size
+        + (k.last_indexed ? " · last indexed " + when(k.last_indexed) : "") + (k.health && !k.health.ok ? " · " + k.health.message : "")
+        + (k.store !== k.active_store ? ". The chosen store is different, so the index needs a rebuild." : "."));
+      var test = h("button", { type: "button", class: "btn", onclick: async function () {
+        out.replaceChildren(msg("wait", "Testing…"));
+        try { var r = await api("POST", "/kbs/" + k.id + "/store/test", collect()); out.replaceChildren(msg(r.ok ? "ok" : "bad", r.message)); }
+        catch (err) { if (me) out.replaceChildren(msg("bad", err.message)); }
+      } }, "Test");
+      var save = h("button", { type: "button", class: "btn primary", onclick: async function () {
+        out.replaceChildren(msg("wait", "Testing and saving…"));
+        try { await api("PUT", "/kbs/" + k.id, collect()); out.replaceChildren(msg("ok", "Saved. Rebuild the index below to move it; until then the current index keeps answering.")); }
+        catch (err) { if (me) out.replaceChildren(msg("bad", err.message)); }
+      } }, "Save");
+      box.appendChild(h("h4", {}, "Vector store"));
+      box.appendChild(h("p", { class: "note" }, "Where this knowledge base keeps its vectors. Changing it needs a rebuild of the index (see below): the new index is built beside the old one and used only when it is complete."));
+      box.appendChild(status);
+      box.appendChild(h("div", { class: "field wide" }, h("label", { class: "l", for: "vs" + k.id }, "Store"), pick));
+      box.appendChild(form);
+      box.appendChild(h("div", { class: "actions" }, test, save));
+      box.appendChild(out);
+      draw();
+      return box;
+    }
+
     // ---- chunk preview: run a strategy on a sample file without saving anything ---------------
     function previewPanel(k, data, strat, size, overlap) {
       var box = h("div", { class: "docs" });
@@ -997,7 +1248,7 @@
             h("b", {}, "Rebuild estimate"),
             h("p", { class: "note" }, e.documents + " documents → about " + e.chunks + " chunks (" + e.tokens + " tokens), chunk size " + e.target.chunk_size
               + " / overlap " + e.target.chunk_overlap + ", " + e.model + ". Time: about " + secs(e.seconds) + ". " + money(e) + ". "
-              + e.note + (e.skipped_documents ? " " + e.skipped_documents + " document(s) cannot be read and will be left out." : "")),
+              + e.note + (e.warning ? " " + e.warning : "") + (e.skipped_documents ? " " + e.skipped_documents + " document(s) cannot be read and will be left out." : "")),
             h("p", { class: "note" }, "The current index keeps answering until the new one is complete. Documents cannot be changed while it builds."),
             h("div", { class: "actions" },
               h("button", { type: "button", class: "btn primary", onclick: start }, "Start rebuild"),
@@ -1132,7 +1383,7 @@
           h("div", { class: "field" }, h("label", { class: "l", for: "ko" + k.id }, "Chunk overlap (characters)"), overlap),
           h("div", { class: "field" }, h("div", { class: "l" }, "Embedding model"), h("div", {}, "Local MiniLM (built in)")),
           h("div", { class: "field" }, h("div", { class: "l" }, "Vector store"), h("div", {}, "Chroma"))),
-        h("div", { class: "actions" }, save, del), out, askPanel(k), previewPanel(k, data, strat, size, overlap), indexPanel(k), docsPanel(k, data));
+        h("div", { class: "actions" }, save, del), out, askPanel(k), embeddingPanel(k, data), storePanel(k, data), previewPanel(k, data, strat, size, overlap), indexPanel(k), docsPanel(k, data));
     }
 
     async function load(notice) {
@@ -1450,6 +1701,100 @@
     load();
     loadRetention();
     loadExport();
+  }
+
+  // ---- usage and cost -------------------------------------------------------------------
+  async function viewUsage(main) {
+    var isAdmin = state.perm && state.perm.can_manage_all;
+    main.appendChild(h("h2", {}, "Usage and cost"));
+    main.appendChild(h("p", { class: "sub" }, (isAdmin ? "Every model call: answers, routing, summaries, previews and embeddings." : "Model usage of your departments.")
+      + " Cost is counted only for models that have a price; calls without one are shown as unpriced, so a total is never the whole truth."));
+    var GROUPS = [["provider", "Provider"], ["model", "Model"], ["department", "Department"], ["kb", "Knowledge base"], ["purpose", "Purpose"], ["kind", "Answers or embeddings"], ["day", "Day"], ["month", "Month"]];
+    var group = selectOf(GROUPS, "provider", null, "Group by");
+    group.id = "us_group";
+    var from = h("input", { type: "date", id: "us_from", "aria-label": "From date" });
+    var to = h("input", { type: "date", id: "us_to", "aria-label": "To date" });
+    var preset = selectOf([["", "Any time"], ["7", "Last 7 days"], ["30", "Last 30 days"], ["month", "This month"]], "", function (e) {
+      var v = e.target.value, now = new Date(), iso = function (d) { return d.toISOString().slice(0, 10); };
+      if (v === "7" || v === "30") { var d = new Date(); d.setDate(d.getDate() - Number(v)); from.value = iso(d); to.value = iso(now); }
+      else if (v === "month") { from.value = iso(new Date(now.getFullYear(), now.getMonth(), 1)); to.value = iso(now); }
+      else { from.value = ""; to.value = ""; }
+      load();
+    }, "Period");
+    preset.id = "us_period";
+    var list = h("div", {});
+    var priceBox = h("div", { class: "panel" });
+    function n(x) { return Number(x).toLocaleString(); }
+    function money(x) { return x === 0 ? "$0" : "$" + (x < 0.01 ? x.toFixed(6) : x.toFixed(4)); }
+
+    async function load() {
+      try {
+        var r = await api("GET", "/usage?group=" + group.value + "&date_from=" + from.value + "&date_to=" + to.value);
+        var maxCost = Math.max.apply(null, r.rows.map(function (x) { return x.cost; }).concat([0.000001]));
+        var body = h("tbody", {});
+        r.rows.forEach(function (x) {
+          body.appendChild(h("tr", {},
+            h("td", { class: "wrap", "data-label": "Group" }, x.label),
+            h("td", { class: "nw", "data-label": "Calls" }, n(x.calls) + (x.failed_calls ? " (" + x.failed_calls + " failed)" : "")),
+            h("td", { class: "nw", "data-label": "Tokens in" }, n(x.input_tokens)),
+            h("td", { class: "nw", "data-label": "Tokens out" }, n(x.output_tokens)),
+            h("td", { class: "nw", "data-label": "Cost" }, money(x.cost), " ", h("meter", { min: 0, max: maxCost, value: x.cost, "aria-label": "Share of cost" })),
+            h("td", { class: "nw", "data-label": "Unpriced" }, x.unpriced_calls ? h("span", { class: "pill off" }, x.unpriced_calls + " calls") : "–")));
+        });
+        var t = r.totals;
+        body.appendChild(h("tr", {}, h("td", {}, h("b", {}, "Total (" + r.scope + ")")), h("td", { class: "nw" }, n(t.calls)), h("td", { class: "nw" }, n(t.input_tokens)),
+          h("td", { class: "nw" }, n(t.output_tokens)), h("td", { class: "nw" }, h("b", {}, money(t.cost))),
+          h("td", { class: "nw" }, t.unpriced_calls ? h("span", { class: "pill bad" }, t.unpriced_calls + " unpriced") : "–")));
+        list.replaceChildren(r.rows.length ? h("div", { class: "tablewrap" }, h("table", {}, h("thead", {}, h("tr", {},
+          ["Group", "Calls", "Tokens in", "Tokens out", "Cost", "Unpriced"].map(function (c) { return h("th", {}, c); }))), body)) : h("p", { class: "sub" }, "No usage in this period."),
+          t.unpriced_calls ? msg("bad", t.unpriced_calls + " successful calls have no price, so the cost above is a minimum. " + (isAdmin ? "Set prices below." : "Ask an Admin to set prices.")) : null);
+      } catch (err) { if (me) list.replaceChildren(msg("bad", err.message)); }
+    }
+
+    async function loadPrices(notice) {
+      try {
+        var r = await api("GET", "/prices");
+        var body = h("tbody", {});
+        r.prices.forEach(function (p) {
+          body.appendChild(h("tr", {}, h("td", { "data-label": "Provider type" }, p.provider_type), h("td", { class: "wrap", "data-label": "Model" }, p.model),
+            h("td", { class: "nw", "data-label": "Input / 1k tokens" }, "$" + p.input_per_1k), h("td", { class: "nw", "data-label": "Output / 1k tokens" }, "$" + p.output_per_1k),
+            h("td", { class: "act" }, confirmButton("Delete", "Confirm delete", async function () {
+              try { await api("DELETE", "/prices/" + p.id); await loadPrices(msg("ok", "Price removed.")); load(); } catch (err) { if (me) priceBox.insertBefore(msg("bad", err.message), priceBox.firstChild); }
+            }, true))));
+        });
+        var ptype = h("input", { type: "text", id: "pr_type", placeholder: "openai, google, anthropic…", autocomplete: "off", "aria-label": "Provider type" });
+        var model = h("input", { type: "text", id: "pr_model", placeholder: "model name", autocomplete: "off", "aria-label": "Model" });
+        var pin = h("input", { type: "number", id: "pr_in", step: "any", min: 0, placeholder: "USD per 1,000 input tokens", "aria-label": "Input price" });
+        var pout = h("input", { type: "number", id: "pr_out", step: "any", min: 0, placeholder: "USD per 1,000 output tokens", "aria-label": "Output price" });
+        var out = h("div", { "aria-live": "polite" });
+        priceBox.replaceChildren(h("h3", {}, "Prices"),
+          h("p", { class: "note" }, "Typed in by hand, per 1,000 tokens (check your provider's price page). Nothing is guessed: a model without a price shows its calls as unpriced."),
+          r.unpriced.length ? h("div", { class: "meta" }, "Used without a price: " + r.unpriced.map(function (u) { return u.provider + " / " + u.model + " (" + u.unpriced_calls + ")"; }).join(", ")) : null,
+          r.prices.length ? h("div", { class: "tablewrap" }, h("table", {}, h("thead", {}, h("tr", {}, ["Provider type", "Model", "Input / 1k", "Output / 1k", ""].map(function (c) { return h("th", {}, c); }))), body)) : null,
+          h("form", { class: "inline", onsubmit: async function (e) {
+            e.preventDefault();
+            try { await api("PUT", "/prices", { provider_type: ptype.value, model: model.value, input_per_1k: Number(pin.value), output_per_1k: Number(pout.value || 0) }); await loadPrices(msg("ok", "Price saved. It applies to calls from now on.")); }
+            catch (err) { if (me) out.replaceChildren(msg("bad", err.message)); }
+          } },
+            h("div", { class: "field" }, h("label", { class: "l", for: "pr_type" }, "Provider type"), ptype),
+            h("div", { class: "field" }, h("label", { class: "l", for: "pr_model" }, "Model"), model),
+            h("div", { class: "field" }, h("label", { class: "l", for: "pr_in" }, "Input price"), pin),
+            h("div", { class: "field" }, h("label", { class: "l", for: "pr_out" }, "Output price"), pout),
+            h("div", {}, h("button", { class: "btn", type: "submit" }, "Save price"))),
+          out, notice || null);
+      } catch (err) { if (me) priceBox.replaceChildren(msg("bad", err.message)); }
+    }
+
+    var filters = h("div", { class: "form" },
+      h("div", { class: "field" }, h("label", { class: "l", for: "us_group" }, "Group by"), group),
+      h("div", { class: "field" }, h("label", { class: "l", for: "us_period" }, "Period"), preset),
+      h("div", { class: "field" }, h("label", { class: "l", for: "us_from" }, "From"), from),
+      h("div", { class: "field" }, h("label", { class: "l", for: "us_to" }, "To"), to));
+    main.appendChild(filters);
+    main.appendChild(h("div", { class: "actions" }, h("button", { type: "button", class: "btn", onclick: load }, "Show")));
+    main.appendChild(list);
+    if (isAdmin) { main.appendChild(priceBox); loadPrices(); }
+    load();
   }
 
   // ---- departments -----------------------------------------------------------------

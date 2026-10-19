@@ -19,7 +19,7 @@ COPY channels.yaml .
 RUN pip install -e .
 
 # Persistent data lives in volumes: admin database, chat history, vector store, documents
-RUN mkdir -p /app/admin_data /app/chats /app/chroma_db /app/data/docs /app/data/kb_files \
+RUN mkdir -p /app/admin_data /app/chats /app/chroma_db /app/data/docs /app/data/kb_files /app/models \
     && useradd --create-home --uid 10001 agent \
     && chown -R agent:agent /app
 USER agent

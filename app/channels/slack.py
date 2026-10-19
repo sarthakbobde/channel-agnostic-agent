@@ -66,6 +66,12 @@ class SlackAdapter(Adapter):
         self._emails.put(user_id, email)
         return email
 
+    def healthy(self) -> bool:
+        try:
+            return bool(self.handler.client.is_connected())
+        except Exception:
+            return False
+
     def _permitted(self, channel: str, is_dm: bool) -> bool:
         return is_dm or not self.allowed or channel in self.allowed
 

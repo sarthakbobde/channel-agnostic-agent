@@ -79,6 +79,8 @@ class ChromaStore(VectorStore):
         self._col().upsert(**kw)
 
     def search(self, query, k, flt=None):
+        if any(isinstance(c, dict) and not c.get("in", [None]) for c in (flt or {}).values()):
+            return []                                  # an empty allow-list matches nothing (Chroma itself refuses an empty list)
         col = self._col()
         if col.count() == 0:
             return []
