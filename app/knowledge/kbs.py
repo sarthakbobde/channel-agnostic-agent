@@ -176,6 +176,10 @@ def delete_kb(db: Database, kb_id: int) -> dict:
     store.delete()
     from app.knowledge import documents
     docs_removed = documents.purge_kb(db, kb_id)
+    from sqlalchemy import delete as _delete
+    from app.db import KBAccess
+    with db.session() as s:
+        s.execute(_delete(KBAccess).where(KBAccess.kb_id == kb_id))
     from app.knowledge import versions
     versions.purge_kb(db, kb_id)
     unbound = []

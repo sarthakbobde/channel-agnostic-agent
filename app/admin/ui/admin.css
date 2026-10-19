@@ -154,3 +154,5 @@ td.nw { white-space: nowrap; } td.wrap { overflow-wrap: anywhere; }
 .docs h4 { margin: 0 0 8px; }
 .meta.bad { color: #b3261e; }
 .docs .actions { align-items: center; flex-wrap: wrap; }
+
+.picker { display: grid; gap: 8px; margin: 8px 0; }

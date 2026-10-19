@@ -33,7 +33,7 @@ def _now() -> datetime:
 
 
 def _view(d: Document) -> dict:
-    return {"id": d.id, "kb_id": d.kb_id, "name": d.name, "size": d.size, "status": d.status, "error": d.error,
+    return {"id": d.id, "kb_id": d.kb_id, "name": d.name, "size": d.size, "visibility": d.visibility, "status": d.status, "error": d.error,
             "chunks": d.chunks, "uploaded_by": d.uploaded_by, "created_at": d.created_at,
             "updated_at": d.updated_at, "indexed_at": d.indexed_at, "doc_key": d.doc_key}
 
@@ -97,7 +97,7 @@ def counts(db: Database, kb_id: int) -> dict:
 
 
 # ---- writing ---------------------------------------------------------------------------------
-def add(db: Database, kb_id: int, filename: str, data: bytes, actor: str) -> dict:
+def add(db: Database, kb_id: int, filename: str, data: bytes, actor: str, access_choice: dict | None = None) -> dict:
     """Store an uploaded file and queue it for indexing."""
     _not_rebuilding(db, kb_id)
     name = clean_name(filename)
@@ -113,6 +113,14 @@ def add(db: Database, kb_id: int, filename: str, data: bytes, actor: str) -> dic
         d.doc_key = f"doc-{d.id}"
         view = _view(d)
     _write(view, data)
+    if access_choice and access_choice.get("visibility", "everyone") != "everyone":
+        from app.knowledge import access
+        try:
+            access.set_access(db, view["id"], access_choice["visibility"], access_choice.get("user_ids"), access_choice.get("group_ids"))
+        except ValueError:
+            delete(db, view["id"])                  # never leave a document that was meant to be restricted open to everyone
+            raise
+        view = get(db, view["id"])
     enqueue(view["id"])
     return view
 
@@ -205,6 +213,8 @@ def delete(db: Database, doc_id: int) -> dict:
     if kb:
         kbs.store_for(kb).delete_by_document(d["doc_key"])
     shutil.rmtree(doc_dir(d["kb_id"], doc_id), ignore_errors=True)
+    from app.knowledge import access
+    access.clear(db, doc_id)
     with db.session() as s:
         row = s.get(Document, doc_id)
         if row is not None:
@@ -216,7 +226,9 @@ def purge_kb(db: Database, kb_id: int) -> int:
     """Remove every document row and stored file of a knowledge base (its vectors go with the collection)."""
     with db.session() as s:
         rows = list(s.scalars(select(Document).where(Document.kb_id == kb_id)))
+        from app.knowledge import access
         for r in rows:
+            access.clear(db, r.id, session=s)
             s.delete(r)
     shutil.rmtree(Path(settings.docs_dir) / str(kb_id), ignore_errors=True)
     return len(rows)
@@ -249,7 +261,7 @@ def add_in_batches(store, ids, texts, metas, size: int = BATCH) -> None:
         _add_with_retry(store, ids[i:i + size], texts[i:i + size], metas[i:i + size])
 
 
-def prepare(d: dict, kb: dict, chunker, department: str) -> tuple[list, list, list]:
+def prepare(d: dict, kb: dict, chunker, department: str, access=((), ())) -> tuple[list, list, list]:
     """Parse and chunk one document -> (ids, texts, metadatas). Raises ValueError with a message an admin can act on."""
     path = file_path(d)
     if not path.exists():
@@ -266,7 +278,8 @@ def prepare(d: dict, kb: dict, chunker, department: str) -> tuple[list, list, li
             ids.append(f"{d['doc_key']}::{n}")
             texts.append(chunk)
             metas.append(metadata.build(source=d["name"], doc_id=d["doc_key"], page=page, chunk=n,
-                                        kb_id=kb["id"], department=department))
+                                        kb_id=kb["id"], department=department,
+                                        allowed_groups=access[0], allowed_people=access[1]))
             n += 1
     return ids, texts, metas
 
@@ -284,11 +297,13 @@ def index_document(db: Database, doc_id: int) -> None:
         from app.knowledge import versions
         chunker = versions.active_chunker(db, kb)          # the ACTIVE index's settings: strategies are never mixed in one index
         department = kbs.department_name(db, kb["department_id"])
-        ids, texts, metas = prepare(d, kb, chunker, department)
+        from app.knowledge import access
+        ids, texts, metas = prepare(d, kb, chunker, department, access.ids_for(db, doc_id))
         n = len(ids)
         store = kbs.store_for(kb)
         store.delete_by_document(d["doc_key"])
         add_in_batches(store, ids, texts, metas)
+        access.sync_chunks(db, d)
         _set(db, doc_id, status="Indexed", error="", chunks=n, indexed_at=_now())
         log.info("indexed document %s (%s): %d chunks", doc_id, d["name"], n)
     except Exception as e:

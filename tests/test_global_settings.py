@@ -89,14 +89,14 @@ def default_db_settings():
     gs.update(dataclasses.asdict(original), "test-restore", db)
 
 
-def test_retrieval_uses_top_k_and_threshold_from_settings(default_db_settings, monkeypatch):
+def test_retrieval_uses_top_k_and_threshold_from_settings(default_db_settings, monkeypatch, open_document):
     asked = {}
 
     class Col:
         def count(self):
             return 9
 
-        def query(self, query_texts, n_results):
+        def query(self, query_texts, n_results, where=None):
             asked["n"] = n_results
             return {"documents": [["a", "b"]], "metadatas": [[{"source": "s"}, {"source": "s"}]],
                     "distances": [[0.3, 0.45]]}                           # scores 0.7 and 0.55
@@ -138,6 +138,19 @@ def test_indexing_uses_chunk_settings_from_the_database(default_db_settings, tmp
     monkeypatch.setattr(chunkers, "RecursiveCharacterTextSplitter", Splitter)
     monkeypatch.setattr(retriever, "get_collection", lambda: Col())
     (tmp_path / "doc.txt").write_text("hello", encoding="utf-8")
-    gs.update({"chunk_size": 1200, "chunk_overlap": 200}, "t", default_db_settings)
-    ingest.ingest(str(tmp_path))
-    assert seen == {"size": 1200, "overlap": 200}
+    # indexing follows the ACTIVE index version's settings (a global change only takes effect through a rebuild)
+    from app.db import KBIndexVersion
+    from app.knowledge import kbs, versions
+    kb = kbs.ensure_default(default_db_settings)
+    versions.init_for(default_db_settings, kb)
+    with default_db_settings.session() as s:
+        v = s.query(KBIndexVersion).filter_by(kb_id=kb["id"], is_active=True).one()
+        original = (v.chunk_size, v.chunk_overlap)
+        v.chunk_size, v.chunk_overlap = 1200, 200
+    try:
+        ingest.ingest(str(tmp_path))
+        assert seen == {"size": 1200, "overlap": 200}
+    finally:
+        with default_db_settings.session() as s:
+            v = s.query(KBIndexVersion).filter_by(kb_id=kb["id"], is_active=True).one()
+            v.chunk_size, v.chunk_overlap = original

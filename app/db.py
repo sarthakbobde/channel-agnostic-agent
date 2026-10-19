@@ -113,6 +113,7 @@ class Document(Base):
     name: Mapped[str] = mapped_column(String(200))
     doc_key: Mapped[str] = mapped_column(String(240))
     size: Mapped[int] = mapped_column(Integer, default=0)
+    visibility: Mapped[str] = mapped_column(String(8), default="everyone")  # everyone | people | groups
     status: Mapped[str] = mapped_column(String(12), default="Pending")      # Pending | Indexing | Indexed | Failed
     error: Mapped[str] = mapped_column(Text, default="")
     chunks: Mapped[int] = mapped_column(Integer, default=0)
@@ -148,6 +149,39 @@ class KBIndexVersion(Base):
     retired_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     seconds: Mapped[float | None] = mapped_column(Float, nullable=True)
     __table_args__ = (UniqueConstraint("kb_id", "version", name="uq_kb_index_version"),)
+
+
+class Group(Base):
+    """A named set of people used to share documents. `department_id` says which department's Editors may manage it
+    (empty = Admins only). Membership is looked up when someone asks a question, never copied into documents."""
+    __tablename__ = "groups"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(80), unique=True)
+    description: Mapped[str] = mapped_column(Text, default="")
+    department_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)
+
+
+class GroupMember(Base):
+    __tablename__ = "group_members"
+    group_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+
+
+class DocumentAccess(Base):
+    """Who a restricted document is visible to: one row per person ('user') or group ('group')."""
+    __tablename__ = "document_access"
+    document_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    kind: Mapped[str] = mapped_column(String(8), primary_key=True)
+    ref_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+
+
+class KBAccess(Base):
+    """Groups allowed to ask a knowledge base questions. No rows = everyone on a channel bound to it."""
+    __tablename__ = "kb_access"
+    kb_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    group_id: Mapped[int] = mapped_column(Integer, primary_key=True)
 
 
 class SetPasswordToken(Base):

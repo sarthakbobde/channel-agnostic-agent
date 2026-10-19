@@ -15,7 +15,7 @@ from sqlalchemy import select
 
 from app import alerts
 from app.db import Database, Document, KBIndexVersion, KnowledgeBase, get_db
-from app.knowledge import chunkers, embeddings, kbs
+from app.knowledge import access, chunkers, embeddings, kbs
 
 log = logging.getLogger(__name__)
 DEFAULT_CHUNKS_PER_SECOND = 20.0          # used for the time estimate until a build has been measured
@@ -249,7 +249,7 @@ def _build(db: Database, vid: int, actor: str) -> None:
             with _lock:
                 if vid in _cancel:
                     raise _Cancelled()
-            ids, texts, metas = documents.prepare(d, kb, chunker, department)
+            ids, texts, metas = documents.prepare(d, kb, chunker, department, access.ids_for(db, d['id']))
             documents.add_in_batches(store, ids, texts, metas)
             per_doc[d["id"]] = len(ids)
             total_chunks += len(ids)

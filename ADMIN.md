@@ -171,6 +171,9 @@ All under `/admin/api`, JSON, cookie + `X-CSRF-Token` header for changes.
 | `POST /chat-auth/login`, `/chat-auth/set-password`, `GET /chat-auth/me` (not under `/admin/api`) | Web UI sign-in for chat users |
 | `GET/POST /kbs`, `PUT/DELETE /kbs/{id}` | Knowledge bases (Editors: their departments only) |
 | `GET/POST /kbs/{id}/documents`, `POST /documents/{id}/replace`, `/reindex`, `/move`, `DELETE /documents/{id}`, `POST /kbs/{id}/reindex` | Documents (upload is multipart) |
+| `GET/POST /groups`, `PUT/DELETE /groups/{id}`, `GET /directory` | Groups and the people list |
+| `GET/PUT /documents/{id}/access` | Who can see a document (`visibility`: everyone, people, groups) |
+| `GET/PUT /kbs/{id}/access` | Who may ask a knowledge base (empty = everyone on a bound channel) |
 | `GET/POST /admins`, `DELETE /admins/{email}` | Older admin endpoints, kept for compatibility |
 
 ## Running the admin on its own port, and remote access

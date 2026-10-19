@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from sqlalchemy import func, select
 
 from app import alerts
-from app.db import Database, Department, User, get_db
+from app.db import Database, Department, DepartmentEditor, GroupMember, User, get_db
 
 log = logging.getLogger(__name__)
 DENIED_REPLY = "Your access to this assistant has been turned off. Please contact an administrator."
@@ -32,6 +32,9 @@ class Identity:
     department: str = ""
     known: bool = False
     active: bool = True
+    user_id: int | None = None
+    group_ids: tuple = ()            # groups the person belongs to RIGHT NOW (read when the question is asked)
+    edits_departments: tuple = ()    # departments this person is an Editor of
 
 
 def resolve(email: str, db: Database | None = None) -> Identity:
@@ -42,8 +45,11 @@ def resolve(email: str, db: Database | None = None) -> Identity:
             u = s.scalar(select(User).where(func.lower(User.email) == email)) if email else None
             if u is not None:
                 dept = s.get(Department, u.department_id)
+                groups = tuple(sorted(s.scalars(select(GroupMember.group_id).where(GroupMember.user_id == u.id))))
+                edits = tuple(sorted(s.scalars(select(DepartmentEditor.department_id).where(DepartmentEditor.user_id == u.id)))) \
+                    if u.role == "editor" else ()
                 return Identity(u.email, u.name, u.role, u.department_id, dept.name if dept else "",
-                                known=True, active=u.status == "Active")
+                                known=True, active=u.status == "Active", user_id=u.id, group_ids=groups, edits_departments=edits)
             d = s.scalar(select(Department).where(Department.is_default.is_(True)))
             return Identity(email, "", "viewer", d.id if d else None, d.name if d else "", known=False)
     except Exception:
@@ -55,12 +61,22 @@ def resolve(email: str, db: Database | None = None) -> Identity:
 _department: contextvars.ContextVar[str | None] = contextvars.ContextVar("department", default=None)
 
 
+_who: contextvars.ContextVar[Identity | None] = contextvars.ContextVar("who", default=None)
+
+
 def bind(identity: Identity):
-    return _department.set(identity.department or None)
+    return (_department.set(identity.department or None), _who.set(identity))
 
 
 def unbind(token) -> None:
-    _department.reset(token)
+    _department.reset(token[0])
+    _who.reset(token[1])
+
+
+def current() -> Identity:
+    """Who is asking the question being answered. Nobody bound (a script, a debugging call) counts as an
+    unknown Viewer, which can only see documents visible to Everyone: the safe default."""
+    return _who.get() or Identity()
 
 
 def current_department() -> str | None:

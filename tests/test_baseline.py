@@ -54,14 +54,14 @@ def test_threshold_is_inclusive_and_filters_below(monkeypatch):
     assert [c["text"] for c in got] == ["a", "b"]
 
 
-def test_retrieve_scored_asks_chroma_for_five_and_converts_distance(monkeypatch):
+def test_retrieve_scored_asks_chroma_for_five_and_converts_distance(monkeypatch, open_document):
     asked = {}
 
     class Col:
         def count(self):
             return 10
 
-        def query(self, query_texts, n_results):
+        def query(self, query_texts, n_results, where=None):
             asked["n"], asked["q"] = n_results, query_texts
             return {"documents": [["doc1", "doc2"]],
                     "metadatas": [[{"source": "a.pdf", "page": 3}, {"source": "b.md", "page": 0}]],

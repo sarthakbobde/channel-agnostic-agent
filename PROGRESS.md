@@ -285,6 +285,33 @@ alert but do not fall back; Ollama only through the compatible-endpoint option; 
 * `ingest --reset` is gone; use Rebuild. Deleting a knowledge base removes every version.
 * Embedding cost comes from the model (`cost_per_million_tokens`; 0 for the local model).
 
+## 12. Phase 4, part 4a: groups and per-document access (data and screens; enforcement is part 4b)
+
+* **Groups** (tables `groups`, `group_members`; migration 0010): named sets of people. Admins manage all; an Editor manages groups that belong to a
+  department they edit and can only create groups for those. A group used by a document cannot be deleted until the document's access is changed.
+* **Document access** ("Visible to"): Everyone (default), Selected groups, Selected people (`document_access`). Set at upload (stored before indexing starts,
+  so there is no open window) or later with the **Access** button; the uploader is recorded as the manager. Restricted with nobody chosen is refused.
+* The ids are written into every chunk (`allowed_groups`, `allowed_people`) and changes update the chunks **in place** (no re-embedding). The restriction
+  survives re-index, replace, move and index rebuild. Deleting a document removes its access rows.
+* Group membership and a person's status are not copied into documents; part 4b reads them when a question is asked.
+* People directory endpoint (`/admin/api/directory`, active people only) for the pickers.
+* Audited: upload (with access), access changes (before and after), group create/update (members added and removed)/delete.
+
+### Phase 4, part 4b: access enforced when a question is asked
+
+* `identity.resolve` now also reads the asker's groups and the departments they edit **at question time**; the identity travels with the question
+  (`core.handle` / `/chat` bind it; the retriever reads it). Nobody bound (a script) counts as an unknown Viewer: Everyone-visible documents only.
+* **Retrieval** (`app/retriever.py`): for each knowledge base the asker may query, the visible document ids are worked out from the database and passed to the
+  vector search as a filter (`doc_id in [...]`), i.e. **inside** the search. Restricted passages never reach the router, the model, the sources list or logs.
+  Chunks that belong to no known document are never returned. A second check on each returned passage uses the access stored in the chunk and logs an error if it ever disagrees.
+* **KB permission (D17)**: optional "Who can ask" per knowledge base (groups); none = everyone on a channel bound to it. Both it and document visibility are needed.
+  A group that restricts a knowledge base cannot be deleted.
+* **Admins** see all documents; the **Editor of a knowledge base's department** sees all documents in it (they can change their access anyway);
+  **deactivated** people are refused before any model call; **unknown senders** see Everyone-visible documents only (D13).
+* **Several knowledge bases on a channel** are searched separately, each with its own filter, and merged by reciprocal rank fusion (D5).
+* Delete and replace remove the old chunks immediately (tested).
+* Admin screens: Upcoming list refreshed to the remaining phases (prompts, guardrails, conversations, chunking strategies, embedding models, vector stores, usage and cost, reports).
+
 ## How to run
 
 ```powershell

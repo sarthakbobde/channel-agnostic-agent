@@ -122,13 +122,17 @@
   }
 
   // ---- shell ----------------------------------------------------------------------
-  var TABS = [["channels", "Channels"], ["settings", "Settings"], ["providers", "Providers"], ["knowledge", "Knowledge bases"], ["departments", "Departments"], ["users", "Users"], ["audit", "Audit log"], ["account", "Account"]];
+  var TABS = [["channels", "Channels"], ["settings", "Settings"], ["providers", "Providers"], ["knowledge", "Knowledge bases"], ["groups", "Groups"], ["departments", "Departments"], ["users", "Users"], ["audit", "Audit log"], ["account", "Account"]];
   // Planned, not built yet: shown greyed out so admins can see what is coming. [label, tooltip]
   var UPCOMING = [
-    ["Documents", "Upcoming: upload documents and control who can add and see which files."],
-    ["Chunking", "Upcoming: choose how documents are split. Today: fixed 900 characters with 150 overlap. Planned: fixed size, per page, by heading, semantic."],
-    ["Vector store", "Upcoming: choose where document vectors are kept. Today: ChromaDB. Planned: pgvector, Qdrant, Azure AI Search."],
-    ["Retrieval", "Upcoming: tune how passages are found. Today: vector similarity with a score threshold. Planned: hybrid keyword + vector, re-ranker, query rewriting."]
+    ["Prompts", "Upcoming (phase 5): edit the base prompt (Admins) and department prompts (Editors) with versions, publish, rollback and a safe preview. Today the prompt is fixed in the code."],
+    ["Guardrails", "Upcoming (phase 6): block prompt injection, toxic and banned-topic questions, mask personal data, and check answers before they are sent. Banned topics are stored per department but not enforced yet."],
+    ["Conversations", "Upcoming (phase 7): conversation memory in the database with summaries, retention enforced per department, and an audited export (off by default). Today history is kept in text files."],
+    ["Chunking strategies", "Upcoming (phase 8): per page, by heading and semantic chunking, with a preview. Today: fixed size (900 characters, 150 overlap), set per knowledge base."],
+    ["Embedding models", "Upcoming (phase 8): OpenAI, Azure OpenAI, Cohere and multilingual models, with cost tracking. Today: the built-in local MiniLM model."],
+    ["Vector stores", "Upcoming (phase 8): pgvector and Azure AI Search, with health checks. Today: ChromaDB."],
+    ["Usage and cost", "Upcoming (phase 9): tokens and cost by provider, model, department and knowledge base, by day and month, with an editable price list."],
+    ["Reports", "Upcoming (phase 9): guardrail, knowledge base and channel reports, and an audit log you can filter by person, action and date."]
   ];
 
   function renderShell() {
@@ -150,7 +154,7 @@
       tabs);
     var main = h("main", {});
     mount(h("div", { class: "app" }, nav, main));
-    var view = { channels: viewChannels, settings: viewSettings, providers: viewProviders, knowledge: viewKnowledge, departments: viewDepartments, users: viewUsers, audit: viewAudit, account: viewAccount }[state.tab];
+    var view = { channels: viewChannels, settings: viewSettings, providers: viewProviders, knowledge: viewKnowledge, groups: viewGroups, departments: viewDepartments, users: viewUsers, audit: viewAudit, account: viewAccount }[state.tab];
     view(main);
     loadAlerts(main);
   }
@@ -700,6 +704,114 @@
     refresh();
   }
 
+  // ---- who can see a document: shared picker --------------------------------------------
+  var VISIBLE = [["everyone", "Everyone"], ["groups", "Selected groups"], ["people", "Selected people"]];
+
+  // Draws "Visible to" with the group / people check lists. value() -> {visibility, group_ids, user_ids}.
+  function accessPicker(initial, groupList, people, opts) {
+    opts = opts || {};
+    var wrap = h("div", { class: "picker" });
+    var sel = selectOf(opts.noPeople ? VISIBLE.filter(function (o) { return o[0] !== "people"; }) : VISIBLE, initial.visibility || "everyone", function () { redraw(); }, opts.label || "Visible to");
+    var lists = h("div", {});
+    var gBoxes = groupList.map(function (g) { return { id: g.id, cb: h("input", { type: "checkbox", checked: (initial.group_ids || []).indexOf(g.id) >= 0 }), label: g.name }; });
+    var uBoxes = people.map(function (u) { return { id: u.id, cb: h("input", { type: "checkbox", checked: (initial.user_ids || []).indexOf(u.id) >= 0 }), label: (u.name || u.email) + " · " + u.email }; });
+    function box(b) { return h("label", { class: "check" }, b.cb, b.label); }
+    function redraw() {
+      var v = sel.value;
+      if (v === "groups") lists.replaceChildren(gBoxes.length ? h("div", { class: "kbpick" }, gBoxes.map(box)) : h("p", { class: "meta" }, "No groups yet. Create one on the Groups screen."));
+      else if (v === "people") lists.replaceChildren(h("div", { class: "kbpick" }, uBoxes.map(box)));
+      else lists.replaceChildren(h("p", { class: "meta" }, opts.everyoneText || "Anyone who can use the channel can see this document."));
+    }
+    redraw();
+    wrap.appendChild(sel);
+    wrap.appendChild(lists);
+    return { el: wrap, value: function () {
+      return { visibility: sel.value,
+        group_ids: sel.value === "groups" ? gBoxes.filter(function (b) { return b.cb.checked; }).map(function (b) { return b.id; }) : [],
+        user_ids: sel.value === "people" ? uBoxes.filter(function (b) { return b.cb.checked; }).map(function (b) { return b.id; }) : [] };
+    } };
+  }
+
+  async function loadChoices() {
+    var g = await api("GET", "/groups");
+    var d = await api("GET", "/directory");
+    return { groups: g.groups, people: d };
+  }
+
+  // ---- groups ---------------------------------------------------------------------------
+  async function viewGroups(main) {
+    main.appendChild(h("h2", {}, "Groups"));
+    main.appendChild(h("p", { class: "sub" }, "A group is a named set of people, used to share documents. Membership is checked each time someone asks a question, so a change applies straight away."));
+    var holder = h("div", {}, msg("wait", "Loading…"));
+    var result = h("div", { "aria-live": "polite" });
+    main.appendChild(holder);
+    var people = [];
+    try { people = await api("GET", "/directory"); } catch (err) { if (me) holder.replaceChildren(msg("bad", err.message)); return; }
+
+    function card(g, data) {
+      var name = h("input", { type: "text", id: "gn" + g.id, value: g.name, maxlength: "80" });
+      var desc = h("input", { type: "text", id: "gd" + g.id, value: g.description, maxlength: "500" });
+      var deptOptions = (state.perm && state.perm.can_manage_all ? [["", "None (Admins only)"]] : []).concat(data.departments.map(function (d) { return [d.id, d.name]; }));
+      var dept = selectOf(deptOptions, g.department_id === null ? "" : g.department_id, null, "Department");
+      dept.id = "gp" + g.id;
+      var current = {};
+      g.members.forEach(function (m) { current[m.id] = m; });
+      var pool = people.slice();
+      g.members.forEach(function (m) { if (!pool.some(function (p) { return p.id === m.id; })) pool.push({ id: m.id, name: m.name, email: m.email + " (deactivated)" }); });
+      var boxes = pool.map(function (p) { return { id: p.id, cb: h("input", { type: "checkbox", checked: !!current[p.id] }), p: p }; });
+      var out = h("div", { "aria-live": "polite" });
+      var save = h("button", { type: "button", class: "btn primary", onclick: async function () {
+        out.replaceChildren(msg("wait", "Saving…"));
+        try {
+          await api("PUT", "/groups/" + g.id, { name: name.value, description: desc.value, department_id: dept.value === "" ? null : Number(dept.value),
+            member_ids: boxes.filter(function (b) { return b.cb.checked; }).map(function (b) { return b.id; }) });
+          await load(msg("ok", "Saved " + name.value + "."));
+        } catch (err) { if (me) out.replaceChildren(msg("bad", err.message)); }
+      } }, "Save changes");
+      var del = confirmButton("Delete", "Confirm delete", async function () {
+        try { await api("DELETE", "/groups/" + g.id); await load(msg("ok", "Deleted " + g.name + ".")); }
+        catch (err) { if (me) out.replaceChildren(msg("bad", err.message)); }
+      }, true);
+      return h("div", { class: "panel" },
+        h("h3", {}, g.name), h("div", { class: "meta" }, g.members.length + (g.members.length === 1 ? " member" : " members") + (g.department ? " · " + g.department : " · Admins manage")),
+        h("div", { class: "form" },
+          h("div", { class: "field" }, h("label", { class: "l", for: "gn" + g.id }, "Name"), name),
+          h("div", { class: "field" }, h("label", { class: "l", for: "gp" + g.id }, "Managed by department"), dept),
+          h("div", { class: "field wide" }, h("label", { class: "l", for: "gd" + g.id }, "Description"), desc),
+          h("div", { class: "field wide" }, h("div", { class: "l" }, "Members"),
+            h("div", { class: "kbpick" }, boxes.map(function (b) { return h("label", { class: "check" }, b.cb, (b.p.name || b.p.email) + " · " + b.p.email); })))),
+        h("div", { class: "actions" }, save, del), out);
+    }
+
+    async function load(notice) {
+      try {
+        var data = await api("GET", "/groups");
+        var kids = [notice || null];
+        if (!data.groups.length) kids.push(h("p", { class: "sub" }, "No groups yet."));
+        data.groups.forEach(function (g) { kids.push(card(g, data)); });
+        var nn = h("input", { type: "text", id: "ng_name", autocomplete: "off", required: true, maxlength: "80" });
+        var opts = (state.perm && state.perm.can_manage_all ? [["", "None (Admins only)"]] : []).concat(data.departments.map(function (d) { return [d.id, d.name]; }));
+        var nd = selectOf(opts, opts.length ? opts[0][0] : "", null, "Department");
+        nd.id = "ng_dept";
+        kids.push(h("h3", {}, "Add a group"));
+        kids.push(h("form", { class: "inline", onsubmit: async function (e) {
+          e.preventDefault();
+          result.replaceChildren(msg("wait", "Adding…"));
+          try {
+            await api("POST", "/groups", { name: nn.value, department_id: nd.value === "" ? null : Number(nd.value) });
+            await load(msg("ok", "Group added. Open it to choose its members."));
+          } catch (err) { if (me) result.replaceChildren(msg("bad", err.message)); }
+        } },
+          h("div", { class: "field" }, h("label", { class: "l", for: "ng_name" }, "Name"), nn),
+          h("div", { class: "field" }, h("label", { class: "l", for: "ng_dept" }, "Managed by department"), nd),
+          h("div", {}, h("button", { class: "btn", type: "submit" }, "Add group"))));
+        kids.push(result);
+        holder.replaceChildren.apply(holder, kids.filter(Boolean));
+      } catch (err) { if (me) holder.replaceChildren(msg("bad", err.message)); }
+    }
+    await load();
+  }
+
   // ---- knowledge bases ------------------------------------------------------------
   async function viewKnowledge(main) {
     main.appendChild(h("h2", {}, "Knowledge bases"));
@@ -740,6 +852,23 @@
         catch (err) { if (me) out.replaceChildren(msg("bad", err.message)); }
         refresh();
       }
+      var accessBox = h("div", {});
+      async function openAccess(d) {
+        accessBox.replaceChildren(msg("wait", "Loading…"));
+        try {
+          var cur = await api("GET", "/documents/" + d.id + "/access");
+          var ch = await loadChoices();
+          var picker = accessPicker(cur, ch.groups, ch.people);
+          accessBox.replaceChildren(h("div", { class: "panel" }, h("b", {}, "Who can see " + d.name),
+            h("p", { class: "note" }, "Takes effect on the next question. The document is not re-indexed."), picker.el,
+            h("div", { class: "actions" },
+              h("button", { type: "button", class: "btn primary", onclick: async function () {
+                try { await api("PUT", "/documents/" + d.id + "/access", picker.value()); accessBox.replaceChildren(); out.replaceChildren(msg("ok", "Access updated for " + d.name + ".")); refresh(); }
+                catch (err) { if (me) accessBox.insertBefore(msg("bad", err.message), accessBox.firstChild); }
+              } }, "Save access"),
+              h("button", { type: "button", class: "btn small", onclick: function () { accessBox.replaceChildren(); } }, "Close"))));
+        } catch (err) { if (me) accessBox.replaceChildren(msg("bad", err.message)); }
+      }
       function pill(d) {
         var kind = d.status === "Indexed" ? "ok" : d.status === "Failed" ? "bad" : "off";
         return h("span", { class: "pill " + kind }, d.status);
@@ -758,13 +887,16 @@
           if (to) act(api("POST", "/documents/" + d.id + "/move", { kb_id: to }), "Moved " + d.name + "; indexing in the new knowledge base.");
         }, "Move " + d.name + " to another knowledge base") : null;
         return h("tr", {},
-          h("td", { class: "wrap", "data-label": "Document" }, h("b", {}, d.name), d.error ? h("div", { class: "meta bad" }, d.error) : null),
+          h("td", { class: "wrap", "data-label": "Document" }, h("b", {}, d.name),
+            h("div", { class: "meta" }, d.visibility === "everyone" ? "Visible to everyone" : d.visibility === "groups" ? "Restricted to selected groups" : "Restricted to selected people"),
+            d.error ? h("div", { class: "meta bad" }, d.error) : null),
           h("td", { "data-label": "Status" }, pill(d)),
           h("td", { class: "nw", "data-label": "Chunks" }, d.status === "Indexed" ? String(d.chunks) : "–"),
           h("td", { class: "nw", "data-label": "Size" }, d.size ? size(d.size) : "–"),
           h("td", { class: "nw", "data-label": "Updated" }, when(d.updated_at)),
           h("td", { class: "act" },
             h("button", { type: "button", class: "btn small", onclick: function () { act(api("POST", "/documents/" + d.id + "/reindex", {}), "Re-indexing " + d.name + "."); } }, d.status === "Failed" ? "Retry" : "Re-index"),
+            h("button", { type: "button", class: "btn small", onclick: function () { openAccess(d); } }, "Access"),
             h("button", { type: "button", class: "btn small", onclick: function () { replaceInput.click(); } }, "Replace"), replaceInput, mover,
             confirmButton("Delete", "Confirm delete", function () { act(api("DELETE", "/documents/" + d.id), "Deleted " + d.name + "."); }, true)));
       }
@@ -781,10 +913,21 @@
           watch(r.documents);
         } catch (err) { stop(); if (me) table.replaceChildren(msg("bad", err.message)); }
       }
+      var uploadAccess = h("div", {});
+      var uploadPicker = null;
+      var showAccess = h("button", { type: "button", class: "btn small", onclick: async function () {
+        if (uploadPicker) { uploadPicker = null; uploadAccess.replaceChildren(); return; }       // toggle back to "Everyone"
+        try { var ch = await loadChoices(); uploadPicker = accessPicker({ visibility: "groups" }, ch.groups, ch.people); uploadAccess.replaceChildren(uploadPicker.el); }
+        catch (err) { if (me) out.replaceChildren(msg("bad", err.message)); }
+      } }, "Restrict who can see it…");
       var uploadBtn = h("button", { type: "button", class: "btn", onclick: function () {
         var f = fileInput.files[0];
         if (!f) { out.replaceChildren(msg("bad", "Choose a file first.")); return; }
         var fd = new FormData(); fd.append("file", f);
+        if (uploadPicker) {
+          var v = uploadPicker.value();
+          fd.append("visibility", v.visibility); fd.append("group_ids", v.group_ids.join(",")); fd.append("user_ids", v.user_ids.join(","));
+        }
         out.replaceChildren(msg("wait", "Uploading " + f.name + "…"));
         act(api("POST", "/kbs/" + k.id + "/documents", fd).then(function () { fileInput.value = ""; }), "Uploaded " + f.name + "; indexing has started.");
       } }, "Upload");
@@ -793,7 +936,9 @@
       } }, "Re-index all");
       box.appendChild(h("h4", {}, "Documents"));
       box.appendChild(table);
-      box.appendChild(h("div", { class: "actions" }, fileInput, uploadBtn, reindexAll));
+      box.appendChild(accessBox);
+      box.appendChild(h("div", { class: "actions" }, fileInput, showAccess, uploadBtn, reindexAll));
+      box.appendChild(uploadAccess);
       box.appendChild(out);
       refresh();
       return box;
@@ -886,6 +1031,31 @@
       return box;
     }
 
+    // ---- who may ask this knowledge base ----------------------------------------------
+    function askPanel(k) {
+      var box = h("div", { class: "docs" });
+      var out = h("div", { "aria-live": "polite" });
+      var body = h("div", {});
+      async function show() {
+        try {
+          var cur = await api("GET", "/kbs/" + k.id + "/access");
+          var ch = await api("GET", "/groups");
+          var picker = accessPicker({ visibility: cur.restricted ? "groups" : "everyone", group_ids: cur.group_ids }, ch.groups, [],
+            { noPeople: true, label: "Who can ask", everyoneText: "Anyone on a channel that uses this knowledge base can ask it. They still only see documents they are allowed to see." });
+          body.replaceChildren(picker.el, h("div", { class: "actions" }, h("button", { type: "button", class: "btn", onclick: async function () {
+            var v = picker.value();
+            try { await api("PUT", "/kbs/" + k.id + "/access", { group_ids: v.visibility === "groups" ? v.group_ids : [] }); out.replaceChildren(msg("ok", "Saved. Applies to the next question.")); }
+            catch (err) { if (me) out.replaceChildren(msg("bad", err.message)); }
+          } }, "Save who can ask")));
+        } catch (err) { if (me) body.replaceChildren(msg("bad", err.message)); }
+      }
+      box.appendChild(h("h4", {}, "Who can ask"));
+      box.appendChild(body);
+      box.appendChild(out);
+      show();
+      return box;
+    }
+
     function card(k, data) {
       var name = h("input", { type: "text", id: "kn" + k.id, value: k.name, maxlength: "80" });
       var desc = h("textarea", { id: "kd" + k.id, rows: "2" });
@@ -922,7 +1092,7 @@
           h("div", { class: "field" }, h("label", { class: "l", for: "ko" + k.id }, "Chunk overlap (characters)"), overlap),
           h("div", { class: "field" }, h("div", { class: "l" }, "Embedding model"), h("div", {}, "Local MiniLM (built in)")),
           h("div", { class: "field" }, h("div", { class: "l" }, "Vector store"), h("div", {}, "Chroma"))),
-        h("div", { class: "actions" }, save, del), out, indexPanel(k), docsPanel(k, data));
+        h("div", { class: "actions" }, save, del), out, askPanel(k), indexPanel(k), docsPanel(k, data));
     }
 
     async function load(notice) {

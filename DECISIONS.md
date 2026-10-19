@@ -55,3 +55,9 @@ this file.
 | 3b | Indexing worker | One in-process worker thread, with restart recovery. | Single-instance v1 (D11); the scheduler is not needed for a queue. |
 | 3c | Time and cost estimate | Tokens are estimated as characters/4; time uses the last measured build, else 20 chunks/s. | tiktoken needs a network download; the local embedder costs nothing. |
 | 3c | Documents during a rebuild | Uploads, replace, move, delete and re-index are refused until it finishes. | Avoids the new index missing changes made mid-build. |
+| 4a | Group deletion | Refused while a document is shared with the group. | Otherwise a restricted document could lose its last group and be treated as open. |
+| 4a | Who may pick people | Editors see the active-people directory (name and email). | Needed to choose viewers; limited to active staff. |
+| 4b | Who sees what | Admins see all documents; the Editor of a KB's department sees all documents in it; everyone else only what is shared with them. | They can change access anyway; the plan does not say. |
+| 4b | How the filter is built | Document ids are computed from the database and sent as `doc_id in [...]` to the store. | Chroma cannot match a person or group inside a metadata string; this also reflects group changes with no re-embedding. |
+| 4b | Tests that fake the store | They need a document record; retrieval only returns passages of known documents (fail closed). | A fixture `open_document` provides one. |
+| 4b | CLI `ingest` settings | It follows the active index version, not the global chunk settings. | Strategies are never mixed in one index (3c). |

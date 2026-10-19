@@ -2,13 +2,13 @@
 Same access rule as knowledge bases: Admins everywhere, Editors in the departments they edit."""
 import logging
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel
 
 from app.admin.api import AdminContext, Session, admin_session, get_ctx
 from app.admin.kbs_api import _can
 from app.config import settings
-from app.knowledge import documents, kbs
+from app.knowledge import access, documents, kbs
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/admin/api", tags=["admin"])
@@ -42,6 +42,19 @@ async def _read(file: UploadFile) -> bytes:
     return data
 
 
+def _ids(text: str) -> list[int]:
+    try:
+        return [int(x) for x in (text or "").split(",") if x.strip()]
+    except ValueError:
+        raise ValueError("The chosen people or groups are not valid.")
+
+
+class AccessBody(BaseModel):
+    visibility: str
+    user_ids: list[int] = []
+    group_ids: list[int] = []
+
+
 def _public(d: dict) -> dict:
     return {k: v for k, v in d.items() if k != "doc_key"}
 
@@ -55,17 +68,20 @@ def list_documents(kb_id: int, sess: Session = Depends(admin_session), ctx: Admi
 
 
 @router.post("/kbs/{kb_id}/documents", status_code=201)
-async def upload(kb_id: int, file: UploadFile = File(...), sess: Session = Depends(admin_session),
+async def upload(kb_id: int, file: UploadFile = File(...), visibility: str = Form("everyone"),
+                 group_ids: str = Form(""), user_ids: str = Form(""), sess: Session = Depends(admin_session),
                  ctx: AdminContext = Depends(get_ctx)):
     kb = _kb_or_404(ctx, sess, kb_id)
     data = await _read(file)
     try:
-        d = documents.add(ctx.db, kb_id, file.filename or "", data, sess.email)
+        choice = {"visibility": visibility, "group_ids": _ids(group_ids), "user_ids": _ids(user_ids)}
+        d = documents.add(ctx.db, kb_id, file.filename or "", data, sess.email, choice)
     except LookupError as e:
         raise HTTPException(409, str(e))
     except ValueError as e:
         raise HTTPException(422, str(e))
-    ctx.store.record(sess.email, "document.upload", f"{kb['name']} / {d['name']}", f"{d['size']} bytes")
+    ctx.store.record(sess.email, "document.upload", f"{kb['name']} / {d['name']}",
+                     f"{d['size']} bytes, " + access.describe(ctx.db, d["id"]))
     return _public(d)
 
 
@@ -131,3 +147,21 @@ def delete(doc_id: int, sess: Session = Depends(admin_session), ctx: AdminContex
         raise HTTPException(409, str(e))
     ctx.store.record(sess.email, "document.delete", d["name"], f"{d['chunks']} chunks removed")
     return {"ok": True}
+
+
+@router.get("/documents/{doc_id}/access")
+def get_access(doc_id: int, sess: Session = Depends(admin_session), ctx: AdminContext = Depends(get_ctx)):
+    _doc_or_404(ctx, sess, doc_id)
+    return access.get(ctx.db, doc_id)
+
+
+@router.put("/documents/{doc_id}/access")
+def set_access(doc_id: int, body: AccessBody, sess: Session = Depends(admin_session), ctx: AdminContext = Depends(get_ctx)):
+    d = _doc_or_404(ctx, sess, doc_id)
+    before = access.describe(ctx.db, doc_id)
+    try:
+        result = access.set_access(ctx.db, doc_id, body.visibility, body.user_ids, body.group_ids)
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+    ctx.store.record(sess.email, "document.access", d["name"], f"{before} -> {access.describe(ctx.db, doc_id)}")
+    return result

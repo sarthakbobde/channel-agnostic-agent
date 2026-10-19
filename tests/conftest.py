@@ -112,3 +112,23 @@ def db_text():
                     out.append(str(tuple(row)))
         return "\n".join(out)
     return dump
+
+
+@pytest.fixture
+def open_document():
+    """A document in the default knowledge base that is visible to Everyone. Retrieval only returns passages of
+    documents it knows about (fail closed), so tests that fake the vector store need one."""
+    from app.db import Document, get_db
+    from app.knowledge import kbs
+    db = get_db()
+    kb = kbs.ensure_default(db)
+    with db.session() as s:
+        row = Document(kb_id=kb["id"], name="open-test.pdf", doc_key="doc-open-test", status="Indexed")
+        s.add(row)
+        s.flush()
+        doc_id = row.id
+    yield
+    with db.session() as s:
+        gone = s.get(Document, doc_id)
+        if gone is not None:
+            s.delete(gone)

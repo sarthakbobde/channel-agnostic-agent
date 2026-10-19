@@ -11,8 +11,8 @@ from app.db import Database
 from app.secretstore import FernetSecretStore, generate_key
 from tests.conftest import TEST_DB
 
-HEAD = "0009"
-TABLES = {"meta", "channels", "secrets", "users", "departments", "department_editors", "set_password_tokens", "knowledge_bases", "documents", "kb_index_versions", "audit_log", "global_settings", "job_locks",
+HEAD = "0011"
+TABLES = {"meta", "channels", "secrets", "users", "departments", "department_editors", "set_password_tokens", "knowledge_bases", "documents", "kb_index_versions", "groups", "group_members", "document_access", "kb_access", "audit_log", "global_settings", "job_locks",
           "alembic_version", "llm_providers", "model_settings", "model_prices", "usage_records", "alerts"}
 
 # The schema exactly as it was before migrations existed (captured from the live database).

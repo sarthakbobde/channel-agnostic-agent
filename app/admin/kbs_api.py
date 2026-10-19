@@ -9,7 +9,7 @@ from sqlalchemy import select
 from app import global_settings
 from app.admin.api import AdminContext, Session, admin_session, get_ctx
 from app.db import Department, DepartmentEditor
-from app.knowledge import documents, embeddings, kbs, versions
+from app.knowledge import access, documents, embeddings, kbs, versions
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/admin/api", tags=["admin"])
@@ -176,3 +176,28 @@ def index_rollback(kb_id: int, body: RollbackBody, sess: Session = Depends(admin
         raise HTTPException(409, str(e))
     except ValueError as e:
         raise HTTPException(422, str(e))
+
+
+# ---- who may ask a knowledge base (D17) ----------------------------------------------------------
+class KBAccessBody(BaseModel):
+    group_ids: list[int] = []
+
+
+@router.get("/kbs/{kb_id}/access")
+def get_query_access(kb_id: int, sess: Session = Depends(admin_session), ctx: AdminContext = Depends(get_ctx)):
+    _kb_for(ctx, sess, kb_id)
+    ids = access.kb_query_groups(ctx.db, kb_id)
+    return {"restricted": bool(ids), "group_ids": ids}
+
+
+@router.put("/kbs/{kb_id}/access")
+def set_query_access(kb_id: int, body: KBAccessBody, sess: Session = Depends(admin_session), ctx: AdminContext = Depends(get_ctx)):
+    kb = _kb_for(ctx, sess, kb_id)
+    before = access.kb_query_groups(ctx.db, kb_id)
+    try:
+        ids = access.set_kb_query_groups(ctx.db, kb_id, body.group_ids)
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+    ctx.store.record(sess.email, "kb.access", kb["name"],
+                     f"{'everyone' if not before else str(len(before)) + ' group(s)'} -> {'everyone' if not ids else str(len(ids)) + ' group(s)'} may ask")
+    return {"restricted": bool(ids), "group_ids": ids}
