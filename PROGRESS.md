@@ -563,40 +563,11 @@ Run the tests: `python -m pytest tests` (set `CHROMA_PATH`, `CHAT_DIR` to temp f
 | `.env` / `.env.example` | Settings (`.env` is not committed or copied by tooling; recreate it) |
 | `start.ps1` | Local start script |
 | `ADMIN.md`, `TEAMS_SETUP.md`, `GCHAT_SETUP.md` | Admin guide; platform setup steps |
-| `tests/` | 133 tests (SQLite) / 132 (PostgreSQL): baseline behaviour, channels, store, migrations, global settings, admin API and page, API security, Streamlit client, scheduler |
+| `tests/` | 298 tests on SQLite / 297 on PostgreSQL: unit and integration tests, the feature checks and end-to-end scenarios in `tests/checks/` (run by `tests/test_checks.py`), the security pass, exposure and hardening tests |
 | `docs/` | Architecture and one-pager PDFs and their HTML sources |
 
 ## Open items / next steps
-1. **Back up `APP_SECRET_KEY`.** It is in `.env`. If it is lost, stored secrets cannot be
-   decrypted and must be re-entered.
-2. **Admin accounts exist** (`sarthak.bobde@sysfore.com` and a `testadmin@sysfore.com` test account). Remove
-   the test account on the Admins screen when testing is finished, and delete `admin_data/testadmin-credentials.txt`.
-3. **Rotate secrets**: the Gemini key was pasted in chat; Slack tokens passed through tool
-   output. Regenerate if that matters for your policy. After that, the old Slack token lines in
-   `.env` are no longer needed (the database holds the working copy).
-4. **LLM credit**: the Gemini key ran out of prepaid credit (HTTP 402), so the bot currently
-   cannot answer until credit is added or another key/provider is configured.
-5. **Teams / Google Chat**: create the Azure Bot / Chat app, then enter the credentials on the
-   admin page and run `.\start.ps1 -Tunnel`. Teams needs sideloading to be allowed; Google
-   Chat needs Google Workspace.
-6. **Move `chroma_db` and `chats` out of OneDrive** (`CHROMA_PATH`, `CHAT_DIR`) to avoid SQLite
-   sync locks; re-ingest once. Keep `admin_data/` out of OneDrive too (`ADMIN_DB_PATH`).
-7. **Docker:** built and booted with the admin database, master key and chat token (Phase 0). Still open: the
-   admin page needs the remote-admin design (Phase 2), and the PostgreSQL deployment path is covered by tests
-   only, not by a running instance.
-8. **Admin gaps**: sign-in is local only (Entra ID planned); sessions end after 8 hours, on password change or
-   on a key change but cannot be revoked individually; the page was browser-tested for the main flows only
-   (not delete, add-admin or change-password).
-9. **Hardening before real use**: rate limits on chat, a service or container that survives restarts
-   (compose has a restart policy; not yet run as a service), user-level authentication on the chat API
-   (today a shared service token; per-user identity arrives with Phase 2).
-10. **Upcoming (shown greyed out in the admin sidebar, not started)**:
-    - **Documents**: upload and per-document access (who can add, who can see which files).
-    - **Chunking strategy**: today fixed 900/150 recursive; planned fixed size, per page, by
-      heading, semantic.
-    - **Vector store**: today hard-wired to ChromaDB; planned pgvector, Qdrant, Azure AI Search.
-    - **Retrieval strategy**: today vector similarity with a score threshold; planned hybrid
-      keyword + vector, re-ranker, query rewriting.
-    - Changing chunking, embeddings or the vector store means a full rebuild into a new
-      versioned index (old one kept for rollback), never a mix of strategies in one index.
-11. **Later still**: multiple knowledge bases, tracing and evaluation.
+
+The project is feature-complete against the plan. What remains is listed in `ACCEPTANCE.md`: actions only a person can do (model
+credit, Slack scopes, Teams and Google Chat setup, HTTPS hosting, key backup and rotation), decisions still marked Proposed, and the
+known limitations.
