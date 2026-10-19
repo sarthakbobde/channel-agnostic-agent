@@ -13,6 +13,7 @@ from botbuilder.core import BotFrameworkAdapter, BotFrameworkAdapterSettings, Tu
 from botbuilder.schema import Activity, ActivityTypes
 from app.channels.base import Adapter, Envelope, Field
 from app.channels.core import handle, sources_line
+from app.identity import TTLCache, lookup_ok, lookup_problem
 
 log = logging.getLogger(__name__)
 
@@ -27,6 +28,8 @@ class TeamsAdapter(Adapter):
               help="Azure Bot > Configuration > Manage Password"),
         Field("tenant_id", "Tenant ID", help="Required for single-tenant bots"),
         Field("allowed_tenants", "Allowed tenants", kind="list", help="Empty = any tenant"),
+        Field("kb_ids", "Knowledge bases", kind="kbs",
+              help="Which knowledge bases this channel answers from. Empty = the default knowledge base."),
         Field("show_sources", "Show sources", kind="bool", default=True),
     )
 
@@ -62,6 +65,28 @@ class TeamsAdapter(Adapter):
             return False, "Microsoft did not return a token for these credentials."
         return True, "Microsoft accepted the app ID and secret."
 
+    async def _email_for(self, ctx: TurnContext, user_id: str) -> str:
+        """The sender's email from the Teams roster (no Microsoft Graph needed). Unverified on a real tenant."""
+        if not user_id:
+            return ""
+        if not hasattr(self, "_emails"):
+            self._emails = TTLCache()
+        found, email = self._emails.get(user_id)
+        if found:
+            return email
+        email = ""
+        try:
+            from botbuilder.core.teams import TeamsInfo
+            member = await TeamsInfo.get_member(ctx, user_id)
+            email = (getattr(member, "email", "") or getattr(member, "user_principal_name", "") or "")
+            lookup_ok("identity_lookup:teams")
+        except Exception as e:
+            log.warning("teams email lookup failed: %s", type(e).__name__)
+            lookup_problem("identity_lookup:teams", "Teams: cannot read people's email addresses, so everyone is "
+                           "treated as an unknown Viewer. Check the bot is installed for the user (personal or team scope).")
+        self._emails.put(user_id, email)
+        return email
+
     async def _on_turn(self, ctx: TurnContext) -> None:
         act = ctx.activity
         if act.type != ActivityTypes.message or not act.text:
@@ -73,8 +98,9 @@ class TeamsAdapter(Adapter):
         tenant = (act.channel_data or {}).get("tenant", {}).get("id", "") or "t"
         if self.allowed_tenants and tenant not in self.allowed_tenants:
             return
-        env = Envelope("teams", tenant, act.conversation.id, act.conversation.id,
-                       act.from_property.id if act.from_property else "", text)
+        sender = act.from_property.id if act.from_property else ""
+        env = Envelope("teams", tenant, act.conversation.id, act.conversation.id, sender, text,
+                       tuple(self.cfg.get("kb_ids") or ()), await self._email_for(ctx, sender))
         await ctx.send_activity(Activity(type=ActivityTypes.typing))
         ref = TurnContext.get_conversation_reference(act)
         task = asyncio.create_task(self._answer(ref, env))     # ack now, answer later

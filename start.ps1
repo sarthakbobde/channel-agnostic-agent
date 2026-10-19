@@ -20,6 +20,9 @@ if ($Ingest) { & $py -m app.ingest }
 
 $tunnelProc = $null
 if ($Tunnel) {
+    # Only the main port is tunnelled. Put the admin page on its own local port so no admin route exists on the tunnelled one.
+    if (-not $env:ADMIN_PORT) { $env:ADMIN_PORT = "8001" }
+    Write-Host "Admin page: http://127.0.0.1:$($env:ADMIN_PORT)/admin (this machine only, not tunnelled)" -ForegroundColor Green
     $cf = Get-Command cloudflared -ErrorAction SilentlyContinue
     if (-not $cf) { throw "cloudflared not found. Install: winget install Cloudflare.cloudflared" }
     $log = Join-Path $env:TEMP "rag-tunnel.log"

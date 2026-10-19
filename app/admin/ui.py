@@ -24,7 +24,7 @@ router = APIRouter(include_in_schema=False)
 
 
 def _serve(request: Request, name: str, media: str) -> FileResponse:
-    check_local(request, settings.admin_allow_remote)
+    check_local(request, settings.admin_allow_remote, settings.admin_allow_remote and settings.admin_require_https)
     return FileResponse(ROOT / name, media_type=media, headers=HEADERS)
 
 

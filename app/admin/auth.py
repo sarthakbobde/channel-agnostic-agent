@@ -57,11 +57,11 @@ def fingerprint(password_hash: str | None) -> str:
 class SessionSigner:
     """Stateless signed sessions: base64(payload).hmac. Key is derived from the first master key."""
 
-    def __init__(self, master_keys: str, ttl: int = 8 * 3600):
+    def __init__(self, master_keys: str, ttl: int = 8 * 3600, purpose: str = "rag-admin-session-v1"):
         first = (master_keys or "").split(",")[0].strip()
         if not first:
             raise ValueError("a master key is required to sign sessions")
-        self._key = hashlib.sha256(b"rag-admin-session-v1:" + first.encode()).digest()
+        self._key = hashlib.sha256(purpose.encode() + b":" + first.encode()).digest()
         self.ttl = ttl
 
     def _sig(self, body: str) -> str:

@@ -20,3 +20,11 @@ admin_data/
 *.db
 *.db-wal
 *.db-shm
+
+# backups and uploaded originals
+chroma_db.bak-*/
+data/kb_files/
+chats.bak-*/
+
+# downloaded embedding models
+models/

@@ -41,6 +41,8 @@ class GChatAdapter(Adapter):
         Field("service_account_email", "Service account email",
               help="Only for auth=endpoint_url"),
         Field("allowed_spaces", "Allowed spaces", kind="list", help="e.g. spaces/AAAA... Empty = any"),
+        Field("kb_ids", "Knowledge bases", kind="kbs",
+              help="Which knowledge bases this channel answers from. Empty = the default knowledge base."),
         Field("show_sources", "Show sources", kind="bool", default=True),
     )
 
@@ -119,13 +121,14 @@ class GChatAdapter(Adapter):
             raise HTTPException(401)
         body = await request.json()
         kind, space, thread, user, text, addon = self._parse(body)
+        sender = (body.get("chat") or body).get("user") or {}
         if kind == "ignore":
             return {}
         if kind == "added":
             return self._reply(GREETING, addon)
         if not text or (self.allowed and space not in self.allowed):
             return {}
-        env = Envelope("gchat", "g", space, thread or space, user, text)
+        env = Envelope("gchat", "g", space, thread or space, user, text, tuple(self.cfg.get("kb_ids") or ()), sender.get("email", ""))
         try:
             result = await asyncio.wait_for(run_in_threadpool(handle, env), TIMEOUT_S)
         except asyncio.TimeoutError:

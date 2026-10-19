@@ -10,7 +10,6 @@ from app.admin import api as admin_api
 from app.admin import users
 from app.admin.auth import LoginLimiter, SessionSigner, hash_password, verify_password
 from app.channels.store import ChannelStore
-from app.db import Database
 from app.secretstore import FernetSecretStore, generate_key
 from tests.test_channels import FakeAdapter, FakeManager
 
@@ -73,9 +72,9 @@ def test_check_local_guard():
 
 # ---- app fixture --------------------------------------------------------------
 @pytest.fixture
-def env(tmp_path):
+def env(new_db):
     FakeAdapter.instances = []
-    db = Database(tmp_path / "admin.db")
+    db = new_db()
     secrets = FernetSecretStore(generate_key())
     store = ChannelStore(db, secrets, lambda t: FakeAdapter.SPEC)
     mgr = FakeManager({"fake": ("x", "y")})
@@ -281,3 +280,51 @@ def test_logout_clears_session(env):
     _, h = login(c)
     assert c.post("/admin/api/auth/logout", headers=h).status_code == 200
     assert c.get("/admin/api/auth/me").status_code == 401
+
+
+# ---- global settings ---------------------------------------------------------------
+def test_settings_need_sign_in_and_csrf(env):
+    _, c = env
+    assert c.get("/admin/api/settings").status_code == 401
+    assert c.put("/admin/api/settings", json={"values": {"top_k": 3}}).status_code == 401
+    _, h = login(c)
+    assert c.put("/admin/api/settings", json={"values": {"top_k": 3}}).status_code == 403      # no CSRF token
+
+
+def test_settings_view_update_and_audit(env):
+    ctx, c = env
+    _, h = login(c)
+    view = c.get("/admin/api/settings").json()
+    by = {f["name"]: f for f in view["fields"]}
+    assert set(by) == {"top_k", "score_threshold", "recent_turns", "chunk_size", "chunk_overlap", "max_retention_days", "prompt_max_chars", "summarise_after_turns", "retention_job_enabled", "export_enabled", "chat_rate_per_minute"}
+    assert (by["top_k"]["value"], by["score_threshold"]["value"], by["recent_turns"]["value"]) == (5, 0.35, 6)
+    assert all(f["kind"] in ("number", "bool") and f["help"] for f in view["fields"])
+
+    r = c.put("/admin/api/settings", headers=h, json={"values": {"top_k": 8, "score_threshold": 0.5}})
+    assert r.status_code == 200
+    by = {f["name"]: f["value"] for f in r.json()["fields"]}
+    assert (by["top_k"], by["score_threshold"], by["recent_turns"]) == (8, 0.5, 6)           # others untouched
+    assert r.json()["updated_by"] == EMAIL
+    entry = [e for e in ctx.store.recent_audit() if e["action"] == "settings.update"][0]
+    assert entry["actor"] == EMAIL and entry["detail"] == "top_k: 5 -> 8; score_threshold: 0.35 -> 0.5"
+    again = c.put("/admin/api/settings", headers=h, json={"values": {"top_k": 8}})
+    assert again.status_code == 200
+    assert [e for e in ctx.store.recent_audit() if e["action"] == "settings.update"][0]["detail"] == "no changes"
+
+
+@pytest.mark.parametrize("values, message", [
+    ({"top_k": 0}, "between 1 and 50"),
+    ({"top_k": 2.5}, "whole number"),
+    ({"top_k": "5"}, "must be a number"),
+    ({"top_k": True}, "must be a number"),
+    ({"score_threshold": 1.5}, "between 0.0 and 1.0"),
+    ({"chunk_overlap": 900}, "smaller than the chunk size"),
+    ({"chunk_size": 100}, "smaller than the chunk size"),         # existing overlap 150 would no longer fit
+    ({"nonsense": 1}, "Unknown setting"),
+])
+def test_settings_rejects_bad_values_and_changes_nothing(env, values, message):
+    ctx, c = env
+    _, h = login(c)
+    r = c.put("/admin/api/settings", headers=h, json={"values": values})
+    assert r.status_code == 422 and message in r.json()["detail"]
+    assert {f["name"]: f["value"] for f in c.get("/admin/api/settings").json()["fields"]}["top_k"] == 5

@@ -2,6 +2,8 @@
 from abc import ABC
 from dataclasses import dataclass
 
+from app.spec import Field  # noqa: F401  (re-exported: channel adapters import Field from here)
+
 
 @dataclass(frozen=True)
 class Envelope:
@@ -11,23 +13,12 @@ class Envelope:
     thread: str        # thread id (or room id when the platform has no threads)
     user: str
     text: str
+    kb_ids: tuple = ()  # knowledge bases this channel is bound to (empty = the default one)
+    email: str = ""   # sender's email when the platform tells us (see app/identity.py)
 
     @property
     def conv_id(self) -> str:
         return f"{self.channel}-{self.workspace}-{self.room}-{self.thread}"
-
-
-@dataclass(frozen=True)
-class Field:
-    """One setting of an adapter. The admin UI renders its form from these."""
-    name: str
-    label: str
-    kind: str = "text"            # text | list | bool | choice
-    secret: bool = False          # stored encrypted, never shown again
-    required: bool = False
-    help: str = ""
-    choices: tuple = ()           # for kind == "choice"
-    default: object = None
 
 
 class Adapter(ABC):
@@ -67,6 +58,11 @@ class Adapter(ABC):
     async def handle_webhook(self, request):
         """Handle an inbound HTTP request (webhook channels only)."""
         raise NotImplementedError
+
+    def healthy(self) -> bool:
+        """Is the connection to the platform alive right now? Webhook channels have nothing to hold open, so they are healthy
+        while running; socket channels override this."""
+        return True
 
     def test(self) -> tuple[bool, str]:
         """Check the credentials against the platform. Returns (ok, message)."""

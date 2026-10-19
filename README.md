@@ -8,6 +8,7 @@ web page, with no code changes or restarts.
 | Read | For |
 |---|---|
 | [PROGRESS.md](PROGRESS.md) | What is built, how it works, open items |
+| [RUNNING.md](RUNNING.md) | Step by step: set up, run, test, update, push to a branch |
 | [ADMIN.md](ADMIN.md) | Setting up and using the admin page, security model |
 | [TEAMS_SETUP.md](TEAMS_SETUP.md), [GCHAT_SETUP.md](GCHAT_SETUP.md) | Connecting Teams and Google Chat |
 | `docs/` | Architecture and one-pager PDFs |
@@ -20,7 +21,9 @@ py -3.11 -m venv --without-pip $env:USERPROFILE\rag-venv
 py -3.11 -m pip --python $env:USERPROFILE\rag-venv\Scripts\python.exe install -e .
 
 # 2. Settings: copy .env.example to .env and fill in the LLM key and model, then add a master key
+#    and a chat API token (both required)
 & $env:USERPROFILE\rag-venv\Scripts\python.exe -m app.secretstore generate   # paste into .env as APP_SECRET_KEY
+& $env:USERPROFILE\rag-venv\Scripts\python.exe -c "import secrets; print(secrets.token_urlsafe(32))"   # paste as CHAT_API_TOKEN
 
 # 3. Index your documents (data\docs) and start
 .\start.ps1 -Ingest
@@ -33,16 +36,28 @@ Channels (Slack, Teams, Google Chat) are added, tested and switched on in the ad
 Slack uses Socket Mode and needs no public URL; Teams and Google Chat need an HTTPS address
 (`.\start.ps1 -Tunnel`). The admin page only answers requests from the machine itself.
 
-The sections below describe the Docker setup. Docker has **not** been updated for the admin
-database (`APP_SECRET_KEY` and a volume for `admin_data/` are missing from `docker-compose.yml`)
-and the Docker path as a whole is untested.
+**The chat API is locked.** `/chat` and `/conversations` need `Authorization: Bearer <CHAT_API_TOKEN>`;
+without a token configured they refuse everything. The Streamlit page reads the token from `.env`.
+The built-in API docs (`/docs`) only open from this machine.
+
+**Run the tests** (they use temporary data and never touch your real database):
+
+```powershell
+& $env:USERPROFILE\rag-venv\Scripts\python.exe -m pytest tests                # SQLite
+$env:TEST_DB = "postgres"; & $env:USERPROFILE\rag-venv\Scripts\python.exe -m pytest tests   # PostgreSQL in Docker
+```
+
+The database schema is managed by Alembic migrations and upgrades itself when the server starts.
+
+The sections below describe the Docker setup (built and booted once with the admin database, the
+master key and the chat token; see `docker-compose.yml`).
 
 ## Docker: Quick Start (3 commands)
 
 ```bash
 # 1. Configure
 cp .env.example .env
-# Edit .env and add your NINEROUTER_API_KEY and LLM_MODEL
+# Edit .env: NINEROUTER_API_KEY, LLM_MODEL, and the two required secrets APP_SECRET_KEY and CHAT_API_TOKEN
 
 # 2. Deploy backend (in rag-assistant folder)
 docker-compose up --build -d
@@ -75,19 +90,22 @@ streamlit run streamlit_app.py
 # Health check
 curl http://localhost:8000/health
 
+# The chat routes need the service token
+TOKEN=...   # CHAT_API_TOKEN from .env
+
 # Send message
 curl -X POST http://localhost:8000/chat \
-  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
   -d '{"message": "your question", "conv_id": "unique-id"}'
 
 # List conversations
-curl http://localhost:8000/conversations
+curl -H "Authorization: Bearer $TOKEN" http://localhost:8000/conversations
 
 # Get conversation history
-curl http://localhost:8000/conversations/{conv_id}
+curl -H "Authorization: Bearer $TOKEN" http://localhost:8000/conversations/{conv_id}
 
 # Delete conversation
-curl -X DELETE http://localhost:8000/conversations/{conv_id}
+curl -X DELETE -H "Authorization: Bearer $TOKEN" http://localhost:8000/conversations/{conv_id}
 ```
 
 ## Configuration
@@ -95,17 +113,26 @@ curl -X DELETE http://localhost:8000/conversations/{conv_id}
 Edit `.env` to customize:
 
 ```env
-# Required
+# Model: first-run seed only. On the first start these become a provider on the admin Providers
+# screen (key stored encrypted); afterwards they are ignored and can be deleted.
 NINEROUTER_BASE_URL=http://localhost:20128/v1
 NINEROUTER_API_KEY=sk-your-key-here
 LLM_MODEL=testcombo
 
-# Optional RAG tuning
+# Required
+APP_SECRET_KEY=...      # encrypts stored credentials; back it up
+CHAT_API_TOKEN=...      # lets the Streamlit page call the chat API
+
+# First-run seeds for the Settings screen. After the first start they live in the admin
+# database and are edited on the admin page (Settings), not here.
 TOP_K=5
 SCORE_THRESHOLD=0.35
 CHUNK_SIZE=900
 CHUNK_OVERLAP=150
 MEMORY_MAX_TURNS=6
+
+# Optional
+DATABASE_URL=postgresql+psycopg://user:pass@host:5432/agent   # instead of the SQLite file
 ```
 
 ## Docker Commands

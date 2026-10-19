@@ -1,0 +1,6 @@
+{"commonEventObject": {"hostApp": "CHAT"},
+ "chat": {"user": {"name": "users/111", "displayName": "Asha Rao", "email": "asha@sysfore.com"},
+          "eventTime": "2026-10-19T09:00:00Z",
+          "messagePayload": {"space": {"name": "spaces/AAAA", "type": "ROOM"},
+                             "message": {"name": "spaces/AAAA/messages/M1", "text": "@Agent How many leave days?",
+                                         "argumentText": " How many leave days?", "thread": {"name": "spaces/AAAA/threads/T1"}}}}}
