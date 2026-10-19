@@ -125,7 +125,7 @@
   var TABS = [["channels", "Channels"], ["settings", "Settings"], ["providers", "Providers"], ["knowledge", "Knowledge bases"], ["groups", "Groups"], ["prompts", "Prompts"], ["guardrails", "Guardrails"], ["departments", "Departments"], ["users", "Users"], ["audit", "Audit log"], ["account", "Account"]];
   // Planned, not built yet: shown greyed out so admins can see what is coming. [label, tooltip]
   var UPCOMING = [
-    ["Injection and toxicity checks", "Upcoming (phase 6, second part): detection models for prompt-injection and toxic questions and answers. Today guardrails block over-long questions and banned topics, and mask personal data."],
+    ["Model-based detection", "Upcoming (later): detection models for prompt-injection and toxic language, to catch paraphrases and other languages. Today these checks are rule-based (known phrasing and word lists)."],
     ["Conversations", "Upcoming (phase 7): conversation memory in the database with summaries, retention enforced per department, and an audited export (off by default). Today history is kept in text files."],
     ["Chunking strategies", "Upcoming (phase 8): per page, by heading and semantic chunking, with a preview. Today: fixed size (900 characters, 150 overlap), set per knowledge base."],
     ["Embedding models", "Upcoming (phase 8): OpenAI, Azure OpenAI, Cohere and multilingual models, with cost tracking. Today: the built-in local MiniLM model."],
@@ -1274,7 +1274,7 @@
       holder.replaceChildren(h("div", { class: "panel" },
         h("div", { class: "meta" }, h("span", { class: "pill " + kind }, label), " Last changed " + when(data.updated_at) + " by " + data.updated_by),
         sf.el, h("div", { class: "actions" }, save), result,
-        h("p", { class: "note" }, "Banned topics are matched by words (a phrase, with simple plurals), not by meaning. Names are not masked unless you turn that on; detection of names is approximate.")));
+        h("p", { class: "note" }, "Injection, toxicity and banned-topic checks are rule-based: they catch known phrasing and listed words, not paraphrases or other languages. Names are not masked unless you turn that on; detection of names is approximate.")));
     }
     try { show(await api("GET", "/guardrails")); }
     catch (err) { if (me) holder.replaceChildren(msg("bad", err.message)); }

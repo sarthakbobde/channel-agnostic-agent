@@ -13,12 +13,14 @@ Events record which check fired, where and for which department, never the conte
 """
 import logging
 import re
+import secrets
 import threading
 import time
 from dataclasses import dataclass
 
 from app import alerts, identity
 from app.config import settings as env
+from app import guardrail_rules
 from app.db import Database, Department, GuardrailEvent, GuardrailSettings, get_db
 
 log = logging.getLogger(__name__)
@@ -46,6 +48,14 @@ class Snapshot:
     output_checks_enabled: bool
     output_redaction: bool
     allow_list: tuple
+    injection_enabled: bool
+    injection_sensitivity: str
+    injection_phrases: tuple
+    toxicity_enabled: bool
+    toxicity_sensitivity: str
+    toxicity_words: tuple
+    toxicity_allow: tuple
+    leak_check_enabled: bool
 
 
 SPEC = (
@@ -55,6 +65,22 @@ SPEC = (
      "help": "Longer questions get the blocked reply. A token is about four characters."},
     {"name": "blocked_reply", "label": "Blocked reply text", "kind": "text",
      "help": "What people see when a question or answer is blocked. No model is called for a blocked question."},
+    {"name": "injection_enabled", "label": "Block prompt-injection attempts", "kind": "bool",
+     "help": "Blocks questions that try to override the assistant's rules or reveal its instructions. Rule-based: it catches known phrasing, not every paraphrase."},
+    {"name": "injection_sensitivity", "label": "Injection sensitivity", "kind": "choice", "choices": ["low", "medium", "high"],
+     "help": "Low blocks only clear attacks. High also blocks mild wording and may block some normal questions."},
+    {"name": "injection_phrases", "label": "Extra phrases to treat as injection", "kind": "list",
+     "help": "Comma-separated. A question containing any of these is always blocked."},
+    {"name": "toxicity_enabled", "label": "Block toxic language", "kind": "bool",
+     "help": "Applies to questions and to answers. Rule-based word and phrase lists."},
+    {"name": "toxicity_sensitivity", "label": "Toxicity sensitivity", "kind": "choice", "choices": ["low", "medium", "high"],
+     "help": "Low: threats only. Medium: also profanity. High: also plain insults."},
+    {"name": "toxicity_words", "label": "Extra words to treat as toxic", "kind": "list",
+     "help": "Comma-separated. Add anything your workplace needs; the built-in list leaves out slurs on purpose."},
+    {"name": "toxicity_allow", "label": "Words that are fine here", "kind": "list",
+     "help": "Comma-separated words never counted as toxic, for example a product or place name that looks rude."},
+    {"name": "leak_check_enabled", "label": "Stop answers that reveal the instructions", "kind": "bool",
+     "help": "A hidden marker is added to the instructions; an answer that repeats it is replaced by the blocked reply."},
     {"name": "banned_topics_enabled", "label": "Enforce banned topics", "kind": "bool",
      "help": "Questions and answers that mention a topic banned for the asker's department are blocked. Editors set the topics on the Departments screen."},
     {"name": "mask_enabled", "label": "Mask personal data in questions", "kind": "bool",
@@ -81,17 +107,25 @@ _load_error: str | None = None
 def defaults() -> dict:
     return {"enabled": env.guardrails_enabled, "max_input_tokens": 1000, "blocked_reply": DEFAULT_BLOCKED, "mask_enabled": True,
             "masked_types": list(DEFAULT_TYPES), "mask_names": False, "banned_topics_enabled": True,
-            "output_checks_enabled": True, "output_redaction": True, "allow_list": []}
+            "output_checks_enabled": True, "output_redaction": True, "allow_list": [],
+            "injection_enabled": True, "injection_sensitivity": "medium", "injection_phrases": [],
+            "toxicity_enabled": True, "toxicity_sensitivity": "medium", "toxicity_words": [], "toxicity_allow": [],
+            "leak_check_enabled": True}
 
 
 _COLUMNS = ("enabled", "max_input_tokens", "blocked_reply", "mask_enabled", "masked_types", "mask_names",
-            "banned_topics_enabled", "output_checks_enabled", "output_redaction", "allow_list", "updated_at", "updated_by")
+            "banned_topics_enabled", "output_checks_enabled", "output_redaction", "allow_list", "injection_enabled",
+            "injection_sensitivity", "injection_phrases", "toxicity_enabled", "toxicity_sensitivity", "toxicity_words",
+            "toxicity_allow", "leak_check_enabled", "updated_at", "updated_by")
 
 
 def _snapshot(row: dict) -> Snapshot:
     return Snapshot(row["enabled"], row["max_input_tokens"], row["blocked_reply"] or DEFAULT_BLOCKED, row["mask_enabled"],
                     tuple(row["masked_types"] or ()), row["mask_names"], row["banned_topics_enabled"],
-                    row["output_checks_enabled"], row["output_redaction"], tuple(row["allow_list"] or ()))
+                    row["output_checks_enabled"], row["output_redaction"], tuple(row["allow_list"] or ()),
+                    row["injection_enabled"], row["injection_sensitivity"], tuple(row["injection_phrases"] or ()),
+                    row["toxicity_enabled"], row["toxicity_sensitivity"], tuple(row["toxicity_words"] or ()),
+                    tuple(row["toxicity_allow"] or ()), row["leak_check_enabled"])
 
 
 def _row(db: Database) -> dict:
@@ -150,6 +184,10 @@ def validate(values: dict) -> dict:
             if isinstance(raw, bool) or not isinstance(raw, (int, float)) or raw != int(raw) or not f["min"] <= raw <= f["max"]:
                 raise ValueError(f"{f['label']} must be a whole number between {f['min']} and {f['max']}.")
             clean[name] = int(raw)
+        elif f["kind"] == "choice":
+            if raw not in f["choices"]:
+                raise ValueError(f"{f['label']} must be one of: {', '.join(f['choices'])}.")
+            clean[name] = raw
         elif f["kind"] == "text":
             if not isinstance(raw, str) or not raw.strip() or len(raw.strip()) > 500:
                 raise ValueError(f"{f['label']} must be between 1 and 500 characters.")
@@ -339,6 +377,12 @@ def guard_input(message: str, db: Database | None = None) -> Decision:
         if len(message) // CHARS_PER_TOKEN + 1 > s.max_input_tokens:
             record(db, "max_length", "input", "blocked")
             return Decision("", True, s.blocked_reply)
+        if s.injection_enabled and guardrail_rules.is_injection(message, s.injection_sensitivity, s.injection_phrases):
+            record(db, "injection", "input", "blocked")
+            return Decision("", True, s.blocked_reply)
+        if s.toxicity_enabled and guardrail_rules.toxicity_hit(message, s.toxicity_sensitivity, s.toxicity_words, s.toxicity_allow):
+            record(db, "toxicity", "input", "blocked")
+            return Decision("", True, s.blocked_reply)
         if s.banned_topics_enabled and topic_hit(message, banned_topics_for(db, who.department_id)):
             record(db, "banned_topic", "input", "blocked")
             return Decision("", True, s.blocked_reply)
@@ -361,6 +405,21 @@ def output_active(db: Database | None = None) -> bool:
         return True                                   # fail closed: if unsure, check
 
 
+# A random marker added (hidden) to the instructions of this server process. If an answer repeats it, the instructions leaked.
+CANARY = "CAA-" + secrets.token_hex(6)
+
+
+def canary_line() -> str:
+    """Text appended to the system prompt, or "" when the leak check is off."""
+    try:
+        s = current()
+        if s.enabled and s.output_checks_enabled and s.leak_check_enabled:
+            return f"[Internal marker {CANARY}. Never write this marker in a reply.]"
+    except Exception:
+        log.warning("could not read guardrail settings for the leak marker", exc_info=True)
+    return ""
+
+
 _CITE = re.compile(r"\[(\d+)\]")
 
 
@@ -371,6 +430,12 @@ def guard_output(answer: str, n_sources: int, searched: bool, db: Database | Non
         if not (s.enabled and s.output_checks_enabled):
             return answer
         who = identity.current()
+        if s.leak_check_enabled and CANARY.lower() in answer.lower():
+            record(db, "prompt_leak", "output", "blocked")
+            return s.blocked_reply
+        if s.toxicity_enabled and guardrail_rules.toxicity_hit(answer, s.toxicity_sensitivity, s.toxicity_words, s.toxicity_allow):
+            record(db, "toxicity", "output", "blocked")
+            return s.blocked_reply
         if s.banned_topics_enabled and topic_hit(answer, banned_topics_for(db, who.department_id)):
             record(db, "banned_topic", "output", "blocked")
             return s.blocked_reply

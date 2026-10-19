@@ -71,3 +71,6 @@ this file.
 | 6a | presidio-anonymizer not installed | Masking replaces the detected spans itself. | One less dependency; same result. |
 | 6a | Allow-list seed | Starts with emails found in the documents. | So legitimate contact details are not redacted on day one. |
 | 6a | Token limit | Counted as characters / 4. | tiktoken needs a network download; the limit is a rough guard. |
+| 6b | Rules instead of models | Injection and toxicity detection is rule-based for now; models are added later. | Chosen by the project owner; avoids multi-GB downloads and the LLM Guard dependency downgrades. |
+| 6b | Toxicity list | Profanity, threats and plain insults; slurs left out. | Conservative default; Admins add what their workplace needs. |
+| 6b | Prompt-leak detection | A hidden random marker, not text matching. | Verbatim matching false-alarms on the assistant's allowed self-description. |

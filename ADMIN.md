@@ -175,7 +175,7 @@ All under `/admin/api`, JSON, cookie + `X-CSRF-Token` header for changes.
 | `GET/PUT /documents/{id}/access` | Who can see a document (`visibility`: everyone, people, groups) |
 | `GET/PUT /kbs/{id}/access` | Who may ask a knowledge base (empty = everyone on a bound channel) |
 | `GET /prompts`, `GET /prompts/versions`, `POST /prompts/drafts`, `POST /prompts/versions/{id}/publish`, `/rollback`, `POST /prompts/preview` | Prompts (base: Admin only; department: its Editors and Admins) |
-| `GET/PUT /guardrails` | Guardrail settings (Admin only); banned topics are edited per department |
+| `GET/PUT /guardrails` (injection, toxicity and leak controls included) | Guardrail settings (Admin only); banned topics are edited per department |
 | `GET/POST /admins`, `DELETE /admins/{email}` | Older admin endpoints, kept for compatibility |
 
 ## Running the admin on its own port, and remote access

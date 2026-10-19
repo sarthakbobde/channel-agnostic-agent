@@ -122,6 +122,10 @@ def assemble(mode: str, context: str = "") -> str:
         parts += ["# DEPARTMENT INSTRUCTIONS\n" + dept, CLOSING]
     if context:
         parts.append("CONTEXT:\n" + context)
+    from app import guardrails
+    marker = guardrails.canary_line()
+    if marker:
+        parts.append(marker)
     return "\n\n".join(parts)
 
 

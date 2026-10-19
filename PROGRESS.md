@@ -350,6 +350,24 @@ PyTorch, transformers and LLM Guard are NOT installed yet (part 6b); their memor
 * Known limits: banned topics are word matches (with simple plurals), not meaning; name detection is approximate; Aadhaar needs a valid checksum to be recognised.
 * Tests set `GUARDRAILS_ENABLED=false` (they would otherwise load the language model); the switch is for first start only, afterwards the Settings screen decides.
 
+### Phase 6, part 6b: rule-based injection, toxicity and prompt-leak checks (models later)
+
+* `app/guardrail_rules.py`. **Injection**: weighted patterns for "ignore/disregard your instructions", asking for the system prompt, DAN / developer-mode / jailbreak,
+  "pretend you have no restrictions", fake chat markers (`<|im_start|>`, `[INST]`, `system:`), and so on. A question is blocked when its score reaches the
+  sensitivity threshold (low 3, medium 2, high 1); Admin phrases always block. Text is normalised first (case, look-alike letters such as Cyrillic "і",
+  zero-width characters, spaced-out letters, leetspeak), so simple obfuscation does not hide a phrase.
+* **Toxicity** (questions and answers): conservative built-in lists in three tiers: threats (all levels), profanity (medium and high), plain insults (high only).
+  Slurs are left out on purpose; Admins add words and a "fine here" list. Obfuscated spellings (sh1t) are caught.
+* **Prompt leak** (answers): a random marker is hidden in the instructions of each server process; an answer that repeats it is replaced by the blocked reply.
+  No false positives from normal wording.
+* Order for questions: length, injection, toxicity, banned topics, masking. Every block records an event (injection, toxicity, prompt_leak, direction, department) with no content.
+* Controls on the Guardrails screen: on/off and low/medium/high for injection and toxicity, extra phrases and words, the "fine here" list, the leak check. Migration 0014.
+* **Measured**: on 25 realistic normal questions (including "kill a stuck process", "heart attack leave", "system: Windows 11") there were 0 false positives at low and
+  medium and 3 at high; all 12 attack styles tested were blocked with zero model calls.
+* **Limits (also shown on the screen)**: rules catch known phrasing only, not paraphrases or other languages; "ignore ... instructions" in an innocent sentence
+  (for example about phishing emails) is blocked. Model-based detection is a later addition (candidates reviewed: LLM Guard, whose pins would downgrade `cryptography`
+  and `presidio-analyzer`; an ONNX-only route; Laya, an open ModernBERT-based model). Nothing was downloaded for this part.
+
 ## How to run
 
 ```powershell
