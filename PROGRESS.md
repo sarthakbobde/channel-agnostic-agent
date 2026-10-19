@@ -499,6 +499,30 @@ PyTorch, transformers and LLM Guard are NOT installed yet (part 6b); their memor
 - **Both databases:** the full suite runs on SQLite and PostgreSQL (`TEST_DB=postgres`, throwaway container).
 - Migration 0022 (rate limit setting).
 
+## 19. Phase 11: final acceptance
+
+### Phase 11, part 11a: traceability
+- `TRACEABILITY.md` maps all 82 BRD requirements to code, route or screen, and test, and re-scores the summary: 75 built,
+  6 partial, 1 not built (was 17 / 21 / 44).
+
+### Phase 11, part 11b: end-to-end scenarios
+- The one-off development checks of phases 2 to 9 are now part of the repository (`tests/checks/`, run by `tests/test_checks.py`,
+  each in its own throwaway data folders). Bringing them back meant fixing out-of-date expectations in the scripts (Editor screens, chunks
+  without a document record, conversations that moved from files to the database, a chat list that included another test's
+  chat), keeping the new question limit out of their way, and lengthening a timing wait. It found no product defect.
+- Three new end-to-end scenarios: `scenario_admin` (providers, people, knowledge base, Slack, prompt, a question, usage and cost,
+  reports, audit), `scenario_editor_viewer` (Editor over HTTPS, restricted document, blocked replies, masking) and
+  `scenario_resilience_governance` (fallback, alerts, bad channel credential, store outage, retention, audited export).
+- Only the language models, the provider key test and the Slack connection are stand-ins; documents are really uploaded,
+  embedded, stored and searched.
+
+### Phase 11, part 11c: security pass
+- `tests/test_security_pass.py` (23 tests): every admin route against an Editor and against no sign-in, pinned role lists,
+  admin-only parts of shared routes, self-promotion, deactivated people, no GET route returns any of seven planted secrets,
+  nothing secret in write responses, the audit log or the database, cross-department access, restricted text never reaching a
+  router, answer, summariser or preview model call, forged and missing CSRF tokens on every state-changing route, upload names
+  and types and sizes, one-time links, and login not revealing which accounts exist. It found no vulnerability.
+
 ## How to run
 
 ```powershell
