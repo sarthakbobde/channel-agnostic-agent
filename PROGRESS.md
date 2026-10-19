@@ -365,7 +365,7 @@ PyTorch, transformers and LLM Guard are NOT installed yet (part 6b); their memor
 * **Measured**: on 25 realistic normal questions (including "kill a stuck process", "heart attack leave", "system: Windows 11") there were 0 false positives at low and
   medium and 3 at high; all 12 attack styles tested were blocked with zero model calls.
 * **Limits (also shown on the screen)**: rules catch known phrasing only, not paraphrases or other languages; "ignore ... instructions" in an innocent sentence
-  (for example about phishing emails) is blocked. Model-based detection is a later addition (candidates reviewed: LLM Guard, whose pins would downgrade `cryptography`
+  (for example about phishing emails) is blocked. Model-based detection was dropped from the plan (candidates reviewed: LLM Guard, whose pins would downgrade `cryptography`
   and `presidio-analyzer`; an ONNX-only route; Laya, an open ModernBERT-based model). Nothing was downloaded for this part.
 
 ## 15. Phase 7, part 7a: conversation memory in the database

@@ -48,8 +48,8 @@ Three of them differ from the text in `DECISIONS.md`:
 ## Known limitations
 
 - **#7 Display Name** for channels is not built (the channel type is the label).
-- **Injection and toxicity checks are rule-based** (known phrasing and word lists). Paraphrases and other languages can slip through;
-  a detection model is the planned upgrade. LLM Guard was rejected (unmaintained; it forced older versions of other libraries).
+- **Injection and toxicity checks are rule-based** (known phrasing and word lists). Paraphrases and other languages can slip through.
+  Model-based detection was considered and dropped from the plan (LLM Guard was rejected: unmaintained, and it forced older versions of other libraries).
 - **Google Chat** answers inside 25 seconds or sends a polite message; late answers need a Google service account (D10).
 - **Single process:** the question limit (20 per person per minute, adjustable), the scheduler and the admin listener assume one server
   process. Several instances would need a shared store for the limiter and a leader for the jobs.

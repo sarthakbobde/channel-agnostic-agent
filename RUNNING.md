@@ -2,6 +2,73 @@
 
 Step-by-step. Commands are for Windows PowerShell; `<venv>` means `$env:USERPROFILE\rag-venv`.
 
+## New computer: from nothing to a running app
+
+What you need first:
+- **Python 3.11** (exactly; the pinned packages were tested on it, newer versions such as 3.14 will not install them) and **git**.
+- Internet on the first install: pip packages, the spaCy language model (downloaded from GitHub by pip), and the built-in search model
+  (about 80 MB, fetched by ChromaDB the first time a document is indexed or a question is asked). About 3 GB of disk.
+- Optional: **Docker Desktop**, if you prefer containers (then you need no Python at all, see the last part of this section).
+
+**Windows (PowerShell)**
+```powershell
+git clone https://github.com/sarthakbobde/channel-agnostic-agent.git
+cd channel-agnostic-agent
+git switch phases-0-11-complete          # skip this once the branch is merged into main
+
+py -3.11 -m venv $env:USERPROFILEag-venv          # keep it outside OneDrive
+& $env:USERPROFILEag-venv\Scripts\python.exe -m pip install --upgrade pip
+& $env:USERPROFILEag-venv\Scripts\python.exe -m pip install -e .
+Copy-Item .env.example .env
+```
+
+**macOS / Linux**
+```bash
+git clone https://github.com/sarthakbobde/channel-agnostic-agent.git
+cd channel-agnostic-agent
+git switch phases-0-11-complete          # skip this once the branch is merged into main
+
+python3.11 -m venv .venv && source .venv/bin/activate
+pip install --upgrade pip && pip install -e .
+cp .env.example .env
+```
+
+Then, on either system (use the venv's `python`; on Windows that is `$env:USERPROFILEag-venv\Scripts\python.exe`):
+1. Generate the two required secrets and put them in `.env` as `APP_SECRET_KEY` and `CHAT_API_TOKEN`:
+   ```
+   python -m app.secretstore generate
+   python -c "import secrets; print(secrets.token_urlsafe(32))"
+   ```
+   Also set `NINEROUTER_BASE_URL`, `NINEROUTER_API_KEY` and `LLM_MODEL` for the first model, and `ADMIN_EMAIL_DOMAIN` if your email is
+   not on `sysfore.com`. Back up `APP_SECRET_KEY` somewhere else now.
+2. Create the first admin: `python -m app.admin.cli create-admin you@yourcompany.com` (asks for a password, hidden).
+3. Start the server:
+   - Windows: `.\start.ps1`
+   - macOS / Linux: `python -m uvicorn app.api:app --host 127.0.0.1 --port 8000`
+
+   The first start creates the database and the folders (`admin_data`, `chroma_db`, `data/kb_files`) and loads the guardrail models;
+   give it a minute.
+4. Check <http://127.0.0.1:8000/health> (`{"status":"ok", ...}`), open <http://127.0.0.1:8000/admin>, sign in, and follow section 3 below.
+
+**Moving an existing installation to the new computer**: stop the old server, then copy `admin_data/admin.db`, `chroma_db/`,
+`data/kb_files/` and `.env` (the same `APP_SECRET_KEY` is what lets the new server read the stored credentials; without it every
+secret must be entered again). Start as above, skip step 2, and sign in with your existing account.
+
+**Keep it running on Linux** (optional): a systemd service with `WorkingDirectory` set to the project folder, `ExecStart` set to
+`.venv/bin/python -m uvicorn app.api:app --host 127.0.0.1 --port 8000`, and `Restart=on-failure`. Put an HTTPS reverse proxy in front
+before exposing it (`DEPLOYMENT.md`). Run one server process only.
+
+**With Docker instead** (any system with Docker; no Python needed):
+```bash
+git clone https://github.com/sarthakbobde/channel-agnostic-agent.git && cd channel-agnostic-agent
+git switch phases-0-11-complete
+cp .env.example .env                     # fill in APP_SECRET_KEY, CHAT_API_TOKEN and the model settings as above
+docker compose up -d --build             # first build takes several minutes
+docker compose exec rag python -m app.admin.cli create-admin you@yourcompany.com
+curl http://127.0.0.1:8000/health
+```
+The admin page is on <http://127.0.0.1:8090/admin> in Docker (see section 4).
+
 ## 1. Set up once
 
 1. Install Python 3.11. Create the environment **outside OneDrive** (long paths break pip there):
