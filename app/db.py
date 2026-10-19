@@ -304,6 +304,9 @@ class GlobalSettings(Base):
     approved_providers: Mapped[list] = mapped_column(JSON, default=list)    # provider types an Admin approved (D15)
     max_retention_days: Mapped[int] = mapped_column(Integer, default=365)   # upper limit for any department
     prompt_max_chars: Mapped[int] = mapped_column(Integer, default=4000)    # longest department prompt
+    summarise_after_turns: Mapped[int] = mapped_column(Integer, default=12)  # summarise a chat after this many unsummarised turns
+    retention_job_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    export_enabled: Mapped[bool] = mapped_column(Boolean, default=False)    # off until the privacy sign-off (D7)
 
 
 class JobLock(Base):

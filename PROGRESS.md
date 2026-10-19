@@ -384,6 +384,24 @@ PyTorch, transformers and LLM Guard are NOT installed yet (part 6b); their memor
 * **Conversations screen** (Admin only): filter by department, channel, person (part of an email) and date, paging, open (shows masked text; audited as `conversation.view`,
   never containing message text), delete (audited).
 
+### Phase 7, part 7b: summaries, retention and export
+
+* **Long-chat summaries** (`app/summaries.py`): once `summarise_after_turns` (Settings, default 12) turns are unsummarised, all but the most recent `recent_turns` (6) are condensed,
+  with the previous summary, by the normal fallback-wrapped model (purpose `summary`, so usage is recorded and attributed to the asker's department). It runs in a background
+  thread after the answer is saved. The next question gets the summary plus the recent turns word for word; the summary is handed over as labelled reference text, never as
+  instructions, and is masked again before it is stored. If no model can write it nothing changes and it is retried after a later turn. Stored on the conversation
+  (`summary`, `summarised_upto`); an optimistic check stops two summaries overwriting each other.
+* **Retention** (`app/retention.py`): a daily job (03:30 UTC, under the scheduler's database lock) deletes conversations whose last activity is older than their department's retention
+  (never above the global maximum; conversations with no or a deleted department use the default department's). Each run, scheduled or "Run now", is audited with counts per
+  department and the limits used, never any text. Settings: "Delete expired conversations every day" can switch the job off without a restart. The Conversations screen shows the last run,
+  what would be deleted now per department, and a confirmed "Delete N expired now" button.
+* **Export (D7)** (`POST /admin/api/conversations/export`): **off by default** (Settings: "Allow conversation export"); Admin only; a reason of at least 10 characters is mandatory; CSV or JSON,
+  streamed, filtered by department and dates; the text is the stored masked text and people appear as a stable anonymous reference (an HMAC of the email), not as an email. Audited
+  twice: when it starts (reason and filters) and when it ends (how many messages).
+* Three new Global Settings (migration 0016): `summarise_after_turns`, `retention_job_enabled`, `export_enabled`; the Settings screen now supports on/off settings.
+* Acceptance covered by the functional check: a follow-up that depends on turn 2 is answered through the summary in a 20-turn chat; retention removes only expired conversations of the
+  right department and audits it; export honours its filters, needs a reason, is refused while off, and is audited.
+
 ## How to run
 
 ```powershell

@@ -8,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-from app import channels, chat_auth, chat_service, guardrails, identity, memory, prompts
+from app import channels, chat_auth, chat_service, guardrails, identity, memory, prompts, retention, summaries
 from app.jobs import scheduler
 from app.providers import seed as provider_seed
 from app.knowledge import documents as knowledge_documents, kbs as knowledge_kbs
@@ -65,11 +65,16 @@ async def lifespan(app: FastAPI):
     except Exception:
         log.exception("guardrail set-up failed; questions will be refused until it is fixed")
     scheduler.start()
+    try:
+        retention.register()
+    except Exception:
+        log.exception("could not schedule the retention job")
     if settings.admin_port:
         admin_listener.start()
     yield
     admin_listener.stop()
     knowledge_documents.shutdown()
+    summaries.shutdown()
     scheduler.stop()
     channels.stop_all()
     log.info("Channel Agnostic Agent shutdown")

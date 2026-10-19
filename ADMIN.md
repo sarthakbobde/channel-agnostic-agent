@@ -177,6 +177,7 @@ All under `/admin/api`, JSON, cookie + `X-CSRF-Token` header for changes.
 | `GET /prompts`, `GET /prompts/versions`, `POST /prompts/drafts`, `POST /prompts/versions/{id}/publish`, `/rollback`, `POST /prompts/preview` | Prompts (base: Admin only; department: its Editors and Admins) |
 | `GET/PUT /guardrails` (injection, toxicity and leak controls included) | Guardrail settings (Admin only); banned topics are edited per department |
 | `GET /conversations`, `GET/DELETE /conversations/{id}` (under `/admin/api`, Admin only) | Browse, open and delete stored conversations; opening and deleting are audited |
+| `GET /conversations/retention/status`, `POST /conversations/retention/run`, `POST /conversations/export` (Admin only) | Retention status and run, and the audited export (off by default) |
 | `GET/POST /admins`, `DELETE /admins/{email}` | Older admin endpoints, kept for compatibility |
 
 ## Running the admin on its own port, and remote access

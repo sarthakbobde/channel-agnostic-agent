@@ -35,6 +35,7 @@ class Settings:
     max_retention_days: int = int(os.getenv("MAX_RETENTION_DAYS", "365"))
     guardrails_enabled: bool = os.getenv("GUARDRAILS_ENABLED", "true").lower() in ("1", "true", "yes")   # first-run default
     prompt_max_chars: int = int(os.getenv("PROMPT_MAX_CHARS", "4000"))
+    summarise_after_turns: int = int(os.getenv("SUMMARISE_AFTER_TURNS", "12"))
 
 
 settings = Settings()

@@ -77,3 +77,7 @@ this file.
 | 7a | Old chat files | Imported once, masked, left in place as a backup. | The originals predate masking; the owner can delete the folder later. |
 | 7a | Interrupted answers | The partial text is kept only when answer checks are off; with checks on, an unfinished answer is stored empty and marked incomplete. | Unchecked partial text could hold personal data or toxic wording. |
 | 7a | Conversation owner on channels | The matched person when the sender is in the Users list, otherwise unknown. | Unknown senders have no account. |
+| 7b | Retention clock | Last activity (not creation) decides when a conversation expires. | An active chat should not vanish mid-use. |
+| 7b | Retention schedule | 03:30 UTC daily, on by default, switchable in Settings. | Confirmed by the project owner (retention job on by default). |
+| 7b | Export identity | People appear as an HMAC reference, never an email. | Confirmed by the project owner; keeps the export less sensitive. |
+| 7b | Summary as reference | The summary is passed as labelled reference text and masked again. | A summary built from user text must not become a way to inject instructions. |

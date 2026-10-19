@@ -28,6 +28,9 @@ class Snapshot:
     chunk_overlap: int
     max_retention_days: int
     prompt_max_chars: int
+    summarise_after_turns: int
+    retention_job_enabled: bool
+    export_enabled: bool
 
 
 # What the admin screen shows and what is accepted. `integer` fields reject fractions.
@@ -46,6 +49,12 @@ SPEC = (
      "help": "The longest any department may keep conversations. Departments choose their own value up to this. Default 365."},
     {"name": "prompt_max_chars", "label": "Department prompt limit (characters)", "min": 200, "max": 20000, "step": 100, "integer": True,
      "help": "The longest prompt a department can save. Longer ones are rejected. Default 4000."},
+    {"name": "summarise_after_turns", "label": "Summarise a chat after (turns)", "min": 4, "max": 100, "step": 1, "integer": True,
+     "help": "When this many turns have not been summarised yet, older turns are summarised in the background. The most recent turns (see above) are always kept word for word. Default 12."},
+    {"name": "retention_job_enabled", "label": "Delete expired conversations every day", "kind": "bool",
+     "help": "A daily job removes conversations older than their department's retention. Each run is recorded in the audit log."},
+    {"name": "export_enabled", "label": "Allow conversation export", "kind": "bool",
+     "help": "Off by default. Turn on only after the privacy sign-off. Exports need a reason, are limited to Admins and are audited."},
 )
 _BY_NAME = {f["name"]: f for f in SPEC}
 
@@ -58,12 +67,14 @@ def defaults() -> Snapshot:
     """The .env values (also the first-run seed)."""
     return Snapshot(top_k=env.top_k, score_threshold=env.score_threshold, recent_turns=env.memory_max_turns,
                     chunk_size=env.chunk_size, chunk_overlap=env.chunk_overlap,
-                    max_retention_days=env.max_retention_days, prompt_max_chars=env.prompt_max_chars)
+                    max_retention_days=env.max_retention_days, prompt_max_chars=env.prompt_max_chars,
+                    summarise_after_turns=env.summarise_after_turns, retention_job_enabled=True, export_enabled=False)
 
 
 def _snapshot(row: GlobalSettings) -> Snapshot:
     return Snapshot(row.top_k, row.score_threshold, row.recent_turns, row.chunk_size, row.chunk_overlap,
-                    row.max_retention_days, row.prompt_max_chars)
+                    row.max_retention_days, row.prompt_max_chars, row.summarise_after_turns, row.retention_job_enabled,
+                    row.export_enabled)
 
 
 def _read(db: Database) -> tuple[Snapshot, GlobalSettings]:
@@ -114,6 +125,11 @@ def validate(values: dict, base: Snapshot) -> dict:
     clean = {}
     for name, raw in values.items():
         f = _BY_NAME[name]
+        if f.get("kind") == "bool":
+            if not isinstance(raw, bool):
+                raise ValueError(f"{f['label']} must be on or off.")
+            clean[name] = raw
+            continue
         if isinstance(raw, bool) or not isinstance(raw, (int, float)):
             raise ValueError(f"{f['label']} must be a number.")
         if f["integer"]:
@@ -136,7 +152,9 @@ def view(db: Database | None = None) -> dict:
     db = db or get_db()
     snap, row = _read(db)
     values = asdict(snap)
-    fields = [{"name": f["name"], "label": f["label"], "kind": "number", "help": f["help"],
+    fields = [{"name": f["name"], "label": f["label"], "kind": "bool", "help": f["help"], "value": values[f["name"]]}
+              if f.get("kind") == "bool" else
+              {"name": f["name"], "label": f["label"], "kind": "number", "help": f["help"],
                "min": f["min"], "max": f["max"], "step": f["step"], "value": values[f["name"]]} for f in SPEC]
     return {"fields": fields, "updated_at": row.updated_at, "updated_by": row.updated_by}
 

@@ -125,6 +125,17 @@ def get(conv_id: str, db: Database | None = None) -> list[tuple[str, str]]:
     return out[-limit:]
 
 
+def get_summary(conv_id: str, db: Database | None = None) -> str:
+    with (db or get_db()).session() as s:
+        c = s.get(Conversation, conv_id)
+        return c.summary if c is not None else ""
+
+
+def get_context(conv_id: str, db: Database | None = None) -> tuple[str, list[tuple[str, str]]]:
+    """(summary of the older turns, the most recent turns word for word): what the model is given about this conversation."""
+    return get_summary(conv_id, db), get(conv_id, db)
+
+
 def get_messages(conv_id: str, db: Database | None = None) -> list[dict]:
     """Full history for display."""
     with (db or get_db()).session() as s:

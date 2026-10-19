@@ -24,7 +24,7 @@ def test_first_read_seeds_the_row_from_env_defaults(new_db):
     with db.engine.connect() as c:
         assert c.execute(text("SELECT COUNT(*) FROM global_settings")).scalar() == 0
     snap = gs.current(db)
-    assert snap == gs.defaults() == gs.Snapshot(5, 0.35, 6, 900, 150, 365, 4000)
+    assert snap == gs.defaults() == gs.Snapshot(5, 0.35, 6, 900, 150, 365, 4000, 12, True, False)
     with db.engine.connect() as c:
         row = c.execute(text("SELECT id, updated_by FROM global_settings")).one()
     assert tuple(row) == (1, "system (seeded from .env)")

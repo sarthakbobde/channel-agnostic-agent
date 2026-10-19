@@ -126,7 +126,6 @@
   // Planned, not built yet: shown greyed out so admins can see what is coming. [label, tooltip]
   var UPCOMING = [
     ["Model-based detection", "Upcoming (later): detection models for prompt-injection and toxic language, to catch paraphrases and other languages. Today these checks are rule-based (known phrasing and word lists)."],
-    ["Summaries, retention and export", "Upcoming (phase 7, second part): long chats summarised in the background, conversations deleted automatically after each department's retention period, and an audited export that is off by default."],
     ["Chunking strategies", "Upcoming (phase 8): per page, by heading and semantic chunking, with a preview. Today: fixed size (900 characters, 150 overlap), set per knowledge base."],
     ["Embedding models", "Upcoming (phase 8): OpenAI, Azure OpenAI, Cohere and multilingual models, with cost tracking. Today: the built-in local MiniLM model."],
     ["Vector stores", "Upcoming (phase 8): pgvector and Azure AI Search, with health checks. Today: ChromaDB."],
@@ -1340,6 +1339,60 @@
           h("div", { class: "actions" }, h("button", { type: "button", class: "btn small", onclick: function () { detail.replaceChildren(); } }, "Close"))));
       } catch (err) { if (me) detail.replaceChildren(msg("bad", err.message)); }
     }
+    // retention and export panels
+    var retBox = h("div", { class: "panel" });
+    var exBox = h("div", { class: "panel" });
+    async function loadRetention(notice) {
+      try {
+        var r = await api("GET", "/conversations/retention/status");
+        var total = r.preview.reduce(function (n, d) { return n + d.expired; }, 0);
+        var body = h("tbody", {});
+        r.preview.forEach(function (d) {
+          body.appendChild(h("tr", {}, h("td", { "data-label": "Department" }, d.department), h("td", { "data-label": "Keeps" }, d.days + " days"),
+            h("td", { "data-label": "Expired now" }, String(d.expired))));
+        });
+        retBox.replaceChildren(h("h3", {}, "Retention"),
+          h("p", { class: "note" }, "Conversations with no activity for longer than their department's retention are deleted for good, once a day" + (r.enabled ? "." : " (the daily job is turned off in Settings).")),
+          h("div", { class: "meta" }, r.last_run ? "Last run " + when(r.last_run.ts) + " by " + r.last_run.actor + ": " + r.last_run.detail : "No run yet."),
+          h("div", { class: "tablewrap" }, h("table", {}, h("thead", {}, h("tr", {}, ["Department", "Keeps", "Expired now"].map(function (t) { return h("th", {}, t); }))), body)),
+          h("div", { class: "actions" },
+            confirmButton("Delete " + total + " expired now", "Confirm: delete for good", async function () {
+              try { var d = await api("POST", "/conversations/retention/run", {}); await loadRetention(msg("ok", "Deleted " + d.conversations + " conversations (" + d.messages + " messages).")); load(); }
+              catch (err) { if (me) retBox.insertBefore(msg("bad", err.message), retBox.firstChild); }
+            }, total > 0),
+            h("button", { type: "button", class: "btn small", onclick: function () { loadRetention(); } }, "Refresh")),
+          notice || null);
+      } catch (err) { if (me) retBox.replaceChildren(msg("bad", err.message)); }
+    }
+    async function loadExport() {
+      try {
+        var s = await api("GET", "/settings");
+        var on = s.fields.filter(function (f) { return f.name === "export_enabled"; })[0].value;
+        if (!on) {
+          exBox.replaceChildren(h("h3", {}, "Export"), h("p", { class: "note" }, "Conversation export is turned off. Turn on \"Allow conversation export\" under Settings once the privacy sign-off is recorded."));
+          return;
+        }
+        var reason = h("textarea", { id: "ex_reason", rows: "2", placeholder: "Why is this export needed? (recorded in the audit log)", "aria-label": "Reason" });
+        var fmt = selectOf([["csv", "CSV"], ["json", "JSON"]], "csv", null, "Format");
+        var out = h("div", { "aria-live": "polite" });
+        exBox.replaceChildren(h("h3", {}, "Export"),
+          h("p", { class: "note" }, "Exports the stored (masked) messages for the department and dates chosen in the filters above. People appear as anonymous references, not email addresses. Every export is recorded with your reason."),
+          h("div", { class: "field wide" }, h("label", { class: "l", for: "ex_reason" }, "Reason"), reason),
+          h("div", { class: "actions" }, fmt, h("button", { type: "button", class: "btn", onclick: async function () {
+            out.replaceChildren(msg("wait", "Preparing the file…"));
+            try {
+              var res = await fetch(API + "/conversations/export", { method: "POST", credentials: "same-origin",
+                headers: { "Content-Type": "application/json", "X-CSRF-Token": csrf },
+                body: JSON.stringify({ reason: reason.value, format: fmt.value, department: dept.value, date_from: from.value, date_to: to.value }) });
+              if (!res.ok) { var d = {}; try { d = await res.json(); } catch (e) { /* none */ } throw new Error(d.detail || "Export failed (" + res.status + ")"); }
+              var blob = await res.blob();
+              var a = document.createElement("a");
+              a.href = URL.createObjectURL(blob); a.download = "conversations." + fmt.value; document.body.appendChild(a); a.click(); a.remove();
+              out.replaceChildren(msg("ok", "Downloaded. The export was recorded in the audit log."));
+            } catch (err) { out.replaceChildren(msg("bad", err.message)); }
+          } }, "Export")), out);
+      } catch (err) { if (me) exBox.replaceChildren(msg("bad", err.message)); }
+    }
     var go = h("button", { type: "button", class: "btn", onclick: function () { page = 0; load(); } }, "Apply filters");
     filters.appendChild(h("div", { class: "field" }, h("label", { class: "l", for: "cv_dept" }, "Department"), dept));
     filters.appendChild(h("div", { class: "field" }, h("label", { class: "l", for: "cv_chan" }, "Channel"), chan));
@@ -1350,7 +1403,11 @@
     main.appendChild(h("div", { class: "actions" }, go));
     main.appendChild(detail);
     main.appendChild(list);
+    main.appendChild(retBox);
+    main.appendChild(exBox);
     load();
+    loadRetention();
+    loadExport();
   }
 
   // ---- departments -----------------------------------------------------------------
