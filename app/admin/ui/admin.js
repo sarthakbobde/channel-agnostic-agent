@@ -123,11 +123,6 @@
 
   // ---- shell ----------------------------------------------------------------------
   var TABS = [["channels", "Channels"], ["settings", "Settings"], ["providers", "Providers"], ["knowledge", "Knowledge bases"], ["groups", "Groups"], ["prompts", "Prompts"], ["guardrails", "Guardrails"], ["conversations", "Conversations"], ["usage", "Usage and cost"], ["reports", "Reports"], ["departments", "Departments"], ["users", "Users"], ["audit", "Audit log"], ["account", "Account"]];
-  // Planned, not built yet: shown greyed out so admins can see what is coming. [label, tooltip]
-  var UPCOMING = [
-    ["Model-based detection", "Upcoming (later): detection models for prompt-injection and toxic language, to catch paraphrases and other languages. Today these checks are rule-based (known phrasing and word lists)."]
-  ];
-
   function renderShell() {
     var tabs = h("div", { class: "tabs" });
     var allowed = state.perm ? state.perm.screens : [];
@@ -136,9 +131,6 @@
         type: "button", class: state.tab === t[0] ? "on" : "", "aria-current": state.tab === t[0] ? "page" : null,
         onclick: function () { state.tab = t[0]; renderShell(); }
       }, t[1]));
-    });
-    (state.perm && state.perm.can_manage_all ? UPCOMING : []).forEach(function (u) {
-      tabs.appendChild(h("button", { type: "button", disabled: true, title: u[1] }, u[0] + " (upcoming)"));
     });
     var nav = h("nav", { class: "side", "aria-label": "Admin sections" },
       h("h1", {}, "Channel Agnostic Agent"),
@@ -618,10 +610,10 @@
     action.id = "au_action";
     var target = h("input", { type: "search", id: "au_target", placeholder: "target contains…", autocomplete: "off", "aria-label": "Target contains",
       onchange: function () { offset = 0; load(); } });
-    var from = h("input", { type: "date", id: "au_from", "aria-label": "From date", onchange: function () { offset = 0; load(); } });
-    var to = h("input", { type: "date", id: "au_to", "aria-label": "To date", onchange: function () { offset = 0; load(); } });
+    var dr = dateRange("au", function () { offset = 0; load(); }, true);
+    var from = dr.from, to = dr.to;
     var holder = h("div", {}, msg("wait", "Loading…"));
-    main.appendChild(h("div", { class: "filters" }, actor, action, target, from, to));
+    main.appendChild(h("div", { class: "filters" }, actor, action, target, dr.el));
     main.appendChild(holder);
 
     function fill(sel, items, label) {
@@ -660,10 +652,10 @@
   async function viewReports(main) {
     main.appendChild(h("h2", {}, "Reports"));
     main.appendChild(h("p", { class: "sub" }, "Summaries of guardrail activity, knowledge bases and channels, taken straight from what is stored."));
-    var from = h("input", { type: "date", id: "rp_from", "aria-label": "From date", onchange: function () { load(); } });
-    var to = h("input", { type: "date", id: "rp_to", "aria-label": "To date", onchange: function () { load(); } });
+    var dr = dateRange("rp", function () { load(); }, true);
+    var from = dr.from, to = dr.to;
     var holder = h("div", {}, msg("wait", "Loading…"));
-    main.appendChild(h("div", { class: "filters" }, h("label", { for: "rp_from" }, "From"), from, h("label", { for: "rp_to" }, "To"), to));
+    main.appendChild(h("div", { class: "filters" }, dr.el));
     main.appendChild(holder);
     function n(x) { return Number(x).toLocaleString(); }
     function table(cols, rows) {
@@ -736,6 +728,40 @@
         if (navigator.clipboard) navigator.clipboard.writeText(url).then(function () { copied.textContent = "Copied."; }, function () { copied.textContent = "Press Ctrl+C to copy."; });
         else copied.textContent = "Press Ctrl+C to copy.";
       } }, "Copy link"), copied));
+  }
+
+  // From / To dates with quick ranges, so the usual question ("the last 7 days") is one click and no date has to be typed.
+  // `apply` runs when a quick range is picked, and also when a date is edited by hand if `live` is true.
+  function dateRange(prefix, apply, live) {
+    var from = h("input", { type: "date", id: prefix + "_from", "aria-label": "From date" });
+    var to = h("input", { type: "date", id: prefix + "_to", "aria-label": "To date" });
+    var chips = [];
+    function iso(d) { var m = d.getMonth() + 1, day = d.getDate(); return d.getFullYear() + "-" + (m < 10 ? "0" : "") + m + "-" + (day < 10 ? "0" : "") + day; }
+    function ago(days) { var d = new Date(); d.setDate(d.getDate() - days); return iso(d); }
+    var RANGES = [
+      ["Today", function () { return [iso(new Date()), iso(new Date())]; }],
+      ["Last 7 days", function () { return [ago(6), iso(new Date())]; }],
+      ["Last 30 days", function () { return [ago(29), iso(new Date())]; }],
+      ["This month", function () { var n = new Date(); return [iso(new Date(n.getFullYear(), n.getMonth(), 1)), iso(n)]; }],
+      ["Any time", function () { return ["", ""]; }]
+    ];
+    function mark() {                                         // highlight the quick range that matches, and stop the two dates crossing
+      to.min = from.value || ""; from.max = to.value || "";
+      chips.forEach(function (c) { var r = c.range(); c.btn.setAttribute("aria-pressed", String(r[0] === from.value && r[1] === to.value)); });
+    }
+    RANGES.forEach(function (r) {
+      var btn = h("button", { type: "button", class: "chip", "aria-pressed": "false", onclick: function () {
+        var v = r[1](); from.value = v[0]; to.value = v[1]; mark(); if (apply) apply();
+      } }, r[0]);
+      chips.push({ btn: btn, range: r[1] });
+    });
+    [from, to].forEach(function (el) { el.addEventListener("change", function () { mark(); if (live && apply) apply(); }); });
+    mark();
+    var el = h("div", { class: "daterange" },
+      h("div", { class: "field" }, h("label", { class: "l", for: prefix + "_from" }, "From"), from),
+      h("div", { class: "field" }, h("label", { class: "l", for: prefix + "_to" }, "To"), to),
+      h("div", { class: "chips", role: "group", "aria-label": "Quick date ranges" }, chips.map(function (c) { return c.btn; })));
+    return { el: el, from: from, to: to };
   }
 
   function selectOf(options, value, onchange, label) {
@@ -1581,8 +1607,8 @@
     var chan = selectOf([["", "All channels"], ["web", "Web UI"], ["slack", "Slack"], ["teams", "Teams"], ["gchat", "Google Chat"], ["other", "Other"]], "", null, "Channel");
     chan.id = "cv_chan";
     var person = h("input", { type: "text", id: "cv_person", placeholder: "Part of an email", autocomplete: "off", "aria-label": "Person" });
-    var from = h("input", { type: "date", id: "cv_from", "aria-label": "From date" });
-    var to = h("input", { type: "date", id: "cv_to", "aria-label": "To date" });
+    var dr = dateRange("cv", function () { page = 0; load(); }, false);
+    var from = dr.from, to = dr.to;
     var list = h("div", {});
     var detail = h("div", {});
     var page = 0, size = 25;
@@ -1690,8 +1716,7 @@
     filters.appendChild(h("div", { class: "field" }, h("label", { class: "l", for: "cv_dept" }, "Department"), dept));
     filters.appendChild(h("div", { class: "field" }, h("label", { class: "l", for: "cv_chan" }, "Channel"), chan));
     filters.appendChild(h("div", { class: "field" }, h("label", { class: "l", for: "cv_person" }, "Person"), person));
-    filters.appendChild(h("div", { class: "field" }, h("label", { class: "l", for: "cv_from" }, "From"), from));
-    filters.appendChild(h("div", { class: "field" }, h("label", { class: "l", for: "cv_to" }, "To"), to));
+    filters.appendChild(h("div", { class: "field wide" }, dr.el));
     main.appendChild(filters);
     main.appendChild(h("div", { class: "actions" }, go));
     main.appendChild(detail);
@@ -1712,16 +1737,8 @@
     var GROUPS = [["provider", "Provider"], ["model", "Model"], ["department", "Department"], ["kb", "Knowledge base"], ["purpose", "Purpose"], ["kind", "Answers or embeddings"], ["day", "Day"], ["month", "Month"]];
     var group = selectOf(GROUPS, "provider", null, "Group by");
     group.id = "us_group";
-    var from = h("input", { type: "date", id: "us_from", "aria-label": "From date" });
-    var to = h("input", { type: "date", id: "us_to", "aria-label": "To date" });
-    var preset = selectOf([["", "Any time"], ["7", "Last 7 days"], ["30", "Last 30 days"], ["month", "This month"]], "", function (e) {
-      var v = e.target.value, now = new Date(), iso = function (d) { return d.toISOString().slice(0, 10); };
-      if (v === "7" || v === "30") { var d = new Date(); d.setDate(d.getDate() - Number(v)); from.value = iso(d); to.value = iso(now); }
-      else if (v === "month") { from.value = iso(new Date(now.getFullYear(), now.getMonth(), 1)); to.value = iso(now); }
-      else { from.value = ""; to.value = ""; }
-      load();
-    }, "Period");
-    preset.id = "us_period";
+    var dr = dateRange("us", function () { load(); }, false);
+    var from = dr.from, to = dr.to;
     var list = h("div", {});
     var priceBox = h("div", { class: "panel" });
     function n(x) { return Number(x).toLocaleString(); }
@@ -1787,9 +1804,7 @@
 
     var filters = h("div", { class: "form" },
       h("div", { class: "field" }, h("label", { class: "l", for: "us_group" }, "Group by"), group),
-      h("div", { class: "field" }, h("label", { class: "l", for: "us_period" }, "Period"), preset),
-      h("div", { class: "field" }, h("label", { class: "l", for: "us_from" }, "From"), from),
-      h("div", { class: "field" }, h("label", { class: "l", for: "us_to" }, "To"), to));
+      h("div", { class: "field wide" }, dr.el));
     main.appendChild(filters);
     main.appendChild(h("div", { class: "actions" }, h("button", { type: "button", class: "btn", onclick: load }, "Show")));
     main.appendChild(list);

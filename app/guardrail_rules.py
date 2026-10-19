@@ -1,4 +1,4 @@
-"""Rule-based detection of prompt injection and toxic language (part 6b; model-based detection comes later).
+"""Rule-based detection of prompt injection and toxic language (part 6b).
 
 These rules catch KNOWN phrasing. They do not understand meaning, so paraphrases, other languages and a determined
 attacker can get past them; the prompt-level defences and access filtering stay in place underneath. Text is normalised

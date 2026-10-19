@@ -240,7 +240,3 @@ server {
 - In Docker the admin page is refused, because the container sees the Docker network and not localhost,
   unless `ADMIN_ALLOW_REMOTE=true`. The remote-admin design (HTTPS, separate port) is a later phase.
   The compose file carries `APP_SECRET_KEY`, the chat token and an `admin_data` volume.
-- Upcoming (greyed out in the sidebar, not built yet): documents and per-document access,
-  chunking strategy (fixed size, per page, by heading, semantic), vector store choice (pgvector,
-  Qdrant, Azure AI Search), and retrieval strategy (hybrid keyword + vector, re-ranker, query
-  rewriting). Later: multiple knowledge bases, a different model per step.
