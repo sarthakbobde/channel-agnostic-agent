@@ -38,7 +38,7 @@ def _now() -> datetime:
 
 def _view(v: KBIndexVersion) -> dict:
     return {"id": v.id, "kb_id": v.kb_id, "version": v.version, "collection": v.collection, "chunk_size": v.chunk_size,
-            "chunk_overlap": v.chunk_overlap, "embedding": v.embedding, "store": v.store, "status": v.status,
+            "chunk_overlap": v.chunk_overlap, "chunk_strategy": v.chunk_strategy or "recursive", "embedding": v.embedding, "store": v.store, "status": v.status,
             "is_active": v.is_active, "chunks": v.chunks, "documents": v.documents, "progress_done": v.progress_done,
             "progress_total": v.progress_total, "error": v.error, "created_by": v.created_by, "created_at": v.created_at,
             "finished_at": v.finished_at, "retired_at": v.retired_at, "seconds": v.seconds}
@@ -80,7 +80,8 @@ def rebuilding(db: Database, kb_id: int) -> bool:
 def desired(db: Database, kb: dict) -> dict:
     """What a rebuild would build with: the knowledge base's chunk settings (or the global ones) and the embedding model."""
     size, overlap = chunkers.effective(kb.get("chunk_size"), kb.get("chunk_overlap"), db)
-    return {"chunk_size": size, "chunk_overlap": overlap, "embedding": embeddings.DEFAULT, "store": "chroma"}
+    return {"chunk_size": size, "chunk_overlap": overlap, "chunk_strategy": kb.get("chunk_strategy") or "recursive",
+            "embedding": embeddings.DEFAULT, "store": "chroma"}
 
 
 def active_chunker(db: Database, kb: dict) -> chunkers.Chunker:
@@ -88,7 +89,7 @@ def active_chunker(db: Database, kb: dict) -> chunkers.Chunker:
     v = active(db, kb["id"])
     if v is None:
         return chunkers.for_kb(kb, db)
-    return chunkers.RecursiveChunker(v["chunk_size"], v["chunk_overlap"])
+    return chunkers.build(v["chunk_strategy"], v["chunk_size"], v["chunk_overlap"])
 
 
 def out_of_date(db: Database, kb: dict) -> bool:
@@ -96,7 +97,7 @@ def out_of_date(db: Database, kb: dict) -> bool:
     if v is None:
         return False
     d = desired(db, kb)
-    return any(v[k] != d[k] for k in ("chunk_size", "chunk_overlap", "embedding", "store"))
+    return any(v[k] != d[k] for k in ("chunk_size", "chunk_overlap", "chunk_strategy", "embedding", "store"))
 
 
 def summary(db: Database, kb: dict) -> dict:
@@ -119,7 +120,7 @@ def init_for(db: Database, kb: dict, chunks: int | None = None) -> dict:
             chunks = 0
     with db.session() as s:
         v = KBIndexVersion(kb_id=kb["id"], version=1, collection=kb["collection"], chunk_size=d["chunk_size"],
-                           chunk_overlap=d["chunk_overlap"], embedding=d["embedding"], store=d["store"], status="Ready",
+                           chunk_overlap=d["chunk_overlap"], chunk_strategy=d["chunk_strategy"], embedding=d["embedding"], store=d["store"], status="Ready",
                            is_active=True, chunks=chunks, documents=0, created_by="system", finished_at=_now())
         s.add(v)
         s.flush()
@@ -151,7 +152,7 @@ def estimate(db: Database, kb_id: int) -> dict:
     if kb is None:
         raise ValueError("No such knowledge base.")
     d = desired(db, kb)
-    chunker = chunkers.RecursiveChunker(d["chunk_size"], d["chunk_overlap"])
+    chunker = chunkers.build(d["chunk_strategy"], d["chunk_size"], d["chunk_overlap"])
     department = kbs.department_name(db, kb["department_id"])
     chunks = chars = 0
     docs = problems = 0
@@ -198,13 +199,13 @@ def start_rebuild(db: Database, kb_id: int, actor: str) -> dict:
         number = max([n for (n,) in s.execute(select(KBIndexVersion.version).where(KBIndexVersion.kb_id == kb_id))] or [0]) + 1
         collection = f"kb_{kb_id}_v{number}"
         v = KBIndexVersion(kb_id=kb_id, version=number, collection=collection, chunk_size=d["chunk_size"],
-                           chunk_overlap=d["chunk_overlap"], embedding=d["embedding"], store=d["store"],
+                           chunk_overlap=d["chunk_overlap"], chunk_strategy=d["chunk_strategy"], embedding=d["embedding"], store=d["store"],
                            status="Building", is_active=False, created_by=actor)
         s.add(v)
         s.flush()
         view = _view(v)
     kbs.store_for({"collection": collection}).delete()           # a leftover collection of the same name must not leak in
-    _audit(actor, "kb.rebuild.start", kb["name"], f"version {number}: chunk {d['chunk_size']}/{d['chunk_overlap']}")
+    _audit(actor, "kb.rebuild.start", kb["name"], f"version {number}: {d['chunk_strategy']}, chunk {d['chunk_size']}/{d['chunk_overlap']}")
     threading.Thread(target=_build, args=(db, view["id"], actor), name=f"rebuild-{kb_id}", daemon=True).start()
     return view
 
@@ -239,7 +240,7 @@ def _build(db: Database, vid: int, actor: str) -> None:
     kb = kbs.get_kb(db, v["kb_id"])
     store = kbs.store_for({"collection": v["collection"]})
     try:
-        chunker = chunkers.RecursiveChunker(v["chunk_size"], v["chunk_overlap"])
+        chunker = chunkers.build(v["chunk_strategy"], v["chunk_size"], v["chunk_overlap"])
         department = kbs.department_name(db, kb["department_id"])
         docs = [d for d in documents.list_for_kb(db, kb["id"]) if d["status"] == "Indexed"]
         _progress(db, vid, progress_total=len(docs))

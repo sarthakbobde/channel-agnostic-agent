@@ -1,7 +1,7 @@
 import argparse
 from pathlib import Path
 from app.knowledge import chunkers, kbs, metadata
-from app.knowledge.parsers import SUPPORTED, load_pages
+from app.knowledge.parsers import SUPPORTED
 
 
 def ingest(directory: str, kb_id: int | None = None) -> None:
@@ -22,14 +22,11 @@ def ingest(directory: str, kb_id: int | None = None) -> None:
     for f in files:
         doc_id = f.relative_to(root).as_posix()
         ids, docs, metas = [], [], []
-        n = 0
-        for page, text in load_pages(f):
-            for chunk in chunker.split(text):
-                ids.append(f"{doc_id}::{n}")          # deterministic ID
-                docs.append(chunk)
-                metas.append(metadata.build(source=f.name, doc_id=doc_id, page=page, chunk=n,
-                                            kb_id=kb["id"], department=department))
-                n += 1
+        for n, ch in enumerate(chunker.chunk(f)):
+            ids.append(f"{doc_id}::{n}")          # deterministic ID
+            docs.append(ch.text)
+            metas.append(metadata.build(source=f.name, doc_id=doc_id, page=ch.page, chunk=n, kb_id=kb["id"],
+                                        department=department, heading_path=ch.heading_path))
 
         store.delete_by_document(doc_id)              # remove old version of this file
         store.add(ids, docs, metas)

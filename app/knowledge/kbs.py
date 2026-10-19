@@ -21,6 +21,7 @@ DEFAULT_NAME = "Company knowledge"
 def _view(kb: KnowledgeBase) -> dict:
     return {"id": kb.id, "name": kb.name, "description": kb.description, "department_id": kb.department_id,
             "collection": kb.collection, "chunk_size": kb.chunk_size, "chunk_overlap": kb.chunk_overlap,
+            "chunk_strategy": kb.chunk_strategy or "recursive",
             "is_default": kb.is_default, "created_at": kb.created_at, "updated_at": kb.updated_at}
 
 
@@ -98,14 +99,21 @@ def check_chunking(size: int | None, overlap: int | None, db: Database | None = 
         raise ValueError(f"Chunk overlap ({o}) must be smaller than the chunk size ({s}).")
 
 
+def check_strategy(strategy: str) -> None:
+    if strategy not in chunkers.STRATEGIES:
+        raise ValueError("Choose one of: " + ", ".join(v["title"] for v in chunkers.STRATEGIES.values()) + ".")
+
+
 def create_kb(db: Database, name: str, description: str, department_id: int, chunk_size: int | None = None,
-              chunk_overlap: int | None = None, *, collection: str | None = None, is_default: bool = False) -> dict:
+              chunk_overlap: int | None = None, *, collection: str | None = None, is_default: bool = False,
+              chunk_strategy: str = "recursive") -> dict:
     name = (name or "").strip()
     if not name or len(name) > 80:
         raise ValueError("Give the knowledge base a name (up to 80 characters).")
     if len(description or "") > 500:
         raise ValueError("The description can be up to 500 characters.")
     check_chunking(chunk_size, chunk_overlap, db)
+    check_strategy(chunk_strategy)
     with db.session() as s:
         if s.get(Department, department_id) is None:
             raise ValueError("That department does not exist.")
@@ -113,7 +121,7 @@ def create_kb(db: Database, name: str, description: str, department_id: int, chu
             raise ValueError("A knowledge base with that name already exists.")
         kb = KnowledgeBase(name=name, description=(description or "").strip(), department_id=department_id,
                            collection=collection or f"pending-{uuid.uuid4().hex[:12]}", chunk_size=chunk_size,
-                           chunk_overlap=chunk_overlap, is_default=is_default)
+                           chunk_overlap=chunk_overlap, chunk_strategy=chunk_strategy, is_default=is_default)
         s.add(kb)
         s.flush()
         if collection is None:
@@ -125,7 +133,7 @@ def create_kb(db: Database, name: str, description: str, department_id: int, chu
 
 
 def update_kb(db: Database, kb_id: int, *, name=None, description=None, department_id=None,
-              chunk_size="keep", chunk_overlap="keep") -> tuple[dict, dict]:
+              chunk_size="keep", chunk_overlap="keep", chunk_strategy=None) -> tuple[dict, dict]:
     """Returns (before, after). `chunk_size` / `chunk_overlap`: "keep" leaves as is, None = inherit global."""
     with db.session() as s:
         kb = s.get(KnowledgeBase, kb_id)
@@ -151,6 +159,9 @@ def update_kb(db: Database, kb_id: int, *, name=None, description=None, departme
                 raise ValueError("That department does not exist.")
             kb.department_id = department_id
         kb.chunk_size, kb.chunk_overlap = new_size, new_overlap
+        if chunk_strategy is not None:
+            check_strategy(chunk_strategy)
+            kb.chunk_strategy = chunk_strategy
         s.flush()
         return before, _view(kb)
 

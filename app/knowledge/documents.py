@@ -266,21 +266,15 @@ def prepare(d: dict, kb: dict, chunker, department: str, access=((), ())) -> tup
     path = file_path(d)
     if not path.exists():
         raise ValueError(f"The original of '{d['name']}' is missing; upload it again with Replace.")
-    pages = parsers.load_pages(path)
-    if not any(text.strip() for _, text in pages):
+    chunks = chunker.chunk(path)
+    if not chunks:
         raise ValueError("No readable text was found in this file (is it a scanned image?).")
     ids, texts, metas = [], [], []
-    n = 0
-    for page, text in pages:
-        for chunk in chunker.split(text):
-            if not chunk.strip():
-                continue
-            ids.append(f"{d['doc_key']}::{n}")
-            texts.append(chunk)
-            metas.append(metadata.build(source=d["name"], doc_id=d["doc_key"], page=page, chunk=n,
-                                        kb_id=kb["id"], department=department,
-                                        allowed_groups=access[0], allowed_people=access[1]))
-            n += 1
+    for n, ch in enumerate(chunks):
+        ids.append(f"{d['doc_key']}::{n}")
+        texts.append(ch.text)
+        metas.append(metadata.build(source=d["name"], doc_id=d["doc_key"], page=ch.page, chunk=n, kb_id=kb["id"], department=department,
+                                    heading_path=ch.heading_path, allowed_groups=access[0], allowed_people=access[1]))
     return ids, texts, metas
 
 

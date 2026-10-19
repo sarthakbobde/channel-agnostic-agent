@@ -99,6 +99,7 @@ class KnowledgeBase(Base):
     collection: Mapped[str] = mapped_column(String(80), unique=True)
     chunk_size: Mapped[int | None] = mapped_column(Integer, nullable=True)
     chunk_overlap: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    chunk_strategy: Mapped[str] = mapped_column(String(16), default="recursive")
     is_default: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)
@@ -134,6 +135,7 @@ class KBIndexVersion(Base):
     collection: Mapped[str] = mapped_column(String(80))
     chunk_size: Mapped[int] = mapped_column(Integer)
     chunk_overlap: Mapped[int] = mapped_column(Integer)
+    chunk_strategy: Mapped[str] = mapped_column(String(16), default="recursive")
     embedding: Mapped[str] = mapped_column(String(40), default="chroma-default")
     store: Mapped[str] = mapped_column(String(20), default="chroma")
     status: Mapped[str] = mapped_column(String(12), default="Building")       # Building | Ready | Failed | Cancelled

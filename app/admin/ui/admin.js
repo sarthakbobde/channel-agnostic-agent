@@ -126,7 +126,6 @@
   // Planned, not built yet: shown greyed out so admins can see what is coming. [label, tooltip]
   var UPCOMING = [
     ["Model-based detection", "Upcoming (later): detection models for prompt-injection and toxic language, to catch paraphrases and other languages. Today these checks are rule-based (known phrasing and word lists)."],
-    ["Chunking strategies", "Upcoming (phase 8): per page, by heading and semantic chunking, with a preview. Today: fixed size (900 characters, 150 overlap), set per knowledge base."],
     ["Embedding models", "Upcoming (phase 8): OpenAI, Azure OpenAI, Cohere and multilingual models, with cost tracking. Today: the built-in local MiniLM model."],
     ["Vector stores", "Upcoming (phase 8): pgvector and Azure AI Search, with health checks. Today: ChromaDB."],
     ["Usage and cost", "Upcoming (phase 9): tokens and cost by provider, model, department and knowledge base, by day and month, with an editable price list."],
@@ -942,6 +941,42 @@
       return box;
     }
 
+    // ---- chunk preview: run a strategy on a sample file without saving anything ---------------
+    function previewPanel(k, data, strat, size, overlap) {
+      var box = h("div", { class: "docs" });
+      var file = h("input", { type: "file", id: "pf" + k.id, "aria-label": "Sample file" });
+      var out = h("div", { "aria-live": "polite" });
+      var run = h("button", { type: "button", class: "btn", onclick: async function () {
+        var f = file.files[0];
+        if (!f) { out.replaceChildren(msg("bad", "Choose a sample file first.")); return; }
+        var fd = new FormData();
+        fd.append("file", f); fd.append("strategy", strat.value); fd.append("chunk_size", size.value); fd.append("chunk_overlap", overlap.value);
+        out.replaceChildren(msg("wait", "Working out the chunks…"));
+        try {
+          var r = await api("POST", "/kbs/" + k.id + "/chunk-preview", fd);
+          var body = h("tbody", {});
+          r.chunks.forEach(function (c) {
+            body.appendChild(h("tr", {},
+              h("td", { class: "nw", "data-label": "#" }, String(c.n + 1)),
+              h("td", { class: "nw", "data-label": "Page" }, c.page ? String(c.page) : "–"),
+              h("td", { class: "wrap", "data-label": "Heading" }, c.heading_path || "–"),
+              h("td", { class: "nw", "data-label": "Size" }, c.chars + " chars"),
+              h("td", { class: "wrap", "data-label": "Text" }, c.text)));
+          });
+          out.replaceChildren(
+            msg("ok", r.count + " chunks, average " + r.average_chars + " characters, longest " + r.longest + ". Nothing was saved."),
+            r.notes.map(function (n) { return h("div", { class: "meta" }, n); }),
+            h("div", { class: "tablewrap" }, h("table", {}, h("thead", {}, h("tr", {}, ["#", "Page", "Heading", "Size", "Text"].map(function (t) { return h("th", {}, t); }))), body)),
+            r.count > r.shown ? h("div", { class: "meta" }, "Showing the first " + r.shown + " chunks.") : null);
+        } catch (err) { if (me) out.replaceChildren(msg("bad", err.message)); }
+      } }, "Preview chunks");
+      box.appendChild(h("h4", {}, "Preview chunking"));
+      box.appendChild(h("p", { class: "note" }, "Try the strategy and sizes above on a sample file before you save them. Nothing is stored or indexed."));
+      box.appendChild(h("div", { class: "actions" }, file, run));
+      box.appendChild(out);
+      return box;
+    }
+
     // ---- index versions of one knowledge base ------------------------------------------
     function indexPanel(k) {
       var box = h("div", { class: "docs" });
@@ -1061,13 +1096,19 @@
       var dept = selectOf(data.departments.map(function (d) { return [d.id, d.name]; }), k.department_id, null, "Department");
       dept.id = "kp" + k.id;
       var size = h("input", { type: "number", id: "ks" + k.id, value: blank(k.chunk_size), min: 100, max: 8000, step: 50, placeholder: "inherit (" + data.global.chunk_size + ")" });
+      var strat = selectOf(data.strategies.map(function (s) { return [s.name, s.title]; }), k.chunk_strategy, null, "Chunking strategy");
+      strat.id = "kst" + k.id;
+      var stratHelp = h("div", { class: "help" });
+      function showStratHelp() { var s = data.strategies.filter(function (x) { return x.name === strat.value; })[0]; stratHelp.textContent = s ? s.help : ""; }
+      strat.addEventListener("change", showStratHelp);
+      showStratHelp();
       var overlap = h("input", { type: "number", id: "ko" + k.id, value: blank(k.chunk_overlap), min: 0, max: 7999, step: 10, placeholder: "inherit (" + data.global.chunk_overlap + ")" });
       var out = h("div", { "aria-live": "polite" });
       var save = h("button", { type: "button", class: "btn primary", onclick: async function () {
         out.replaceChildren(msg("wait", "Saving…"));
         try {
           var r = await api("PUT", "/kbs/" + k.id, { name: name.value, description: desc.value, department_id: Number(dept.value),
-            chunk_size: intOrNull(size.value), chunk_overlap: intOrNull(overlap.value) });
+            chunk_size: intOrNull(size.value), chunk_overlap: intOrNull(overlap.value), chunk_strategy: strat.value });
           await load(msg("ok", "Saved " + r.name + "." + (r.note ? " " + r.note : "")));
         } catch (err) { if (me) out.replaceChildren(msg("bad", err.message)); }
       } }, "Save changes");
@@ -1085,12 +1126,13 @@
           h("div", { class: "field" }, h("label", { class: "l", for: "kn" + k.id }, "Name"), name),
           h("div", { class: "field" }, h("label", { class: "l", for: "kp" + k.id }, "Owning department"), dept),
           h("div", { class: "field wide" }, h("label", { class: "l", for: "kd" + k.id }, "Description"), desc),
+          h("div", { class: "field wide" }, h("label", { class: "l", for: "kst" + k.id }, "Chunking strategy"), strat, stratHelp),
           h("div", { class: "field" }, h("label", { class: "l", for: "ks" + k.id }, "Chunk size (characters)"), size,
-            h("div", { class: "help" }, "Empty = use the global value. The index keeps its current settings until you rebuild it.")),
+            h("div", { class: "help" }, "Empty = use the global value. For per-page, heading and semantic strategies this is the largest a chunk can be. The index keeps its current settings until you rebuild it.")),
           h("div", { class: "field" }, h("label", { class: "l", for: "ko" + k.id }, "Chunk overlap (characters)"), overlap),
           h("div", { class: "field" }, h("div", { class: "l" }, "Embedding model"), h("div", {}, "Local MiniLM (built in)")),
           h("div", { class: "field" }, h("div", { class: "l" }, "Vector store"), h("div", {}, "Chroma"))),
-        h("div", { class: "actions" }, save, del), out, askPanel(k), indexPanel(k), docsPanel(k, data));
+        h("div", { class: "actions" }, save, del), out, askPanel(k), previewPanel(k, data, strat, size, overlap), indexPanel(k), docsPanel(k, data));
     }
 
     async function load(notice) {

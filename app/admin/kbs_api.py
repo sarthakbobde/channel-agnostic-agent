@@ -2,14 +2,18 @@
 departments they are listed as an editor of (and can create new ones only in those departments)."""
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException
+import tempfile
+from pathlib import Path
+
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel
 from sqlalchemy import select
 
 from app import global_settings
 from app.admin.api import AdminContext, Session, admin_session, get_ctx
 from app.db import Department, DepartmentEditor
-from app.knowledge import access, documents, embeddings, kbs, versions
+from app.knowledge import access, chunkers, documents, embeddings, kbs, parsers, versions
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/admin/api", tags=["admin"])
@@ -21,6 +25,7 @@ class KBIn(BaseModel):
     department_id: int | None = None
     chunk_size: int | None = None
     chunk_overlap: int | None = None
+    chunk_strategy: str | None = None
 
 
 def _my_departments(ctx: AdminContext, sess: Session) -> list[dict]:
@@ -56,6 +61,7 @@ def list_kbs(sess: Session = Depends(admin_session), ctx: AdminContext = Depends
     gs = global_settings.current(ctx.db)
     return {"kbs": [_present(ctx, k, names) for k in _visible(ctx, sess)],
             "departments": depts, "global": {"chunk_size": gs.chunk_size, "chunk_overlap": gs.chunk_overlap},
+            "strategies": [{"name": n, **v} for n, v in chunkers.STRATEGIES.items()],
             "embeddings": [{"name": n, "title": c.title} for n, c in embeddings.REGISTRY.items()]}
 
 
@@ -72,7 +78,8 @@ def create(body: KBIn, sess: Session = Depends(admin_session), ctx: AdminContext
     if dept is None or not _can(ctx, sess, dept):
         raise HTTPException(403, "You can only create knowledge bases in departments you edit.")
     try:
-        kb = kbs.create_kb(ctx.db, body.name or "", body.description or "", dept, body.chunk_size, body.chunk_overlap)
+        kb = kbs.create_kb(ctx.db, body.name or "", body.description or "", dept, body.chunk_size, body.chunk_overlap,
+                           chunk_strategy=body.chunk_strategy or "recursive")
     except ValueError as e:
         raise HTTPException(422, str(e))
     ctx.store.record(sess.email, "kb.create", kb["name"], f"collection {kb['collection']}")
@@ -94,16 +101,17 @@ def update(kb_id: int, body: KBIn, sess: Session = Depends(admin_session), ctx: 
             ctx.db, kb_id, name=body.name if "name" in sent else None,
             description=body.description if "description" in sent else None, department_id=body.department_id,
             chunk_size=body.chunk_size if "chunk_size" in sent else "keep",
-            chunk_overlap=body.chunk_overlap if "chunk_overlap" in sent else "keep")
+            chunk_overlap=body.chunk_overlap if "chunk_overlap" in sent else "keep",
+            chunk_strategy=body.chunk_strategy if "chunk_strategy" in sent else None)
     except ValueError as e:
         raise HTTPException(422, str(e))
-    changes = [f"{k}: {before[k]} -> {after[k]}" for k in ("name", "description", "department_id", "chunk_size", "chunk_overlap")
+    changes = [f"{k}: {before[k]} -> {after[k]}" for k in ("name", "description", "department_id", "chunk_size", "chunk_overlap", "chunk_strategy")
                if before[k] != after[k]]
     ctx.store.record(sess.email, "kb.update", after["name"], "; ".join(changes) or "no changes")
     with ctx.db.session() as s:
         names = dict(s.execute(select(Department.id, Department.name)).all())
     out = _present(ctx, after, names)
-    if before["chunk_size"] != after["chunk_size"] or before["chunk_overlap"] != after["chunk_overlap"]:
+    if any(before[k] != after[k] for k in ("chunk_size", "chunk_overlap", "chunk_strategy")):
         out["note"] = "The index keeps its current settings until you rebuild it."
     return out
 
@@ -201,3 +209,62 @@ def set_query_access(kb_id: int, body: KBAccessBody, sess: Session = Depends(adm
     ctx.store.record(sess.email, "kb.access", kb["name"],
                      f"{'everyone' if not before else str(len(before)) + ' group(s)'} -> {'everyone' if not ids else str(len(ids)) + ' group(s)'} may ask")
     return {"restricted": bool(ids), "group_ids": ids}
+
+
+# ---- chunk preview ----------------------------------------------------------------------------------
+PREVIEW_LIMIT, SNIPPET = 80, 600
+
+
+def _int_or_none(text: str, label: str):
+    text = (text or "").strip()
+    if not text:
+        return None
+    try:
+        return int(text)
+    except ValueError:
+        raise HTTPException(422, f"{label} must be a whole number.")
+
+
+@router.post("/kbs/{kb_id}/chunk-preview")
+async def chunk_preview(kb_id: int, file: UploadFile = File(...), strategy: str = Form(""), chunk_size: str = Form(""),
+                        chunk_overlap: str = Form(""), sess: Session = Depends(admin_session), ctx: AdminContext = Depends(get_ctx)):
+    """Run a chunking strategy on a sample file and show the chunks. Nothing is stored or embedded (semantic chunking does
+    embed the sentences to find the breaks, but nothing is saved). Uses the same code as real indexing."""
+    kb = _kb_for(ctx, sess, kb_id)
+    strategy = strategy or kb["chunk_strategy"]
+    if strategy not in chunkers.STRATEGIES:
+        raise HTTPException(422, "Unknown chunking strategy.")
+    size, overlap = chunkers.effective(_int_or_none(chunk_size, "Chunk size") or kb["chunk_size"],
+                                       _int_or_none(chunk_overlap, "Chunk overlap") if chunk_overlap.strip() else kb["chunk_overlap"], ctx.db)
+    try:
+        kbs.check_chunking(size, overlap, ctx.db)
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+    data = await file.read(documents.settings.max_upload_mb * 1024 * 1024 + 1)
+    name = documents.clean_name(file.filename or "")
+    try:
+        documents.check_upload(name, data)
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / name
+        path.write_bytes(data)
+        try:
+            chunker = chunkers.build(strategy, size, overlap)
+            chunks = await run_in_threadpool(chunker.chunk, path)
+            notes = []
+            if strategy == "by_heading" and not any(b.kind == "heading" for b in await run_in_threadpool(parsers.load_blocks, path)):
+                notes.append("This file has no headings, so its pages were used instead.")
+        except ValueError as e:
+            raise HTTPException(422, str(e))
+        except Exception:
+            raise HTTPException(422, "This file could not be read.")
+    if strategy == "semantic":
+        notes.append("Semantic chunking embeds every sentence to find the breaks, so it is slower to build and costs more with a paid embedding model.")
+    if not chunks:
+        raise HTTPException(422, "No readable text was found in this file.")
+    lengths = [len(c.text) for c in chunks]
+    return {"strategy": strategy, "chunk_size": size, "chunk_overlap": overlap, "count": len(chunks),
+            "average_chars": round(sum(lengths) / len(lengths)), "longest": max(lengths), "notes": notes, "shown": min(len(chunks), PREVIEW_LIMIT),
+            "chunks": [{"n": i, "page": c.page or None, "heading_path": c.heading_path, "chars": len(c.text), "text": c.text[:SNIPPET]}
+                       for i, c in enumerate(chunks[:PREVIEW_LIMIT])]}

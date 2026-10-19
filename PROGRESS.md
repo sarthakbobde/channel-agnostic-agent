@@ -402,6 +402,22 @@ PyTorch, transformers and LLM Guard are NOT installed yet (part 6b); their memor
 * Acceptance covered by the functional check: a follow-up that depends on turn 2 is answered through the summary in a 20-turn chat; retention removes only expired conversations of the
   right department and audits it; export honours its filters, needs a reason, is refused while off, and is audited.
 
+## 16. Phase 8, part 8a: chunking strategies and chunk preview
+
+* **Strategies** (`app/knowledge/chunkers.py`), chosen per knowledge base (new column `chunk_strategy`, also recorded on every index version; migration 0017):
+  **Fixed size** (default; byte-for-byte the old behaviour, verified on `HR-Policy.pdf`: the same 41 chunks), **Per page or slide**, **By heading** (heading path on each chunk and at its start;
+  tiny sections folded into the section before them, never across pages or slides; a file with no headings, such as a PDF, falls back to pages) and **Semantic** (cuts where the meaning changes,
+  measured with the embedding model; the screen warns it is slower and costs more with a paid model).
+* **Tables and code blocks stay whole** in the three structure-aware strategies (split by rows or lines only when more than 4 x the chunk size; a table's header row repeats in each piece).
+  Tables in PDFs are found with `pdfplumber` (added, pinned): `HR-Policy.pdf` has 23 and all stay whole. Fixed size keeps the legacy behaviour and does not do this.
+* **Structure-aware reading** (`parsers.load_blocks`): headings, paragraphs, tables and code for PDF, Word (heading styles), PowerPoint (slide titles are headings) and Markdown.
+* **Chunk preview**: on a knowledge base, upload a sample file and see the chunks (page, heading path, size, text) for the strategy and sizes in the form, before saving them. It uses the same
+  code as real indexing (tested to match what indexing stores). Nothing is saved.
+* Changing the strategy makes the index "out of date" and goes through the existing rebuild (estimate, build beside the old index, switch when complete, roll back).
+* Metadata `heading_path` is now filled for the heading strategy.
+* Limits: heading detection in Word depends on the file using real Heading styles; PDFs have no heading information, so by heading uses their pages; semantic chunking uses the built-in local model for now
+  (a per-knowledge-base embedding model comes in part 8b).
+
 ## How to run
 
 ```powershell

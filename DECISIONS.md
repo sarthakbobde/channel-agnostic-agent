@@ -81,3 +81,7 @@ this file.
 | 7b | Retention schedule | 03:30 UTC daily, on by default, switchable in Settings. | Confirmed by the project owner (retention job on by default). |
 | 7b | Export identity | People appear as an HMAC reference, never an email. | Confirmed by the project owner; keeps the export less sensitive. |
 | 7b | Summary as reference | The summary is passed as labelled reference text and masked again. | A summary built from user text must not become a way to inject instructions. |
+| 8a | Fixed size keeps its old behaviour | Tables and code blocks are kept whole only by the new strategies. | Existing indexes must not change; switching strategy is a rebuild. |
+| 8a | Semantic chunking | Written in-house on top of the embedder (sentence breaks at the 90th percentile of distance). | Avoids the `langchain-experimental` dependency. |
+| 8a | Tiny sections | Folded into the section before; never across pages or slides. | Keeps heading paths accurate and slides separate. |
+| 8a | Vector stores for now | Chroma and pgvector are built; other stores are configurable adapters. | Project owner's decision: Chroma and pgvector now, others via configuration. |
