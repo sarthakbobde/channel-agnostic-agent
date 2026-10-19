@@ -64,7 +64,8 @@ Three of them differ from the text in `DECISIONS.md`:
 
 ## The live audit log
 
-56 rows, 29 of them written by a test account (`boss@sysfore.com`) on 16 October while earlier checks accidentally pointed at the live
-database (knowledge-base rebuilds of "HR docs" and "IT help", which do not exist in the live system, department adds and deletes, and a
-few rows for `amy@`, `bob@` and `nobody@`). Real activity (your sign-ins, the Slack channel, your secret replacements) is also there.
-I have not deleted anything: removing audit rows is your call. The checks now run in throwaway folders, so it cannot happen again.
+On 16 October earlier checks accidentally wrote 31 rows into the live audit log (knowledge-base rebuilds of "HR docs" and "IT help",
+which do not exist live, and set-password rows for two test users). At the owner's request they were removed on 19 October after a
+backup (`admin_data/admin.db.bak-pre-auditclean-*`), and the removal itself is recorded as an `audit.cleanup` row. The 25 earlier rows
+remain, including the sign-ins and failed sign-in made with the `testadmin@sysfore.com` and `nobody@` test accounts; those were real
+requests to the live system. The checks now run in throwaway folders, so it cannot happen again.
