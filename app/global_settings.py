@@ -31,6 +31,7 @@ class Snapshot:
     summarise_after_turns: int
     retention_job_enabled: bool
     export_enabled: bool
+    chat_rate_per_minute: int
 
 
 # What the admin screen shows and what is accepted. `integer` fields reject fractions.
@@ -51,6 +52,8 @@ SPEC = (
      "help": "The longest prompt a department can save. Longer ones are rejected. Default 4000."},
     {"name": "summarise_after_turns", "label": "Summarise a chat after (turns)", "min": 4, "max": 100, "step": 1, "integer": True,
      "help": "When this many turns have not been summarised yet, older turns are summarised in the background. The most recent turns (see above) are always kept word for word. Default 12."},
+    {"name": "chat_rate_per_minute", "label": "Questions per person per minute", "min": 0, "max": 600, "step": 1, "integer": True,
+     "help": "Slows down anyone who asks more than this many questions in a minute (Web UI, API and chat apps). 0 means no limit. Default 20."},
     {"name": "retention_job_enabled", "label": "Delete expired conversations every day", "kind": "bool",
      "help": "A daily job removes conversations older than their department's retention. Each run is recorded in the audit log."},
     {"name": "export_enabled", "label": "Allow conversation export", "kind": "bool",
@@ -68,13 +71,14 @@ def defaults() -> Snapshot:
     return Snapshot(top_k=env.top_k, score_threshold=env.score_threshold, recent_turns=env.memory_max_turns,
                     chunk_size=env.chunk_size, chunk_overlap=env.chunk_overlap,
                     max_retention_days=env.max_retention_days, prompt_max_chars=env.prompt_max_chars,
-                    summarise_after_turns=env.summarise_after_turns, retention_job_enabled=True, export_enabled=False)
+                    summarise_after_turns=env.summarise_after_turns, retention_job_enabled=True, export_enabled=False,
+                    chat_rate_per_minute=20)
 
 
 def _snapshot(row: GlobalSettings) -> Snapshot:
     return Snapshot(row.top_k, row.score_threshold, row.recent_turns, row.chunk_size, row.chunk_overlap,
                     row.max_retention_days, row.prompt_max_chars, row.summarise_after_turns, row.retention_job_enabled,
-                    row.export_enabled)
+                    row.export_enabled, row.chat_rate_per_minute)
 
 
 def _read(db: Database) -> tuple[Snapshot, GlobalSettings]:

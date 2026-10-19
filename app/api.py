@@ -8,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-from app import channels, chat_auth, chat_service, guardrails, identity, memory, prompts, retention, summaries
+from app import channels, chat_auth, chat_service, global_settings, guardrails, identity, memory, prompts, ratelimit, retention, summaries
 from app.knowledge import storehealth
 from app.channels import health as channel_health
 from app.jobs import scheduler
@@ -145,6 +145,9 @@ def _conv(caller: Caller, conv_id: str) -> str:
 @app.post("/chat", response_model=ChatResponse)
 def chat(request: MessageRequest, caller: Caller = Depends(require_chat_caller)):
     """Chat endpoint - returns answer with sources."""
+    ok, wait = ratelimit.allow("chat:" + (caller.email.lower() or "service"), global_settings.current().chat_rate_per_minute)
+    if not ok:
+        raise HTTPException(429, f"You are asking too quickly. Please wait {wait} seconds and try again.", headers={"Retry-After": str(wait)})
     who = identity.resolve(caller.email)
     token = identity.bind(who)
     try:

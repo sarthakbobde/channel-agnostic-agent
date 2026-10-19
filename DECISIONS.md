@@ -93,6 +93,10 @@ this file.
 | 8c | pgvector driver | Plain SQL through psycopg (already installed); no `pgvector` Python package. | One less dependency; vectors are sent as text and cast. |
 | 8c | Azure AI Search | Built to the documented REST API (version 2024-07-01), tested against a stand-in, flagged on the screen as not live-verified. | No Azure account exists here. |
 | 8c | Azure filters | Only `doc_id` can be filtered. | That is all the access filter and clean-up need. |
+| 10a | Live tests | Marked `live`, skipped by default; need real credentials. | The default run must work offline. |
+| 10b | Tunnel | `-Tunnel` moves the admin to its own local port. | No admin route on the tunnelled port, rather than relying on header checks alone. |
+| 10c | Rate limit | Per person per minute, in memory, default 20, one setting for the API and the chat apps. | Simple and enough for one process; a shared store is needed if the server is ever scaled out. |
+| 10c | Key rotation | A command that re-encrypts all or nothing; everyone is signed out when the first key changes. | A half-rotated database would be worse than none. |
 | 9a | Cost | Only hand-entered prices; unpriced calls are counted and shown. Local models cost 0. | Nothing is guessed. |
 | 9b | Alert audience | An alert can be for the Admins or one person (the uploader). | Editors should not see other departments' problems. |
 | 9b | Notifications | Webhook (https only) and email, off by default, NEW alerts only, minimum severity setting. | Avoids repeat noise; webhook addresses are secrets. |

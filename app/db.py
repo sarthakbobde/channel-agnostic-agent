@@ -315,6 +315,7 @@ class GlobalSettings(Base):
     summarise_after_turns: Mapped[int] = mapped_column(Integer, default=12)  # summarise a chat after this many unsummarised turns
     retention_job_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     export_enabled: Mapped[bool] = mapped_column(Boolean, default=False)    # off until the privacy sign-off (D7)
+    chat_rate_per_minute: Mapped[int] = mapped_column(Integer, default=20)  # questions per person per minute; 0 = no limit
 
 
 class JobLock(Base):

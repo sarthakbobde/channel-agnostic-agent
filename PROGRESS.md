@@ -471,6 +471,34 @@ PyTorch, transformers and LLM Guard are NOT installed yet (part 6b); their memor
   replace, move, delete and access changes, conversation view/export/delete, retention runs. Secrets are never logged.
 - Migrations 0020 (alert audience) and 0021 (audit target length 64 to 254).
 
+## 18. Phase 10: platform readiness and hardening
+
+### Phase 10, part 10a: Teams and Google Chat offline
+- Recorded events (`tests/fixtures/`) and `tests/test_platforms.py`: real RS256 signatures made with a throwaway key
+  (valid, expired, wrong audience or issuer, forged, missing) in both Google modes; classic and add-on events; Teams
+  acknowledge-then-reply, allowed tenants, mention removal; Google Chat polite timeout with guardrails on.
+- Live checks marked `@pytest.mark.live` (`tests/test_live_platforms.py`), skipped by default (`-m 'not live'` in `pyproject.toml`).
+- `PLATFORM_RUNBOOK.md`: what is proven offline and the human-only steps.
+
+### Phase 10, part 10b: exposure
+- `tests/test_exposure.py`: every route of the app is tried anonymously through tunnel-style requests; only `/health`
+  answers. An admin session cookie is refused via a proxy; with `ADMIN_PORT` the main app has no admin route.
+- `start.ps1 -Tunnel` now puts the admin on its own local port (default 8001), so the tunnel never carries admin routes.
+- `DEPLOYMENT.md`: what may be public, TLS, nginx example with a route allow-list, timeouts, pre-go-live checks.
+
+### Phase 10, part 10c: hardening
+- **Rate limit:** a Global Setting, questions per person per minute (default 20, 0 = off), applied to `/chat` (429 with
+  `Retry-After`) and to Slack, Teams and Google Chat (a friendly "too quickly" reply). In memory, one server process.
+- **Master key:** `python -m app.secretstore fingerprint | check | rotate`. `rotate` re-encrypts every stored secret with the
+  first key, all or nothing; tested with old+new keys, an undecryptable secret and the command line. Procedure in `ADMIN.md`.
+- **Load and concurrency:** `tests/test_hardening.py` runs 12 people x 5 turns and 30 people in one conversation in parallel;
+  no turn lost, none left incomplete. It found a real race (two threads creating the guardrail settings row at once), now fixed.
+- **Restart:** a container whose server process was killed was restarted by `unless-stopped` (restart count 1), became
+  healthy again and kept its volume data; a manual stop stayed stopped. Checked on the existing `caa-boot-rag` image, which
+  predates this phase (rebuilding means reinstalling all packages, which I did not do without approval).
+- **Both databases:** the full suite runs on SQLite and PostgreSQL (`TEST_DB=postgres`, throwaway container).
+- Migration 0022 (rate limit setting).
+
 ## How to run
 
 ```powershell

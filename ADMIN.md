@@ -54,6 +54,7 @@ with a message and nothing changes. Every change is written to the audit log (ol
 | Minimum similarity score | Passages scoring below this are ignored; if none pass the assistant says it could not find the answer | 0.35 | next question |
 | Recent turns sent with each question | How many latest question-and-answer pairs the model sees | 6 | next question |
 | Chunk size / overlap | How documents are split when indexed (overlap must be smaller than size) | 900 / 150 | next indexing run |
+| Questions per person per minute | Slows down anyone asking faster than this, in the Web UI, API and chat apps (0 = no limit); the API answers 429 with Retry-After | 20 | next question |
 
 On first start these are copied from the matching `.env` lines (`TOP_K`, `SCORE_THRESHOLD`,
 `MEMORY_MAX_TURNS`, `CHUNK_SIZE`, `CHUNK_OVERLAP`); after that the database is the source of truth and
@@ -137,17 +138,32 @@ never the message.
 Without `APP_SECRET_KEY` the admin API answers 503 and the server runs channels from
 `channels.yaml` as before.
 
-## Key rotation
+## Master key: backup and rotation
 
-1. Generate a new key and put it **in front** of the old one: `APP_SECRET_KEY=<new>,<old>`.
-2. Restart. New secrets use the new key; old ones still decrypt. (A bulk re-encrypt command is
-   not built yet. A secret is re-encrypted with the new key only when you enter its value again
-   in the page; leaving the field blank keeps the old encrypted copy.)
-3. Once every secret has been re-entered, remove the old key.
+The master key (`APP_SECRET_KEY`) encrypts every stored credential (channel secrets, provider keys, knowledge base keys,
+notification addresses) and signs sign-in sessions. Without it those credentials cannot be read.
+
+**Backup**
+1. Store a copy of `APP_SECRET_KEY` somewhere other than the server and other than the database backup (a password manager or
+   key vault). A database backup without the key restores everything except the credentials.
+2. Note the key's fingerprint next to the copy: `python -m app.secretstore fingerprint` prints a short tag per configured key
+   (never the key itself). Run it later on the restored key to confirm that the copy is the right one.
+3. Back up `admin_data/admin.db` as before (with the server stopped, or with the SQLite backup command).
+4. Before a risky change, run `python -m app.secretstore check`: it tries to decrypt every stored secret and reports any that cannot be read.
+
+**Rotation** (for example when someone who knew the key leaves)
+1. `python -m app.secretstore generate` and put the new key **in front**: `APP_SECRET_KEY=<new>,<old>`. Restart.
+2. Back up the database, then run `python -m app.secretstore rotate`. It re-encrypts every stored secret with the new key in one
+   step; if any secret cannot be decrypted nothing is changed and it says so.
+3. Run `python -m app.secretstore check`: it should report `0 still use an older key`.
+4. Remove the old key from `APP_SECRET_KEY` and restart. Keep the old key's backup until you have confirmed everything works.
+
+Effects to expect: everyone is signed out when the first key changes (sessions are signed with it), and exports made after
+the change use different pseudonyms for people than earlier exports.
 
 ## Backup and recovery
 
-- Back up `APP_SECRET_KEY` and `admin_data/admin.db` (plus the `-wal` file if the server is
+- Back up `APP_SECRET_KEY` (see above) and `admin_data/admin.db` (plus the `-wal` file if the server is
   running; the simplest safe backup is while it is stopped).
 - Lost key: stored secrets are unrecoverable. Re-enter them in the page.
 - Forgot the admin password: `python -m app.admin.cli set-password you@sysfore.com`.

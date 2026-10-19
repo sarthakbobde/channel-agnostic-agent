@@ -18,6 +18,8 @@ import threading
 import time
 from dataclasses import dataclass
 
+from sqlalchemy.exc import IntegrityError
+
 from app import alerts, identity
 from app.config import settings as env
 from app import guardrail_rules
@@ -130,13 +132,19 @@ def _snapshot(row: dict) -> Snapshot:
 
 def _row(db: Database) -> dict:
     """The settings row as a plain dict (created on first use)."""
-    with db.session() as s:
-        row = s.get(GuardrailSettings, 1)
-        if row is None:
-            row = GuardrailSettings(id=1, updated_by="system (first start)", **defaults())
-            s.add(row)
-            s.flush()
-        return {c: getattr(row, c) for c in _COLUMNS}
+    for _ in range(2):
+        with db.session() as s:
+            row = s.get(GuardrailSettings, 1)
+            if row is None:
+                try:
+                    row = GuardrailSettings(id=1, updated_by="system (first start)", **defaults())
+                    s.add(row)
+                    s.flush()
+                except IntegrityError:             # another thread or process created it first: read theirs
+                    s.rollback()
+                    continue
+            return {c: getattr(row, c) for c in _COLUMNS}
+    raise RuntimeError("could not read or create the guardrail settings")
 
 
 def invalidate() -> None:

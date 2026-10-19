@@ -1,5 +1,7 @@
 # Connect Microsoft Teams
 
+> The channel settings now live in the admin page. For what is tested and what needs a real tenant, see [PLATFORM_RUNBOOK.md](PLATFORM_RUNBOOK.md).
+
 1. **Azure portal → Create a resource → Azure Bot.** Pick *Single Tenant*. Note the
    **Microsoft App ID** and tenant ID; under *Configuration → Manage Password* create a
    client secret.

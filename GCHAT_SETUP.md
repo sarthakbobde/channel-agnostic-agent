@@ -1,5 +1,7 @@
 # Connect Google Chat
 
+> The channel settings now live in the admin page. For what is tested and what needs a real tenant, see [PLATFORM_RUNBOOK.md](PLATFORM_RUNBOOK.md).
+
 Requires a **Google Workspace** account (Google Chat apps can't be installed from a free
 personal Gmail account) and a public **HTTPS** URL for this server.
 

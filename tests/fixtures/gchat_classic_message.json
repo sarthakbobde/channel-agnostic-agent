@@ -1,0 +1,5 @@
+{"type": "MESSAGE", "eventTime": "2026-10-19T09:00:00Z",
+ "user": {"name": "users/111", "displayName": "Asha Rao", "email": "asha@sysfore.com", "type": "HUMAN"},
+ "space": {"name": "spaces/AAAA", "type": "ROOM", "displayName": "HR help"},
+ "message": {"name": "spaces/AAAA/messages/M1", "text": "@Agent How many leave days?", "argumentText": " How many leave days?",
+             "thread": {"name": "spaces/AAAA/threads/T1"}, "sender": {"name": "users/111", "email": "asha@sysfore.com"}}}
