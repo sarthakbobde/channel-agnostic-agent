@@ -327,6 +327,29 @@ alert but do not fall back; Ollama only through the compatible-endpoint option; 
 * **Preview**: "Try it" runs the normal pipeline with the text in the editor; nothing is published, no conversation is written, and model calls are tagged `preview-router` / `preview-answer`.
 * **Screen**: Prompts (Admins: both base prompts and every department; Editors: their departments). Audit: save, publish, rollback and preview (lengths and versions only, never the text).
 
+## 14. Phase 6, part 6a: guardrails (rules and personal-data masking)
+
+**Measured on this machine (Windows, 15.6 GB RAM, CPU only) with Presidio 2.2.364 + spaCy 3.8.16 + `en_core_web_sm` 3.8.0:**
+the detection engine loads once in about 3 to 15 s (first import is slowest) and adds about 140 MB to the server process (169 MB total for the test
+process). Checking one question takes a median of about 16 to 22 ms and a p95 of about 52 to 94 ms. Packages added: roughly 150 MB on disk (spaCy,
+its dependencies, the 12 MB model). **Time budget (D10)**: the checks add under 0.1 s per message, well inside the 20 s target; the model call dominates.
+PyTorch, transformers and LLM Guard are NOT installed yet (part 6b); their memory and latency will be measured before they are added.
+
+* `app/guardrails.py` + tables `guardrail_settings` and `guardrail_events` (migration 0013). Settings screen **Guardrails** (Admin): on/off, longest question
+  (tokens, about 4 characters each), blocked reply text, banned-topic enforcement, masking on/off and which types (default email, phone, card, SSN, Aadhaar, PAN,
+  IBAN), mask names (off), check answers, redact personal data in answers, and an allow-list. Applies within seconds (2 s cache).
+* **Input, before any model call**: length, then the asker's department banned topics, then masking. Blocked -> the Blocked Reply Text, no model call, and the turn is
+  **not stored** (hostile text must not reach later turns' history). Masked text is what the router, the model, the history and the logs see.
+* **Output, on the whole answer** (so answers are collected before being returned): banned topics -> blocked reply; personal data redacted except the allow-list;
+  `[n]` citations that match no returned source are removed.
+* **Allow-list** started with the email addresses found in your documents (first start only).
+* **Fail closed**: an error in the layer returns a friendly message with no model call, records an event and raises the Admin alert `guardrail_error`.
+* Events record check, direction, action, department and a count; there is no column that could hold content. Presidio's own DEBUG log (which prints words next to a match)
+  is silenced.
+* Health: `/health` shows `guardrails: off | ready | loading | error`; the model is loaded at start-up in the background.
+* Known limits: banned topics are word matches (with simple plurals), not meaning; name detection is approximate; Aadhaar needs a valid checksum to be recognised.
+* Tests set `GUARDRAILS_ENABLED=false` (they would otherwise load the language model); the switch is for first start only, afterwards the Settings screen decides.
+
 ## How to run
 
 ```powershell

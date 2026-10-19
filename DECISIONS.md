@@ -65,3 +65,9 @@ this file.
 | 5 | Which department prompt applies | The asker's department. | Matches how usage and retention are attributed. |
 | 5 | Empty department prompt | Allowed: publishing an empty one removes the department's additions. | A way to switch it off without deleting history. |
 | 5 | Base prompts hidden from Editors | Editors cannot read the base prompt. | Plan says Admin only; it also avoids teaching prompt-injection wording. |
+| 6a | Blocked questions are not stored | A blocked turn leaves no history. | Hostile text would otherwise be fed to the model in later turns. |
+| 6a | Output is checked whole | Answers are collected, checked, then returned as one piece. | Channels already return whole answers; the check needs the complete text. |
+| 6a | Banned topics matching | Word matching with simple plurals, not semantic. | Semantic matching needs the ML models in part 6b. |
+| 6a | presidio-anonymizer not installed | Masking replaces the detected spans itself. | One less dependency; same result. |
+| 6a | Allow-list seed | Starts with emails found in the documents. | So legitimate contact details are not redacted on day one. |
+| 6a | Token limit | Counted as characters / 4. | tiktoken needs a network download; the limit is a rough guard. |

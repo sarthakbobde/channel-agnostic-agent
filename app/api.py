@@ -1,5 +1,6 @@
 """FastAPI REST API for Channel Agnostic Agent."""
 import logging
+import threading
 from contextlib import asynccontextmanager
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.openapi.docs import get_swagger_ui_html
@@ -7,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-from app import channels, chat_auth, chat_service, identity, memory, prompts
+from app import channels, chat_auth, chat_service, guardrails, identity, memory, prompts
 from app.jobs import scheduler
 from app.providers import seed as provider_seed
 from app.knowledge import documents as knowledge_documents, kbs as knowledge_kbs
@@ -52,6 +53,11 @@ async def lifespan(app: FastAPI):
         prompts.seed()
     except Exception:
         log.exception("could not seed the prompts; the built-in text is used")
+    try:
+        guardrails.seed()
+        threading.Thread(target=guardrails.warm_up, name="guardrail-warm-up", daemon=True).start()
+    except Exception:
+        log.exception("guardrail set-up failed; questions will be refused until it is fixed")
     scheduler.start()
     if settings.admin_port:
         admin_listener.start()
@@ -90,8 +96,8 @@ app.include_router(chat_auth.router)
 
 @app.get("/health")
 def health():
-    """Health check endpoint."""
-    return {"status": "ok"}
+    """Health check endpoint. `guardrails`: off | ready | loading | error (the detection model is loaded once at start-up)."""
+    return {"status": "ok", "guardrails": guardrails.status()}
 
 
 # API documentation: reachable only from this machine, never through a tunnel or proxy.

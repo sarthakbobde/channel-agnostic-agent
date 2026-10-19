@@ -17,6 +17,7 @@ os.environ["CHAT_DIR"] = os.path.join(_SANDBOX, "chats")
 os.environ["CHROMA_PATH"] = os.path.join(_SANDBOX, "chroma")
 os.environ["DATABASE_URL"] = ""
 os.environ["CHAT_API_TOKEN"] = "test-chat-token"
+os.environ["GUARDRAILS_ENABLED"] = "false"       # tests that need them switch them on (they load a language model)
 os.environ["SLACK_BOT_TOKEN"] = ""
 os.environ["SLACK_APP_TOKEN"] = ""
 os.environ.setdefault("NINEROUTER_API_KEY", "test")

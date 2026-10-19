@@ -122,10 +122,10 @@
   }
 
   // ---- shell ----------------------------------------------------------------------
-  var TABS = [["channels", "Channels"], ["settings", "Settings"], ["providers", "Providers"], ["knowledge", "Knowledge bases"], ["groups", "Groups"], ["prompts", "Prompts"], ["departments", "Departments"], ["users", "Users"], ["audit", "Audit log"], ["account", "Account"]];
+  var TABS = [["channels", "Channels"], ["settings", "Settings"], ["providers", "Providers"], ["knowledge", "Knowledge bases"], ["groups", "Groups"], ["prompts", "Prompts"], ["guardrails", "Guardrails"], ["departments", "Departments"], ["users", "Users"], ["audit", "Audit log"], ["account", "Account"]];
   // Planned, not built yet: shown greyed out so admins can see what is coming. [label, tooltip]
   var UPCOMING = [
-    ["Guardrails", "Upcoming (phase 6): block prompt injection, toxic and banned-topic questions, mask personal data, and check answers before they are sent. Banned topics are stored per department but not enforced yet."],
+    ["Injection and toxicity checks", "Upcoming (phase 6, second part): detection models for prompt-injection and toxic questions and answers. Today guardrails block over-long questions and banned topics, and mask personal data."],
     ["Conversations", "Upcoming (phase 7): conversation memory in the database with summaries, retention enforced per department, and an audited export (off by default). Today history is kept in text files."],
     ["Chunking strategies", "Upcoming (phase 8): per page, by heading and semantic chunking, with a preview. Today: fixed size (900 characters, 150 overlap), set per knowledge base."],
     ["Embedding models", "Upcoming (phase 8): OpenAI, Azure OpenAI, Cohere and multilingual models, with cost tracking. Today: the built-in local MiniLM model."],
@@ -153,7 +153,7 @@
       tabs);
     var main = h("main", {});
     mount(h("div", { class: "app" }, nav, main));
-    var view = { channels: viewChannels, settings: viewSettings, providers: viewProviders, knowledge: viewKnowledge, groups: viewGroups, prompts: viewPrompts, departments: viewDepartments, users: viewUsers, audit: viewAudit, account: viewAccount }[state.tab];
+    var view = { channels: viewChannels, settings: viewSettings, providers: viewProviders, knowledge: viewKnowledge, groups: viewGroups, prompts: viewPrompts, guardrails: viewGuardrails, departments: viewDepartments, users: viewUsers, audit: viewAudit, account: viewAccount }[state.tab];
     view(main);
     loadAlerts(main);
   }
@@ -1252,6 +1252,32 @@
       }
       holder.replaceChildren.apply(holder, kids);
     } catch (err) { if (me) holder.replaceChildren(msg("bad", err.message)); }
+  }
+
+  // ---- guardrails -----------------------------------------------------------------------
+  async function viewGuardrails(main) {
+    main.appendChild(h("h2", {}, "Guardrails"));
+    main.appendChild(h("p", { class: "sub" }, "Checks around every question and answer. A blocked question gets the blocked reply and no model is called. Personal data is masked before it reaches the model, the conversation history or any log. Banned topics are set per department on the Departments screen. Changes apply within a few seconds."));
+    var holder = h("div", {}, msg("wait", "Loading…"));
+    main.appendChild(holder);
+
+    function show(data, notice) {
+      var sf = specForm(data.fields);
+      var result = h("div", { "aria-live": "polite" }, notice || null);
+      var kind = data.status === "ready" ? "ok" : data.status === "off" ? "off" : data.status === "loading" ? "off" : "bad";
+      var label = { ready: "Detection model ready", off: "Guardrails off", loading: "Detection model loading…", error: "Detection model failed to load" }[data.status] || data.status;
+      var save = h("button", { type: "button", class: "btn primary", onclick: async function () {
+        result.replaceChildren(msg("wait", "Saving…"));
+        try { show(await api("PUT", "/guardrails", { values: sf.collect() }), msg("ok", "Saved. The new values are in use within a few seconds.")); }
+        catch (err) { if (me) result.replaceChildren(msg("bad", err.message)); }
+      } }, "Save changes");
+      holder.replaceChildren(h("div", { class: "panel" },
+        h("div", { class: "meta" }, h("span", { class: "pill " + kind }, label), " Last changed " + when(data.updated_at) + " by " + data.updated_by),
+        sf.el, h("div", { class: "actions" }, save), result,
+        h("p", { class: "note" }, "Banned topics are matched by words (a phrase, with simple plurals), not by meaning. Names are not masked unless you turn that on; detection of names is approximate.")));
+    }
+    try { show(await api("GET", "/guardrails")); }
+    catch (err) { if (me) holder.replaceChildren(msg("bad", err.message)); }
   }
 
   // ---- departments -----------------------------------------------------------------

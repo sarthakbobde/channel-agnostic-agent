@@ -200,6 +200,36 @@ class Prompt(Base):
     __table_args__ = (UniqueConstraint("scope", "department_id", "version", name="uq_prompt_version"),)
 
 
+class GuardrailSettings(Base):
+    """The single row of guardrail settings (the screen's source of truth; read with a 2 second cache)."""
+    __tablename__ = "guardrail_settings"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    max_input_tokens: Mapped[int] = mapped_column(Integer, default=1000)
+    blocked_reply: Mapped[str] = mapped_column(Text, default="")
+    mask_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    masked_types: Mapped[list] = mapped_column(JSON, default=list)
+    mask_names: Mapped[bool] = mapped_column(Boolean, default=False)
+    banned_topics_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    output_checks_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    output_redaction: Mapped[bool] = mapped_column(Boolean, default=True)
+    allow_list: Mapped[list] = mapped_column(JSON, default=list)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)
+    updated_by: Mapped[str] = mapped_column(String(254), default="system")
+
+
+class GuardrailEvent(Base):
+    """One guardrail action. Records which check fired and where, never the question or the answer."""
+    __tablename__ = "guardrail_events"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    ts: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, index=True)
+    check: Mapped[str] = mapped_column(String(24))
+    direction: Mapped[str] = mapped_column(String(8))
+    action: Mapped[str] = mapped_column(String(10))
+    department: Mapped[str] = mapped_column(String(80), default="")
+    count: Mapped[int] = mapped_column(Integer, default=1)
+
+
 class SetPasswordToken(Base):
     """One-time link for choosing a password (new user or reset). Only a hash of the token is stored."""
     __tablename__ = "set_password_tokens"

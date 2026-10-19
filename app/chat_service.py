@@ -3,7 +3,7 @@ import logging
 import re
 from typing import Iterator
 from langchain_core.messages import HumanMessage, SystemMessage
-from app import memory, rag
+from app import guardrails, memory, rag
 from app.llm import get_chat_model
 
 log = logging.getLogger(__name__)
@@ -44,6 +44,10 @@ def chat_stream(message: str, conv_id: str | None, kb_ids=None, preview: bool = 
     """Routing + retrieval happen now; the answer streams from the returned iterator.
     The turn is saved to the DB once the iterator is fully consumed.
     meta = {searched, query, sources}"""
+    gate = guardrails.guard_input(message)
+    if gate.blocked:                                           # no model is called, and nothing is stored
+        return iter([gate.reply]), {"searched": False, "query": "", "sources": [], "blocked": True}
+    message = gate.text                                        # personal data is masked from here on: model, history, logs
     history = [] if preview else memory.get(conv_id)           # a preview starts from nothing and leaves nothing behind
     decision = _decide(message, history, "preview-router" if preview else "router")
 
@@ -59,9 +63,15 @@ def chat_stream(message: str, conv_id: str | None, kb_ids=None, preview: bool = 
 
     def gen() -> Iterator[str]:
         parts: list[str] = []
-        for tok in tokens:
-            parts.append(tok)
-            yield tok
+        if guardrails.output_active():
+            # the answer is checked as a whole before anyone sees it, so it is collected first
+            final = guardrails.guard_output("".join(tokens), len(sources), decision["search"])
+            parts.append(final)
+            yield final
+        else:
+            for tok in tokens:
+                parts.append(tok)
+                yield tok
         if not preview:
             memory.add(conv_id, "user", message)
             memory.add(conv_id, "assistant", "".join(parts), meta)

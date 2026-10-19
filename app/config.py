@@ -33,6 +33,7 @@ class Settings:
     chunk_overlap: int = int(os.getenv("CHUNK_OVERLAP", "150"))
     memory_max_turns: int = int(os.getenv("MEMORY_MAX_TURNS", "6"))
     max_retention_days: int = int(os.getenv("MAX_RETENTION_DAYS", "365"))
+    guardrails_enabled: bool = os.getenv("GUARDRAILS_ENABLED", "true").lower() in ("1", "true", "yes")   # first-run default
     prompt_max_chars: int = int(os.getenv("PROMPT_MAX_CHARS", "4000"))
 
 
