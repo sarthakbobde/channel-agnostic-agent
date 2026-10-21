@@ -455,7 +455,97 @@ def test_azure_proves_the_deployment_with_a_test_call(monkeypatch):
     monkeypatch.setattr(adapter, "build", lambda model, timeout: Fake(HTTPError(401)))
     with pytest.raises(ProviderError) as e:
         adapter.list_models()
-    assert "refused the test call" in str(e.value) and KEY not in str(e.value)
+    assert "rejected the key" in str(e.value) and "HTTP 401" in str(e.value) and KEY not in str(e.value)
+
+
+def azure_error(status, code="", message=""):
+    import openai
+    resp = httpx.Response(status, request=httpx.Request("POST", "https://r.openai.azure.com/x"))
+    return openai.APIStatusError(message or f"HTTP {status}", response=resp, body={"error": {"code": code, "message": message}})
+
+
+def test_azure_endpoint_keeps_only_the_resource_address():
+    from app.providers.adapters import azure_endpoint
+    assert azure_endpoint("https://r.openai.azure.com") == "https://r.openai.azure.com"
+    assert azure_endpoint("https://r.openai.azure.com/") == "https://r.openai.azure.com"
+    assert azure_endpoint("https://r.openai.azure.com/openai/deployments/gpt/chat/completions?api-version=2024-10-21") == "https://r.openai.azure.com"
+    assert azure_endpoint("  r.cognitiveservices.azure.com/openai ") == "https://r.cognitiveservices.azure.com"
+
+
+@pytest.mark.parametrize("exc, expected", [
+    (azure_error(401, "401", f"Access denied, key {KEY}"), "rejected the key"),
+    (azure_error(404, "DeploymentNotFound", f"The API deployment does not exist {KEY}"), "cannot find this deployment"),
+    (azure_error(429, "429"), "rate limiting"),
+    (azure_error(400, "BadRequest", "Unsupported api version 2020-01-01"), "API version"),
+    (azure_error(400, "content_filter", "blocked"), "content filter"),
+    (azure_error(500, "InternalServerError"), "HTTP 500 (internalservererror)"),
+    (httpx.ConnectError("boom"), "Could not reach the endpoint"),
+    (httpx.ReadTimeout("slow"), "did not answer in time"),
+])
+def test_azure_failures_say_what_to_fix_and_never_contain_the_key(monkeypatch, exc, expected):
+    adapter = adapter_class("azure_openai")({"api_key": KEY, "endpoint": "https://r.openai.azure.com", "deployment": "dep", "api_version": "2024-10-21"})
+    monkeypatch.setattr(adapter, "build", lambda model, timeout: Fake(exc))
+    with pytest.raises(ProviderError) as e:
+        adapter.list_models()
+    assert expected in str(e.value) and KEY not in str(e.value)
+
+
+def test_a_404_on_an_old_api_version_names_the_version_that_works(monkeypatch):
+    cfg = {"api_key": KEY, "endpoint": "https://r.openai.azure.com", "deployment": "gpt-4.1", "api_version": "2024-06-01"}
+    adapter = adapter_class("azure_openai")(cfg)
+    tried = []
+
+    def build(self, model, timeout):
+        tried.append(self.cfg["api_version"])
+        return Fake(azure_error(404, "DeploymentNotFound") if self.cfg["api_version"] != "2025-03-01-preview" else Msg("OK"))
+    monkeypatch.setattr(type(adapter), "build", build)
+    with pytest.raises(ProviderError) as e:
+        adapter.list_models()
+    assert "answers on 2025-03-01-preview" in str(e.value) and "Change the API version" in str(e.value) and KEY not in str(e.value)
+    assert tried[0] == "2024-06-01" and "2025-03-01-preview" in tried
+    monkeypatch.setattr(type(adapter), "build", lambda self, model, timeout: Fake(azure_error(404, "DeploymentNotFound")))
+    with pytest.raises(ProviderError) as e:
+        adapter.list_models()
+    assert "cannot find this deployment" in str(e.value)               # no version helps: the name or the resource is wrong
+
+
+def test_a_reasoning_deployment_that_rejects_temperature_is_retried_without_it():
+    from app.providers.adapters import _TemperatureFallback
+    made = []
+
+    class Model:
+        def __init__(self, temperature):
+            self.temperature = temperature
+
+        def _check(self):
+            if self.temperature == 0:
+                raise azure_error(400, "unsupported_value", "Unsupported value: 'temperature' does not support 0 with this model.")
+
+        def invoke(self, messages, **kw):
+            self._check()
+            return Msg("hello")
+
+        def stream(self, messages, **kw):
+            self._check()
+            yield Msg("hello")
+
+    def make(temperature):
+        made.append((temperature, None))
+        return Model(temperature)
+    wrapped = _TemperatureFallback(make)
+    assert wrapped.invoke(["hi"]).content == "hello"
+    assert [t for t, _ in made] == [0, None]
+    assert wrapped.invoke(["again"]).content == "hello" and len(made) == 2          # later calls skip the setting
+    made.clear()
+    streamed = _TemperatureFallback(make)
+    assert [c.content for c in streamed.stream(["hi"])] == ["hello"] and [t for t, _ in made] == [0, None]
+
+
+def test_other_azure_errors_are_not_retried():
+    from app.providers.adapters import _TemperatureFallback
+    wrapped = _TemperatureFallback(lambda temperature: Fake(azure_error(429, "429")))
+    with pytest.raises(Exception):
+        wrapped.invoke(["hi"])
 
 
 def test_required_settings_are_checked():
@@ -477,6 +567,7 @@ def test_every_provider_builds_the_right_model_without_network():
         ("anthropic", k, ChatAnthropic), ("google", k, ChatGoogleGenerativeAI),
     ]:
         model = adapter_class(type_)(cfg).build("some-model", 30)
+        model = getattr(model, "_model", model)               # Azure wraps its model to cope with reasoning deployments
         assert isinstance(model, cls), type_
     openai_model = adapter_class("xai")(k).build("grok", 30)
     assert str(openai_model.openai_api_base).startswith("https://api.x.ai/v1") and openai_model.max_retries == 0

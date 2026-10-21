@@ -8,6 +8,7 @@ web page, with no code changes or restarts.
 | Read | For |
 |---|---|
 | [PROGRESS.md](PROGRESS.md) | What is built, how it works, open items |
+| [USER_MANUAL.md](USER_MANUAL.md) | Configuring everything: Azure OpenAI and other providers, embeddings, vector stores, channels, people, settings |
 | [RUNNING.md](RUNNING.md) | Step by step: set up, run, test, update, push to a branch |
 | [ADMIN.md](ADMIN.md) | Setting up and using the admin page, security model |
 | [TEAMS_SETUP.md](TEAMS_SETUP.md), [GCHAT_SETUP.md](GCHAT_SETUP.md) | Connecting Teams and Google Chat |

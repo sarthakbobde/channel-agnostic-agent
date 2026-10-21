@@ -959,6 +959,20 @@
   async function viewKnowledge(main) {
     main.appendChild(h("h2", {}, "Knowledge bases"));
     main.appendChild(h("p", { class: "sub" }, "A knowledge base is a set of documents the assistant answers from. Each belongs to a department and can use its own chunk settings. Choose which ones a channel uses on the Channels screen."));
+    // Two parts: 1 is where documents are uploaded and managed, 2 is where a knowledge base is configured.
+    var PARTS = [["documents", "Part 1: Documents", "Upload files and manage who can read them"], ["config", "Part 2: Configuration", "Chunking, embedding model, vector store, rebuilds and who can ask"]];
+    if (!state.kbPart) state.kbPart = "documents";
+    var partNote = h("p", { class: "note" });
+    var partButtons = PARTS.map(function (p) {
+      return h("button", { type: "button", class: "chip", title: p[2], onclick: function () { state.kbPart = p[0]; drawParts(); load(); } }, p[1]);
+    });
+    function drawParts() {
+      partButtons.forEach(function (b, i) { b.setAttribute("aria-pressed", String(PARTS[i][0] === state.kbPart)); });
+      partNote.textContent = PARTS.filter(function (p) { return p[0] === state.kbPart; })[0][2] + ".";
+    }
+    main.appendChild(h("div", { class: "chips", role: "group", "aria-label": "Knowledge base sections" }, partButtons));
+    main.appendChild(partNote);
+    drawParts();
     var holder = h("div", {}, msg("wait", "Loading…"));
     var result = h("div", { "aria-live": "polite" });
     main.appendChild(holder);
@@ -1409,15 +1423,25 @@
           h("div", { class: "field" }, h("label", { class: "l", for: "ko" + k.id }, "Chunk overlap (characters)"), overlap),
           h("div", { class: "field" }, h("div", { class: "l" }, "Embedding model"), h("div", {}, "Local MiniLM (built in)")),
           h("div", { class: "field" }, h("div", { class: "l" }, "Vector store"), h("div", {}, "Chroma"))),
-        h("div", { class: "actions" }, save, del), out, askPanel(k), embeddingPanel(k, data), storePanel(k, data), previewPanel(k, data, strat, size, overlap), indexPanel(k), docsPanel(k, data));
+        h("div", { class: "actions" }, save, del), out, askPanel(k), embeddingPanel(k, data), storePanel(k, data), previewPanel(k, data, strat, size, overlap), indexPanel(k));
+    }
+
+    function docsCard(k, data) {
+      return h("div", { class: "panel" },
+        h("h3", {}, k.name, k.is_default ? h("span", { class: "pill ok" }, "Default") : null),
+        h("div", { class: "meta" }, (k.documents === null ? "?" : k.documents) + " documents · " + (k.chunks === null ? "?" : k.chunks) + " chunks · " + k.department
+          + (k.bound_channels.length ? " · used by " + k.bound_channels.join(", ") : " · not bound to a channel")),
+        docsPanel(k, data));
     }
 
     async function load(notice) {
       try {
         var data = await api("GET", "/kbs");
         var kids = [notice || null];
-        if (!data.kbs.length) kids.push(h("p", { class: "sub" }, "No knowledge bases for your departments yet."));
-        data.kbs.forEach(function (k) { kids.push(card(k, data)); });
+        var documentsPart = state.kbPart === "documents";
+        if (!data.kbs.length) kids.push(h("p", { class: "sub" }, documentsPart ? "No knowledge bases for your departments yet. Add one under Part 2: Configuration, then come back to upload documents." : "No knowledge bases for your departments yet."));
+        data.kbs.forEach(function (k) { kids.push(documentsPart ? docsCard(k, data) : card(k, data)); });
+        if (documentsPart) { holder.replaceChildren.apply(holder, kids.filter(Boolean)); return; }
         kids.push(h("h3", {}, "Add a knowledge base"));
         var nn = h("input", { type: "text", id: "nk_name", autocomplete: "off", required: true, maxlength: "80" });
         var nd = selectOf(data.departments.map(function (d) { return [d.id, d.name]; }), data.departments.length ? data.departments[0].id : "", null, "Department");
