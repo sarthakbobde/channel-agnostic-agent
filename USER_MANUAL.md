@@ -6,9 +6,9 @@ to change one you type a new value, and leaving the box empty keeps the stored o
 
 | I want to… | Go to | Section |
 |---|---|---|
-| Connect an AI model (Azure OpenAI, OpenAI, Anthropic, Gemini, Grok, DeepSeek, your own) | **Providers** | 2 |
-| Choose which model answers and which one takes over if it fails | **Providers → Model settings** | 2 |
-| Choose how documents are searched (embedding model, vector store) | **Knowledge bases** | 3, 4 |
+| Connect an AI model (Azure OpenAI, OpenAI, Anthropic, Gemini, Grok, DeepSeek, your own) | **AI models** | 2 |
+| Choose which model answers and which one takes over if it fails | **AI models → Step 3** | 2 |
+| Choose how documents are searched (search model, search storage) | **Knowledge bases** | 3, 4 |
 | Add documents and decide who can read them | **Knowledge bases → Part 1: Documents**, **Groups** | 5 |
 | Choose how documents are processed and searched | **Knowledge bases → Part 2: Configuration** | 3, 4, 5 |
 | Connect Slack, Teams, Google Chat, the Web UI | **Channels** | 6 |
@@ -36,11 +36,11 @@ Forgot the password: `python -m app.admin.cli set-password you@yourcompany.com`.
 
 The assistant needs at least one AI model to answer. The order is always the same:
 
-1. **Approved providers** (top of the Providers tab): tick the provider types your data policy allows and click **Save approval**.
+1. **Step 1. Choose which AI providers are allowed** (top of the **AI models** tab): tick the providers your data policy allows and click **Save choices**.
    A type that is not ticked cannot be added.
-2. **Add a provider** (bottom): choose the type, give it a **Name**, fill the fields, and click **Test and add**. The key is tested against
+2. **Step 2. Connect a provider**: choose the type, give it a **Name**, fill the fields, and click **Test and add**. The key is tested against
    the provider first; nothing is saved if the test fails. **Test only** tests without saving.
-3. **Model settings** (middle): choose the **Preferred model**, an optional **Fallback model**, and the request timeout, then save.
+3. **Step 3. Choose which model answers**: choose the **Preferred model**, an optional **Fallback model**, and the request timeout, then **Save model choice**.
 
 When the preferred model fails because of no credit (402), rate limiting (429), a server error (5xx) or a timeout, the answer comes from
 the fallback model and the Admin sees a banner. A request the provider rejects as invalid (other 4xx) is not retried elsewhere.
@@ -86,7 +86,7 @@ To use the same Azure resource for **document search** as well, see 3.4 (that ne
 | API key | `sk-…` | platform.openai.com → **API keys** → *Create new secret key* |
 | Endpoint | leave empty (uses `https://api.openai.com/v1`) | set only for a compatible proxy |
 
-The models available to the key are listed after the test; choose one under Model settings.
+The models available to the key are listed after the test; choose one in step 3.
 
 ### 2.3 Anthropic (Claude)
 
@@ -134,16 +134,16 @@ For anything that speaks the OpenAI chat API: LiteLLM, vLLM, Ollama (`http://loc
 
 ---
 
-## 3. Embedding models (how documents are turned into searchable vectors)
+## 3. Search models (how documents are turned into something searchable; technically "embedding models")
 
-Set per knowledge base: **Knowledge bases → Part 2: Configuration → Embedding model**. Use the **Test** button before saving. Changing the model
+Set per knowledge base: **Knowledge bases → Part 2: Configuration → Search model**. Use the **Test** button before saving. Changing the model
 re-processes every document, so it is done as a **rebuild** into a new version (section 5.4); the old version keeps answering until the new one is ready.
 
 | Model | Needs | Notes |
 |---|---|---|
 | **Local MiniLM (built in)** | nothing | The default. English-focused. Runs on this machine; about 80 MB is fetched the first time it is used |
 | **Local multilingual (e5-small)** | the one-time **Download** button on the form (about 129 MB) | Many languages. Runs on this machine, no key, no data leaves it |
-| **OpenAI** | an OpenAI or OpenAI-compatible provider already added under Providers | Pick that provider in **Key from LLM Providers** (the key is reused, not copied), the model (`text-embedding-3-small`, `-large`, `ada-002`), and optionally a smaller vector size |
+| **OpenAI** | an OpenAI or OpenAI-compatible provider already connected on the AI models tab | Pick that provider in **Key from AI models** (the key is reused, not copied), the model (`text-embedding-3-small`, `-large`, `ada-002`), and optionally a smaller vector size |
 | **Azure OpenAI** | an *embedding* deployment | see 3.4 |
 | **Cohere** | a Cohere key | Choose the model (`embed-multilingual-v3.0` and others) and enter the key |
 
@@ -160,9 +160,9 @@ Same place as 2.1 (Azure portal → your resource → Keys and Endpoint), but th
 
 ---
 
-## 4. Vector stores (where the searchable vectors are kept)
+## 4. Search storage (where the searchable data is kept; technically "vector stores")
 
-Set per knowledge base next to the embedding model, with a **Test** button. Like the embedding model, changing it is done by a rebuild.
+Set per knowledge base next to the search model, with a **Test** button. Like the search model, changing it is done by a rebuild.
 
 | Store | When to use | Fields |
 |---|---|---|
@@ -182,7 +182,7 @@ The **Knowledge bases** tab has two parts, chosen with the two buttons under the
 | | **Part 1: Documents** | **Part 2: Configuration** |
 |---|---|---|
 | For | Putting files in and deciding who may read them | Deciding how the documents are processed and searched |
-| You do | Upload, replace, re-index, move, delete; set each document's *Visible to* | Name and department; chunking; embedding model (section 3); vector store (section 4); chunk preview; rebuild and rollback; who may ask the knowledge base; delete the knowledge base; add a new one |
+| You do | Upload, replace, re-index, move, delete; set each document's *Visible to* | Name and department; how to split documents; search model (section 3); search storage (section 4); preview of the split; rebuild and rollback; who may ask the knowledge base; delete the knowledge base; add a new one |
 | Who | Admins and the Editors of that department | Admins and the Editors of that department |
 
 Start with Part 2 for a new knowledge base (add it and set it up), then use Part 1 to fill it.
@@ -197,20 +197,20 @@ For every document choose **Visible to**: *Everyone*, *Selected people* or *Sele
 Anyone asking is checked at question time, inside the search itself, so a change takes effect on the next question with no re-processing.
 A knowledge base can also be limited to certain groups (**Who can ask**, in Part 2); a person needs both that and the document's permission.
 
-### Part 2.1 Create a knowledge base and choose its chunking
-**Knowledge bases → Add a knowledge base** (bottom of **Part 2: Configuration**): a name and the department that owns it; then open it to set a description, the **chunking strategy**, the **embedding model** and the **vector store** (sections 3 and 4).
+### Part 2.1 Create a knowledge base and choose how documents are split
+**Knowledge bases → Add a knowledge base** (bottom of **Part 2: Configuration**): a name and the department that owns it; then open it to set a description, the way documents are split, the **embedding model** and the **vector store** (sections 3 and 4).
 
-| Chunking strategy | Use for |
+| How to split documents | Use for |
 |---|---|
 | Fixed size (recursive), default 900 characters with 150 overlap | General text |
 | Per page | PDFs and slides where each page stands alone |
 | By heading | Structured documents (Markdown, Word) |
 | Semantic | Long prose; splits where the topic changes |
 
-Use **Chunk preview** (upload a sample file) to see the pieces before indexing. Tables and code blocks are kept whole.
+Use **Preview how documents are split** (upload a sample file) to see the passages before anything is processed. Tables and code blocks are kept whole.
 
 ### Part 2.2 Rebuilds and rollback
-Changing the chunking, embedding model or store: **Rebuild**. The estimate shows the cost for paid models. The new index is built beside the old one
+Changing how documents are split, the search model or the search storage: **Rebuild**. The estimate shows the cost for paid models. The new index is built beside the old one
 and switched on when ready; the last two ready versions are kept, so **Rollback** is one click.
 
 ---
@@ -273,18 +273,13 @@ The system identifies a person in Slack, Teams and Google Chat by their email ad
 Every change is a new version (*Draft → Published → Archived*). Use **Preview** with a test question before publishing, and **Rollback** to go back in one click.
 The base prompt always comes first and a closing line keeps its rules in force, so a department prompt cannot override them.
 
-**Guardrails** (Admin):
-
-| Setting | What it does |
-|---|---|
-| Longest question | Longer questions get the blocked reply |
-| Block prompt-injection attempts / sensitivity | Rule-based: catches known phrasing of "ignore your instructions"; add your own phrases |
-| Block toxic language / sensitivity / extra words / words that are fine | Word lists, for questions and answers |
-| Stop answers that reveal the instructions | A hidden marker; an answer repeating it is blocked |
-| Enforce banned topics | The departments' banned topics, for questions and answers |
-| Mask personal data in questions | Card numbers, emails, phones and other chosen types become labels before the model sees them or anything is stored; optionally also names |
-| Check answers / redact personal data in answers / never redact (allow-list) | A finished answer is checked and personal data replaced, except the allow-list (for example `hr@company.com`) |
-| Blocked reply text | What people see when something is blocked |
+**Guardrails** (Admin) is laid out as cards, one per check, in the order things happen:
+- **The master switch** at the top turns every check on or off. While it is off, a warning says nothing is being checked.
+- **Checks on the question** (they run first; a blocked question never reaches the AI model): *Question length*; *Prompt injection* (how strict: Low, Medium, High, plus phrases to always block); *Toxic language* (how strict, extra words, words that are fine); *Banned topics* (the topics are set per department); *Mask personal data* (tick which kinds: emails, phones, card numbers and so on; optionally names).
+- **Checks on the answer** (they run before anyone sees it): *Check answers before sending*; *Redact personal data in answers* (with a list of values that may stay, for example `hr@company.com`); *Protect the instructions* (stops an answer that repeats the hidden instructions).
+- **When something is blocked**: the message people see, with a live preview.
+- Each check has its own On/Off switch; its fine-tuning appears only while it is on. Lists work like tags: type, press Enter, click the × to remove.
+- The bar at the bottom shows how many changes are unsaved. **Save changes** applies them within seconds; **Discard changes** goes back.
 
 The injection and toxicity checks are rules, not an AI model: they catch known wording, not every paraphrase or language.
 
@@ -294,15 +289,15 @@ The injection and toxicity checks are rules, not an AI model: they catch known w
 
 | Setting | Default | Meaning |
 |---|---|---|
-| Passages retrieved per question | 5 | How many of the closest passages go to the model |
-| Minimum similarity score | 0.35 | Passages scoring lower are ignored; if none pass, the assistant says it could not find the answer |
-| Recent turns sent with each question | 6 | How many latest question-and-answer pairs the model sees |
-| Chunk size / overlap | 900 / 150 | Default for new knowledge bases and indexing runs |
-| Maximum retention (days) | 365 | The longest any department may keep conversations |
-| Department prompt limit | 4000 characters | The longest department prompt |
-| Summarise a chat after (turns) | 12 | Older turns are summarised in the background |
+| Passages used per question | 5 | How many of the best-matching passages are given to the AI model |
+| How closely a passage must match | 0.35 | Passages that match less well are ignored; if none match well enough, the assistant says it could not find the answer |
+| Recent messages the AI model remembers | 6 | How many of the latest question-and-answer pairs it sees |
+| Passage size / overlap between passages | 900 / 150 characters | How documents are cut up; applies the next time documents are processed |
+| Longest time conversations may be kept (days) | 365 | No department may keep conversations longer |
+| Longest department prompt | 4000 characters | Longer prompts are rejected |
+| Summarise a long chat after (question-answer pairs) | 12 | Older ones are summarised in the background |
 | Delete expired conversations every day | on | A daily job; each run is audited |
-| Allow conversation export | **off** | Turn on only after the privacy sign-off; exports need a reason and are audited |
+| Allow exporting conversations | **off** | Turn on only after the privacy sign-off; exports need a reason and are audited |
 | Questions per person per minute | 20 | Slows anyone asking faster; the API answers 429, chat apps reply "too quickly". 0 = no limit |
 
 ---
@@ -310,7 +305,7 @@ The injection and toxicity checks are rules, not an AI model: they catch known w
 ## 10. Alerts and notifications
 
 Alerts always appear as banners at the top of the admin page: fallback model used, provider failing (for example no credit), a channel down,
-a document that failed to index (also shown to the uploader), a vector store unreachable. They clear themselves when the problem is fixed.
+a document that failed to index (also shown to the uploader), a search storage unreachable. They clear themselves when the problem is fixed.
 
 To also receive each **new** alert elsewhere: **Settings → Alert notifications** (off by default).
 
@@ -332,7 +327,7 @@ Edited on the server, then restart. Never commit this file.
 |---|---|---|
 | `APP_SECRET_KEY` | **yes** | Master key that encrypts every stored secret. Generate: `python -m app.secretstore generate`. Back it up elsewhere; lose it and every credential must be re-entered |
 | `CHAT_API_TOKEN` | **yes** | Token for the chat API and the Streamlit page. Generate: `python -c "import secrets; print(secrets.token_urlsafe(32))"` |
-| `NINEROUTER_BASE_URL`, `NINEROUTER_API_KEY`, `LLM_MODEL` | first start only | Seeds the first provider; afterwards use the Providers tab |
+| `NINEROUTER_BASE_URL`, `NINEROUTER_API_KEY`, `LLM_MODEL` | first start only | Seeds the first provider; afterwards use the AI models tab |
 | `SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN`, `TEAMS_*`, `GCHAT_*` | first start only | Seed the channels once; afterwards use the Channels tab |
 | `ADMIN_EMAIL_DOMAIN` | if not `sysfore.com` | Domain people's emails must be on |
 | `ADMIN_DB_PATH` / `DATABASE_URL` | optional | SQLite file location, or a PostgreSQL address (`postgresql+psycopg://user:pass@host:5432/db`) |
@@ -355,7 +350,7 @@ Edited on the server, then restart. Never commit this file.
 | Symptom | Likely cause and fix |
 |---|---|
 | The assistant replies "Sorry, something went wrong" | The model failed. Check the banner: no credit, a rejected key, or both models down. Add credit or another provider |
-| "X is not an approved provider" | Tick it under **Approved providers** and **Save approval** |
+| "X is not an approved provider" | Tick it in step 1 of the **AI models** tab and click **Save choices** |
 | Azure test fails | See the table in 2.1 |
 | "I couldn't find this in the knowledge base" | No passage scored above the minimum, the documents are not indexed, or the asker is not allowed to read them |
 | A person sees fewer documents than expected | Their email was not read (Slack scopes, 6.1) so they are an unknown Viewer, or the document is limited to a group they are not in |

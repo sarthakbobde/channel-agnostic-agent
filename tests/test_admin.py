@@ -318,8 +318,8 @@ def test_settings_view_update_and_audit(env):
     ({"top_k": "5"}, "must be a number"),
     ({"top_k": True}, "must be a number"),
     ({"score_threshold": 1.5}, "between 0.0 and 1.0"),
-    ({"chunk_overlap": 900}, "smaller than the chunk size"),
-    ({"chunk_size": 100}, "smaller than the chunk size"),         # existing overlap 150 would no longer fit
+    ({"chunk_overlap": 900}, "smaller than the passage size"),
+    ({"chunk_size": 100}, "smaller than the passage size"),         # existing overlap 150 would no longer fit
     ({"nonsense": 1}, "Unknown setting"),
 ])
 def test_settings_rejects_bad_values_and_changes_nothing(env, values, message):

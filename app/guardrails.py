@@ -87,7 +87,7 @@ SPEC = (
      "help": "Questions and answers that mention a topic banned for the asker's department are blocked. Editors set the topics on the Departments screen."},
     {"name": "mask_enabled", "label": "Mask personal data in questions", "kind": "bool",
      "help": "Replaces personal data with a label such as <EMAIL_ADDRESS> before the question reaches the model, the history or any log."},
-    {"name": "masked_types", "label": "What counts as personal data", "kind": "list",
+    {"name": "masked_types", "label": "What counts as personal data", "kind": "list", "choices": ALLOWED_TYPES,
      "help": "Comma-separated. Allowed: " + ", ".join(ALLOWED_TYPES) + "."},
     {"name": "mask_names", "label": "Also mask people's names", "kind": "bool",
      "help": "Off by default: names are often needed to answer (for example a manager's name). Detection is approximate."},

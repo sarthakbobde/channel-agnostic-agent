@@ -61,7 +61,7 @@ def test_settings_screen_reuses_the_generic_spec_form():
 
 def test_providers_screen_and_alert_banners_exist():
     js = (Path(ui.ROOT) / "admin.js").read_text(encoding="utf-8")
-    assert '["providers", "Providers"]' in js and "viewProviders" in js and "loadAlerts" in js
+    assert '["providers", "AI models"]' in js and "viewProviders" in js and "loadAlerts" in js
     for path in ('"/providers"', '"/providers/approval"', '"/model-settings"', '"/me/alerts"'):
         assert path in js
     assert "LLM provider" not in js            # no longer shown as 'upcoming'
