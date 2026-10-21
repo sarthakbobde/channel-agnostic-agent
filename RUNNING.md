@@ -16,9 +16,12 @@ git clone https://github.com/sarthakbobde/channel-agnostic-agent.git
 cd channel-agnostic-agent
 git switch phases-0-11-complete          # skip this once the branch is merged into main
 
-py -3.11 -m venv $env:USERPROFILEag-venv          # keep it outside OneDrive
-& $env:USERPROFILEag-venv\Scripts\python.exe -m pip install --upgrade pip
-& $env:USERPROFILEag-venv\Scripts\python.exe -m pip install -e .
+py -3.11 -m venv $env:USERPROFILE
+ag-venv          # keep it outside OneDrive
+& $env:USERPROFILE
+ag-venv\Scripts\python.exe -m pip install --upgrade pip
+& $env:USERPROFILE
+ag-venv\Scripts\python.exe -m pip install -e .
 Copy-Item .env.example .env
 ```
 
@@ -33,7 +36,8 @@ pip install --upgrade pip && pip install -e .
 cp .env.example .env
 ```
 
-Then, on either system (use the venv's `python`; on Windows that is `$env:USERPROFILEag-venv\Scripts\python.exe`):
+Then, on either system (use the venv's `python`; on Windows that is `$env:USERPROFILE
+ag-venv\Scripts\python.exe`):
 1. Generate the two required secrets and put them in `.env` as `APP_SECRET_KEY` and `CHAT_API_TOKEN`:
    ```
    python -m app.secretstore generate
@@ -104,9 +108,9 @@ Web chat page (optional, a separate process): `streamlit run streamlit_app.py` t
 
 ## 3. First use, on the admin page (<http://127.0.0.1:8000/admin>)
 
-1. **Providers**: approve a provider type, add your key (it is tested before it is saved), then set the preferred and, if you have one, a fallback model.
+1. **AI models**: allow a provider (step 1), connect it with your key (step 2, tested before it is saved), then choose the preferred and, if you have one, a fallback model (step 3).
 2. **Departments** and **Users**: add people; share the one-time set-password link shown on screen with each person.
-3. **Knowledge bases**: create one, choose chunking, upload documents, wait for *Indexed*, set who may see each document.
+3. **Knowledge bases**: add one and set it up (Part 2: Configuration), then upload documents (Part 1: Documents), wait for *Indexed*, and set who may see each document.
 4. **Channels**: enter and test the Slack credentials (Teams and Google Chat: see `PLATFORM_RUNBOOK.md`), bind a knowledge base, switch on.
 5. **Prompts** and **Guardrails**: review the defaults. **Usage and cost**, **Reports** and **Audit log** show what happened.
 

@@ -36,28 +36,28 @@ class Snapshot:
 
 # What the admin screen shows and what is accepted. `integer` fields reject fractions.
 SPEC = (
-    {"name": "top_k", "label": "Passages retrieved per question", "min": 1, "max": 50, "step": 1, "integer": True,
-     "help": "How many of the closest document passages are sent to the model. Default 5."},
-    {"name": "score_threshold", "label": "Minimum similarity score", "min": 0.0, "max": 1.0, "step": 0.01, "integer": False,
-     "help": "Passages scoring below this are ignored; if none pass, the assistant says it could not find the answer. Default 0.35."},
-    {"name": "recent_turns", "label": "Recent turns sent with each question", "min": 1, "max": 50, "step": 1, "integer": True,
-     "help": "How many of the latest question-and-answer pairs the model sees. Default 6."},
-    {"name": "chunk_size", "label": "Chunk size (characters)", "min": 100, "max": 8000, "step": 50, "integer": True,
-     "help": "How large each document passage is when documents are indexed. Applies to the next indexing run. Default 900."},
-    {"name": "chunk_overlap", "label": "Chunk overlap (characters)", "min": 0, "max": 7999, "step": 10, "integer": True,
-     "help": "How much neighbouring passages share. Must be smaller than the chunk size. Default 150."},
-    {"name": "max_retention_days", "label": "Maximum retention (days)", "min": 1, "max": 3650, "step": 1, "integer": True,
-     "help": "The longest any department may keep conversations. Departments choose their own value up to this. Default 365."},
-    {"name": "prompt_max_chars", "label": "Department prompt limit (characters)", "min": 200, "max": 20000, "step": 100, "integer": True,
-     "help": "The longest prompt a department can save. Longer ones are rejected. Default 4000."},
-    {"name": "summarise_after_turns", "label": "Summarise a chat after (turns)", "min": 4, "max": 100, "step": 1, "integer": True,
-     "help": "When this many turns have not been summarised yet, older turns are summarised in the background. The most recent turns (see above) are always kept word for word. Default 12."},
+    {"name": "top_k", "label": "Passages used per question", "min": 1, "max": 50, "step": 1, "integer": True,
+     "help": "How many of the best-matching passages from your documents are given to the AI model with each question. More gives it more to work with but costs more. Default 5."},
+    {"name": "score_threshold", "label": "How closely a passage must match", "min": 0.0, "max": 1.0, "step": 0.01, "integer": False,
+     "help": "From 0 to 1. Passages that match less well than this are ignored. If nothing matches well enough, the assistant says it could not find the answer. Default 0.35."},
+    {"name": "recent_turns", "label": "Recent messages the AI model remembers", "min": 1, "max": 50, "step": 1, "integer": True,
+     "help": "How many of the latest question-and-answer pairs the AI model sees with each new question. Default 6."},
+    {"name": "chunk_size", "label": "Passage size (characters)", "min": 100, "max": 8000, "step": 50, "integer": True,
+     "help": "How long each piece of a document is when it is split for searching. Applies the next time documents are indexed. Default 900."},
+    {"name": "chunk_overlap", "label": "Overlap between passages (characters)", "min": 0, "max": 7999, "step": 10, "integer": True,
+     "help": "How much neighbouring passages share, so a sentence at the edge is not lost. Must be smaller than the passage size. Default 150."},
+    {"name": "max_retention_days", "label": "Longest time conversations may be kept (days)", "min": 1, "max": 3650, "step": 1, "integer": True,
+     "help": "No department can keep conversations longer than this. Each department chooses its own period, up to this. Default 365."},
+    {"name": "prompt_max_chars", "label": "Longest department prompt (characters)", "min": 200, "max": 20000, "step": 100, "integer": True,
+     "help": "A department prompt longer than this is rejected when it is saved. Default 4000."},
+    {"name": "summarise_after_turns", "label": "Summarise a long chat after (question-answer pairs)", "min": 4, "max": 100, "step": 1, "integer": True,
+     "help": "When this many pairs have not been summarised yet, the older ones are summarised in the background so the AI model keeps the gist. The most recent messages (see above) are always kept word for word. Default 12."},
     {"name": "chat_rate_per_minute", "label": "Questions per person per minute", "min": 0, "max": 600, "step": 1, "integer": True,
-     "help": "Slows down anyone who asks more than this many questions in a minute (Web UI, API and chat apps). 0 means no limit. Default 20."},
+     "help": "Slows down anyone who asks more than this many questions in a minute, in the Web UI, the API and the chat apps. 0 means no limit. Default 20."},
     {"name": "retention_job_enabled", "label": "Delete expired conversations every day", "kind": "bool",
-     "help": "A daily job removes conversations older than their department's retention. Each run is recorded in the audit log."},
-    {"name": "export_enabled", "label": "Allow conversation export", "kind": "bool",
-     "help": "Off by default. Turn on only after the privacy sign-off. Exports need a reason, are limited to Admins and are audited."},
+     "help": "A daily job deletes conversations that are older than their department's keep-for period. Every run is recorded in the audit log."},
+    {"name": "export_enabled", "label": "Allow exporting conversations", "kind": "bool",
+     "help": "Off by default. Turn it on only after the privacy sign-off. An export needs a written reason, only Admins can do it, and every export is recorded in the audit log."},
 )
 _BY_NAME = {f["name"]: f for f in SPEC}
 
@@ -147,7 +147,7 @@ def validate(values: dict, base: Snapshot) -> dict:
         clean[name] = raw
     merged = {**asdict(base), **clean}
     if merged["chunk_overlap"] >= merged["chunk_size"]:
-        raise ValueError("Chunk overlap must be smaller than the chunk size.")
+        raise ValueError("Overlap must be smaller than the passage size.")
     return clean
 
 

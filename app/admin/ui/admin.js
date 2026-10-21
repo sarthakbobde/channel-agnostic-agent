@@ -122,7 +122,7 @@
   }
 
   // ---- shell ----------------------------------------------------------------------
-  var TABS = [["channels", "Channels"], ["settings", "Settings"], ["providers", "Providers"], ["knowledge", "Knowledge bases"], ["groups", "Groups"], ["prompts", "Prompts"], ["guardrails", "Guardrails"], ["conversations", "Conversations"], ["usage", "Usage and cost"], ["reports", "Reports"], ["departments", "Departments"], ["users", "Users"], ["audit", "Audit log"], ["account", "Account"]];
+  var TABS = [["channels", "Channels"], ["settings", "Settings"], ["providers", "AI models"], ["knowledge", "Knowledge bases"], ["groups", "Groups"], ["prompts", "Prompts"], ["guardrails", "Guardrails"], ["conversations", "Conversations"], ["usage", "Usage and cost"], ["reports", "Reports"], ["departments", "Departments"], ["users", "Users"], ["audit", "Audit log"], ["account", "Account"]];
   function renderShell() {
     var tabs = h("div", { class: "tabs" });
     var allowed = state.perm ? state.perm.screens : [];
@@ -159,7 +159,7 @@
 
   function viewChannels(main) {
     main.appendChild(h("h2", {}, "Channels"));
-    main.appendChild(h("p", { class: "sub" }, "Connect the assistant to the chat apps your team uses. One entry per platform; all of them are answered by the same assistant."));
+    main.appendChild(h("p", { class: "sub" }, "Choose where people can talk to the assistant: Slack, Microsoft Teams, Google Chat or the Web UI. All of them use the same assistant. Pick a platform below, enter its details, test the connection, then switch it on."));
     var grid = h("div", { class: "grid" });
     state.channels.forEach(function (ch) {
       var s = status(ch);
@@ -167,7 +167,7 @@
         type: "button", class: "card" + (ch.type === state.selected ? " sel" : ""),
         onclick: function () { state.selected = ch.type; state.flash = null; renderShell(); }
       }, h("div", { class: "top" }, h("b", {}, ch.title), h("span", { class: "pill " + s[0] }, s[1])),
-         h("div", { class: "meta" }, ch.configured ? "Updated " + when(ch.updated_at) : "Not configured yet")));
+         h("div", { class: "meta" }, ch.configured ? "Last changed " + when(ch.updated_at) : "Not set up yet")));
     });
     main.appendChild(grid);
     var ch = state.channels.filter(function (c) { return c.type === state.selected; })[0];
@@ -279,14 +279,14 @@
     if (ch.webhook_path) {
       var full = "https://<your-public-host>" + ch.webhook_path;
       form.appendChild(h("div", { class: "field wide" },
-        h("span", { class: "l" }, "Endpoint to enter at the provider"),
+        h("span", { class: "l" }, "Address to enter on the platform"),
         h("div", { class: "url" }, full),
-        h("div", { class: "help" }, "Needs a public HTTPS address (for example a tunnel). Replace the placeholder with your real host."),
+        h("div", { class: "help" }, "Only works with a public HTTPS address (for testing, use a tunnel). Replace <your-public-host> with your real address."),
         h("div", {}, h("button", { type: "button", class: "btn small", onclick: function () {
-          try { navigator.clipboard.writeText(ch.webhook_path).then(function () { flash(result, "ok", "Path copied."); },
-                function () { flash(result, "bad", "Copy is blocked here; select the text instead."); }); }
-          catch (e) { flash(result, "bad", "Copy is blocked here; select the text instead."); }
-        } }, "Copy path"))));
+          try { navigator.clipboard.writeText(ch.webhook_path).then(function () { flash(result, "ok", "Copied."); },
+                function () { flash(result, "bad", "Your browser blocked copying. Select the text and copy it by hand."); }); }
+          catch (e) { flash(result, "bad", "Your browser blocked copying. Select the text and copy it by hand."); }
+        } }, "Copy the path"))));
     }
 
     var saveBtn = h("button", { type: "button", class: "btn primary", onclick: async function () {
@@ -294,7 +294,7 @@
       try {
         var updated = await api("PUT", "/channels/" + ch.type, { enabled: enabled.checked, values: sf.collect() });
         await loadChannels();
-        state.flash = { kind: "ok", text: updated.enabled ? "Saved. The channel is running with the new settings." : "Saved. The channel is off." };
+        state.flash = { kind: "ok", text: updated.enabled ? "Saved. The channel is running with the new settings." : "Saved. The channel is switched off." };
         renderShell();
       } catch (err) { if (me) result.replaceChildren(msg("bad", err.message)); }
     } }, "Save changes");
@@ -315,32 +315,47 @@
     return h("div", { class: "panel" },
       h("div", { class: "row" },
         h("div", {}, h("h3", {}, ch.title), h("div", { class: "meta" }, status(ch)[1])),
-        h("label", { class: "switch", for: "enabled" }, enabled, "Enabled")),
+        h("label", { class: "switch", for: "enabled" }, enabled, "Switched on")),
       form, actions, result,
-      h("p", { class: "note" }, "Secrets are stored encrypted and are never shown again. Saving checks the new settings first and applies them with no restart; if they fail, the working connection stays. Leave a secret alone to keep its current value."));
+      h("p", { class: "note" }, "Keys and tokens are stored encrypted and are never shown again; leave a box empty to keep what is stored. Saving first checks the new settings. If they fail, the working connection stays as it is, so a typo cannot take a channel down."));
   }
 
   // ---- settings -------------------------------------------------------------------
   async function viewSettings(main) {
     main.appendChild(h("h2", {}, "Settings"));
-    main.appendChild(h("p", { class: "sub" }, "Values the assistant reads while it runs. Changes apply within a few seconds, with no restart."));
+    main.appendChild(h("p", { class: "sub" }, "Everything here applies within a few seconds, with no restart. Each setting shows its default, so you can always go back."));
     var holder = h("div", {}, msg("wait", "Loading…"));
     main.appendChild(holder);
 
+    var SECTIONS = [
+      ["Finding answers", "How the assistant looks things up in your documents, and how much of the conversation it remembers.", ["top_k", "score_threshold", "recent_turns"]],
+      ["Splitting documents", "How documents are cut into passages so they can be searched. Applies the next time documents are indexed.", ["chunk_size", "chunk_overlap"]],
+      ["Conversations and privacy", "How long conversations are kept, how long chats are summarised, and whether they can be exported.", ["max_retention_days", "retention_job_enabled", "summarise_after_turns", "export_enabled"]],
+      ["Limits", "Protection against very long prompts and against anyone asking too fast.", ["prompt_max_chars", "chat_rate_per_minute"]]
+    ];
+
     function show(data, notice) {
-      var sf = specForm(data.fields);
+      var byName = {}; data.fields.forEach(function (f) { byName[f.name] = f; });
+      var used = {};
+      var forms = [];
+      var panels = SECTIONS.map(function (s) {
+        var fields = s[2].filter(function (n) { return byName[n]; }).map(function (n) { used[n] = true; return byName[n]; });
+        var sf = specForm(fields); forms.push(sf);
+        return h("section", { class: "panel" }, h("h3", {}, s[0]), h("p", { class: "meta" }, s[1]), sf.el);
+      });
+      var rest = data.fields.filter(function (f) { return !used[f.name]; });
+      if (rest.length) { var other = specForm(rest); forms.push(other); panels.push(h("section", { class: "panel" }, h("h3", {}, "Other"), other.el)); }
       var result = h("div", { "aria-live": "polite" }, notice || null);
       var save = h("button", { type: "button", class: "btn primary", onclick: async function () {
         result.replaceChildren(msg("wait", "Saving…"));
+        var values = {}; forms.forEach(function (f) { Object.assign(values, f.collect()); });
         try {
-          var updated = await api("PUT", "/settings", { values: sf.collect() });
+          var updated = await api("PUT", "/settings", { values: values });
           show(updated, msg("ok", "Saved. The new values are in use within a few seconds."));
         } catch (err) { if (me) result.replaceChildren(msg("bad", err.message)); }
       } }, "Save changes");
-      holder.replaceChildren(h("div", { class: "panel" },
-        h("div", { class: "meta" }, "Last changed " + when(data.updated_at) + " by " + data.updated_by),
-        sf.el, h("div", { class: "actions" }, save), result,
-        h("p", { class: "note" }, "Chunk size and overlap apply the next time documents are indexed; the other values apply to the next question.")));
+      holder.replaceChildren.apply(holder, panels.concat([result,
+        h("div", { class: "savebar" }, h("span", { class: "meta" }, "Last changed " + when(data.updated_at) + " by " + data.updated_by + "."), h("div", { class: "actions" }, save))]));
     }
     try { show(await api("GET", "/settings")); }
     catch (err) { if (me) holder.replaceChildren(msg("bad", err.message)); }
@@ -351,12 +366,12 @@
       try {
         var c = await api("GET", "/alert-sinks");
         var wOn = h("input", { type: "checkbox", id: "as_w", checked: c.webhook_enabled });
-        var wUrl = h("input", { type: "password", id: "as_wurl", autocomplete: "off", placeholder: c.secrets_set.indexOf("webhook_url") >= 0 ? "set (type a new one to replace)" : "https://hooks.slack.com/…" });
+        var wUrl = h("input", { type: "password", id: "as_wurl", autocomplete: "off", placeholder: c.secrets_set.indexOf("webhook_url") >= 0 ? "Already set. Type here to replace it." : "https://hooks.slack.com/…" });
         var mOn = h("input", { type: "checkbox", id: "as_m", checked: c.smtp_enabled });
         var host = h("input", { type: "text", id: "as_host", value: c.smtp_host, autocomplete: "off" });
         var port = h("input", { type: "number", id: "as_port", value: c.smtp_port, min: 1, max: 65535 });
         var user = h("input", { type: "text", id: "as_user", value: c.smtp_user, autocomplete: "off" });
-        var pw = h("input", { type: "password", id: "as_pw", autocomplete: "new-password", placeholder: c.secrets_set.indexOf("smtp_password") >= 0 ? "set (type a new one to replace)" : "" });
+        var pw = h("input", { type: "password", id: "as_pw", autocomplete: "new-password", placeholder: c.secrets_set.indexOf("smtp_password") >= 0 ? "Already set. Type here to replace it." : "" });
         var from = h("input", { type: "email", id: "as_from", value: c.smtp_from, autocomplete: "off" });
         var to = h("input", { type: "text", id: "as_to", value: (c.smtp_to || []).join(", "), placeholder: "comma-separated", autocomplete: "off" });
         var sev = selectOf([["warning", "Warnings and errors"], ["error", "Errors only"]], c.min_severity, null, "Send");
@@ -380,7 +395,7 @@
           catch (err) { if (me) out.replaceChildren(msg("bad", err.message)); }
         } }, "Send a test");
         sinkBox.replaceChildren(h("h3", {}, "Alert notifications"),
-          h("p", { class: "note" }, "Alerts always appear as banners on this page. You can also have each NEW alert sent to a chat webhook (Slack-compatible) and/or by email. Off by default; addresses and passwords are stored encrypted."),
+          h("p", { class: "note" }, "Alerts always show as a banner at the top of this page. You can also have every NEW alert sent to a chat webhook (Slack-compatible), by email, or both. This is off until you set it up. Addresses and passwords are stored encrypted."),
           h("div", { class: "form" },
             h("div", { class: "field" }, h("label", { class: "check", for: "as_w" }, wOn, "Send to a webhook")),
             h("div", { class: "field wide" }, h("label", { class: "l", for: "as_wurl" }, "Webhook address"), wUrl),
@@ -436,8 +451,8 @@
 
   // ---- providers ------------------------------------------------------------------
   async function viewProviders(main) {
-    main.appendChild(h("h2", {}, "Providers"));
-    main.appendChild(h("p", { class: "sub" }, "Connect AI model providers, choose which model answers, and which one takes over if it fails. Changes apply within seconds, with no restart."));
+    main.appendChild(h("h2", {}, "AI models"));
+    main.appendChild(h("p", { class: "sub" }, "Connect the AI models that write the answers, then choose which one answers and which one takes over if it fails. Work through the three steps from top to bottom. Changes apply within seconds."));
     var holder = h("div", {});
     main.appendChild(holder);
 
@@ -446,9 +461,10 @@
         var data = await api("GET", "/providers");
         var kids = [];
         if (notice) kids.push(notice);
-        kids.push(approvalPanel(data, refresh), modelSettingsPanel(data, refresh));
+        kids.push(approvalPanel(data, refresh));
+        if (data.providers.length) kids.push(h("h3", { class: "gr-h" }, "Connected providers"));
         data.providers.forEach(function (p) { kids.push(providerPanel(p, refresh)); });
-        kids.push(addProviderPanel(data, refresh));
+        kids.push(addProviderPanel(data, refresh), modelSettingsPanel(data, refresh));
         holder.replaceChildren.apply(holder, kids);
       } catch (err) { if (me) holder.replaceChildren(msg("bad", err.message)); }
     }
@@ -470,23 +486,23 @@
         h("label", { class: "check", for: "ap_" + t.type }, cb, h("b", {}, t.title)),
         t.warning ? h("div", { class: "help warnline" }, t.warning) : null));
     });
-    return h("div", { class: "panel" }, h("h3", {}, "Approved providers"),
-      h("p", { class: "note" }, "Only approved providers can be connected. Nothing is approved until you choose. Questions and document passages are sent to the provider you pick, so approve only what your data policy allows."),
+    return h("div", { class: "panel" }, h("h3", {}, "Step 1. Choose which AI providers are allowed"),
+      h("p", { class: "note" }, "Only providers you allow here can be connected. Questions, and the document passages used to answer them, are sent to the provider, so allow only what your data policy permits. Nothing is allowed until you tick it."),
       list,
       h("div", { class: "actions" }, h("button", { type: "button", class: "btn primary", onclick: async function () {
         result.replaceChildren(msg("wait", "Saving…"));
         try {
           await api("PUT", "/providers/approval", { approved: Object.keys(boxes).filter(function (k) { return boxes[k].checked; }) });
-          refresh(msg("ok", "Approved providers saved."));
+          refresh(msg("ok", "Saved."));
         } catch (err) { if (me) result.replaceChildren(msg("bad", err.message)); }
-      } }, "Save approval")), result);
+      } }, "Save choices")), result);
   }
 
   function modelSettingsPanel(data, refresh) {
     var result = h("div", { "aria-live": "polite" });
     if (!data.providers.length) {
-      return h("div", { class: "panel" }, h("h3", {}, "Model settings"),
-        h("p", { class: "note" }, "Add a provider below, then choose the preferred model and an optional fallback here."));
+      return h("div", { class: "panel" }, h("h3", {}, "Step 3. Choose which model answers"),
+        h("p", { class: "note" }, "Connect a provider in step 2 first. Then pick the model that answers, and optionally a backup, here."));
     }
     var cur = data.model_settings || { preferred: null, fallback: null, request_timeout: 60 };
 
@@ -510,11 +526,11 @@
     var fb = picker("fb", "Fallback provider (optional)", cur.fallback, true);
     var timeout = h("input", { type: "number", id: "tmo", min: 5, max: 300, step: 1, value: cur.request_timeout });
 
-    return h("div", { class: "panel" }, h("h3", {}, "Model settings"),
-      h("p", { class: "note" }, "The preferred model answers every question. If it fails with no credit (402), a rate limit (429), a server error (5xx) or a timeout, the fallback answers instead. A rejected request is never retried. Use a different provider for the fallback."),
+    return h("div", { class: "panel" }, h("h3", {}, "Step 3. Choose which model answers"),
+      h("p", { class: "note" }, "The preferred model answers every question. If it cannot (no credit, too many requests, a server error or a timeout) the fallback answers instead and you see a banner. A request the provider rejects as invalid is not retried. Choose a different provider for the fallback, so one outage cannot stop both."),
       h("div", { class: "form" }, pref.el, fb.el,
         h("div", { class: "field" }, h("label", { class: "l", for: "tmo" }, "Request timeout (seconds)"), timeout,
-          h("div", { class: "help" }, "5 to 300. How long to wait for a model before giving up on it."))),
+          h("div", { class: "help" }, "Between 5 and 300 seconds: how long to wait for a model before moving on to the fallback."))),
       h("div", { class: "actions" }, h("button", { type: "button", class: "btn primary", onclick: async function () {
         result.replaceChildren(msg("wait", "Saving…"));
         try {
@@ -523,7 +539,7 @@
           (r.warnings || []).forEach(function (w) { box.appendChild(h("div", { class: "msg warn" }, w)); });
           result.replaceChildren(box);
         } catch (err) { if (me) result.replaceChildren(msg("bad", err.message)); }
-      } }, "Save model settings")), result);
+      } }, "Save model choice")), result);
   }
 
   function providerPanel(p, refresh) {
@@ -558,11 +574,11 @@
   function addProviderPanel(data, refresh) {
     var approved = data.types.filter(function (t) { return t.approved; });
     if (!approved.length) {
-      return h("div", { class: "panel" }, h("h3", {}, "Add a provider"),
-        h("p", { class: "note" }, "Approve at least one provider type above, then add it here."));
+      return h("div", { class: "panel" }, h("h3", {}, "Step 2. Connect a provider"),
+        h("p", { class: "note" }, "Allow at least one provider in step 1, then connect it here."));
     }
     var typeSel = h("select", { id: "np_type" }, approved.map(function (t) { return h("option", { value: t.type, text: t.title }); }));
-    var nameInput = h("input", { type: "text", id: "np_name", autocomplete: "off", placeholder: "For example Gemini (work)" });
+    var nameInput = h("input", { type: "text", id: "np_name", autocomplete: "off", placeholder: "For example: Azure GPT (work)" });
     var formBox = h("div", {});
     var warn = h("div", {});
     var result = h("div", { "aria-live": "polite" });
@@ -579,16 +595,16 @@
     draw();
 
     function body() { return { type: typeSel.value, name: nameInput.value.trim(), values: sf.collect() }; }
-    return h("div", { class: "panel" }, h("h3", {}, "Add a provider"),
+    return h("div", { class: "panel" }, h("h3", {}, "Step 2. Connect a provider"),
       h("div", { class: "form" },
         h("div", { class: "field" }, h("label", { class: "l", for: "np_type" }, "Provider"), typeSel),
         h("div", { class: "field" }, h("label", { class: "l", for: "np_name" }, "Name"), nameInput)),
       warn, formBox,
-      h("p", { class: "note" }, "The key is checked against the provider before anything is saved, then stored encrypted and never shown again."),
+      h("p", { class: "note" }, "Press Test and add. The connection is tested first and nothing is saved if the test fails. The key is stored encrypted and never shown again."),
       h("div", { class: "actions" },
         h("button", { type: "button", class: "btn primary", onclick: async function () {
           result.replaceChildren(msg("wait", "Testing and saving…"));
-          try { var created = await api("POST", "/providers", body()); refresh(msg("ok", "Added " + created.name + ". Choose its models under Model settings.")); }
+          try { var created = await api("POST", "/providers", body()); refresh(msg("ok", "Added " + created.name + ". Now choose it in step 3.")); }
           catch (err) { if (me) result.replaceChildren(msg("bad", err.message)); }
         } }, "Test and add"),
         h("button", { type: "button", class: "btn", onclick: async function () {
@@ -599,16 +615,44 @@
       result);
   }
 
+  // Plain-language names for the codes the audit log and the reports store. The code stays visible on hover.
+  var ACTION_LABELS = {
+    "login": "Signed in", "login.failed": "Failed sign-in", "password.change": "Changed their own password", "password.set": "Chose a password with a link",
+    "admin.add": "Added an admin", "admin.remove": "Removed an admin", "user.add": "Added a person", "user.update": "Changed a person", "user.link": "Issued a password link",
+    "department.add": "Added a department", "department.update": "Changed a department", "department.delete": "Deleted a department",
+    "group.create": "Created a group", "group.update": "Changed a group", "group.delete": "Deleted a group",
+    "channel.create": "Set up a channel", "channel.update": "Changed a channel", "channel.delete": "Deleted a channel", "channel.enable": "Switched a channel on",
+    "channel.disable": "Switched a channel off", "channel.test": "Tested a channel", "secret.replace": "Replaced a stored key or token",
+    "provider.create": "Connected an AI provider", "provider.update": "Changed an AI provider", "provider.delete": "Removed an AI provider", "provider.test": "Tested an AI provider",
+    "providers.approval": "Changed the allowed AI providers", "model_settings.update": "Changed which model answers", "settings.update": "Changed settings",
+    "guardrails.update": "Changed guardrails", "prompt.save": "Saved a prompt draft", "prompt.publish": "Published a prompt", "prompt.rollback": "Rolled a prompt back", "prompt.preview": "Tried a prompt",
+    "kb.create": "Created a knowledge base", "kb.update": "Changed a knowledge base", "kb.delete": "Deleted a knowledge base", "kb.access": "Changed who can ask a knowledge base",
+    "kb.reindex": "Reprocessed a knowledge base", "kb.rollback": "Rolled back a knowledge base", "kb.rebuild.start": "Started a rebuild", "kb.rebuild.finish": "Finished a rebuild",
+    "kb.rebuild.fail": "A rebuild failed", "kb.rebuild.cancel": "Cancelled a rebuild", "document.upload": "Uploaded a document", "document.replace": "Replaced a document",
+    "document.delete": "Deleted a document", "document.move": "Moved a document", "document.reindex": "Reprocessed a document", "document.access": "Changed who can read a document",
+    "embedding.download": "Downloaded a search model", "conversation.view": "Opened a conversation", "conversation.delete": "Deleted a conversation",
+    "conversation.export": "Started an export", "conversation.export.done": "Finished an export", "retention.run": "Ran automatic deletion", "alert.resolve": "Dismissed an alert",
+    "alert_sinks.update": "Changed alert notifications", "alert_sinks.test": "Tested alert notifications", "price.set": "Set a price", "price.delete": "Removed a price",
+    "import": "Imported settings", "audit.cleanup": "Cleaned up the audit log"
+  };
+  var REPORT_LABELS = {
+    injection: "Prompt injection", toxicity: "Toxic language", banned_topic: "Banned topic", max_length: "Question too long", personal_data: "Personal data", leak: "Instructions leaked",
+    input: "Question", output: "Answer", blocked: "Blocked", masked: "Masked", redacted: "Redacted"
+  };
+  function tidy(code) { var s = String(code).replace(/[._]/g, " "); return s.charAt(0).toUpperCase() + s.slice(1); }
+  function actionLabel(code) { return ACTION_LABELS[code] || tidy(code); }
+  function reportLabel(code) { return REPORT_LABELS[code] || (code === "(none)" ? "(none)" : tidy(code)); }
+
   // ---- audit ----------------------------------------------------------------------
   async function viewAudit(main) {
     main.appendChild(h("h2", {}, "Audit log"));
-    main.appendChild(h("p", { class: "sub" }, "Who changed what and when. Secret values are never recorded. Filter by person, action, target and date."));
+    main.appendChild(h("p", { class: "sub" }, "A record of who changed what, and when. Secret values (keys and passwords) are never recorded. Narrow it down by person, action, target or date."));
     var PAGE = 50, offset = 0, first = true;
     var actor = selectOf([["", "Anyone"]], "", function () { offset = 0; load(); }, "Person");
     actor.id = "au_actor";
     var action = selectOf([["", "Any action"]], "", function () { offset = 0; load(); }, "Action");
     action.id = "au_action";
-    var target = h("input", { type: "search", id: "au_target", placeholder: "target contains…", autocomplete: "off", "aria-label": "Target contains",
+    var target = h("input", { type: "search", id: "au_target", placeholder: "About… (part of a name)", autocomplete: "off", "aria-label": "About (part of a name)",
       onchange: function () { offset = 0; load(); } });
     var dr = dateRange("au", function () { offset = 0; load(); }, true);
     var from = dr.from, to = dr.to;
@@ -616,10 +660,10 @@
     main.appendChild(h("div", { class: "filters" }, actor, action, target, dr.el));
     main.appendChild(holder);
 
-    function fill(sel, items, label) {
+    function fill(sel, items, label, labeler) {
       var keep = sel.value;
       sel.replaceChildren(h("option", { value: "" }, label));
-      items.forEach(function (x) { sel.appendChild(h("option", { value: x }, x)); });
+      items.forEach(function (x) { sel.appendChild(h("option", { value: x }, labeler ? labeler(x) : x)); });
       sel.value = items.indexOf(keep) >= 0 ? keep : "";
     }
     async function load() {
@@ -627,21 +671,21 @@
         + "&date_from=" + from.value + "&date_to=" + to.value + "&limit=" + PAGE + "&offset=" + offset;
       try {
         var r = await api("GET", "/audit/search" + q);
-        if (first) { fill(actor, r.actors, "Anyone"); fill(action, r.actions, "Any action"); first = false; }
+        if (first) { fill(actor, r.actors, "Anyone"); fill(action, r.actions.slice().sort(function (a, b) { return actionLabel(a).localeCompare(actionLabel(b)); }), "Any action", actionLabel); first = false; }
         var body = h("tbody", {});
         r.rows.forEach(function (x) {
-          body.appendChild(h("tr", {}, h("td", { class: "nw", "data-label": "Time" }, when(x.ts)),
-            h("td", { class: "wrap", "data-label": "Actor" }, x.actor),
-            h("td", { class: "nw", "data-label": "Action" }, x.action),
-            h("td", { class: "wrap", "data-label": "Target" }, x.target),
-            h("td", { class: "wrap", "data-label": "Detail" }, x.detail)));
+          body.appendChild(h("tr", {}, h("td", { class: "nw", "data-label": "When" }, when(x.ts)),
+            h("td", { class: "wrap", "data-label": "Who" }, x.actor),
+            h("td", { class: "wrap", "data-label": "What happened" }, h("span", { title: x.action }, actionLabel(x.action))),
+            h("td", { class: "wrap", "data-label": "About" }, x.target),
+            h("td", { class: "wrap", "data-label": "Details" }, x.detail)));
         });
         var last = Math.min(offset + PAGE, r.total);
         var prev = h("button", { type: "button", class: "btn", disabled: offset === 0, onclick: function () { offset = Math.max(0, offset - PAGE); load(); } }, "Previous");
         var next = h("button", { type: "button", class: "btn", disabled: last >= r.total, onclick: function () { offset += PAGE; load(); } }, "Next");
         holder.replaceChildren(
           r.rows.length ? h("div", { class: "tablewrap" }, h("table", {},
-            h("thead", {}, h("tr", {}, ["Time", "Actor", "Action", "Target", "Detail"].map(function (c) { return h("th", {}, c); }))), body)) : h("p", { class: "sub" }, "Nothing matches."),
+            h("thead", {}, h("tr", {}, ["When", "Who", "What happened", "About", "Details"].map(function (c) { return h("th", {}, c); }))), body)) : h("p", { class: "sub" }, "Nothing matches."),
           h("div", { class: "actions" }, prev, next, h("span", { class: "meta", "aria-live": "polite" }, r.total ? (offset + 1) + "–" + last + " of " + r.total : "0 results")));
       } catch (err) { if (me) holder.replaceChildren(msg("bad", err.message)); }
     }
@@ -651,7 +695,7 @@
   // ---- reports ---------------------------------------------------------------------
   async function viewReports(main) {
     main.appendChild(h("h2", {}, "Reports"));
-    main.appendChild(h("p", { class: "sub" }, "Summaries of guardrail activity, knowledge bases and channels, taken straight from what is stored."));
+    main.appendChild(h("p", { class: "sub" }, "What the safety checks blocked, how each knowledge base is doing, and how each channel is used. The numbers come straight from what is stored."));
     var dr = dateRange("rp", function () { load(); }, true);
     var from = dr.from, to = dr.to;
     var holder = h("div", {}, msg("wait", "Loading…"));
@@ -672,19 +716,19 @@
         var g = await api("GET", "/reports/guardrails" + q);
         var k = await api("GET", "/reports/knowledge" + q);
         var c = await api("GET", "/reports/channels");
-        function counts(list) { return table(["Name", "Times"], list.map(function (x) { return [x.name, n(x.count)]; })); }
+        function counts(list, plain) { return table(["What", "Times"], list.map(function (x) { return [plain ? reportLabel(x.name) : x.name, n(x.count)]; })); }
         holder.replaceChildren(
-          h("div", { class: "panel" }, h("h3", {}, "Guardrails (" + n(g.total) + " events)"),
-            h("h4", {}, "By check"), counts(g.by_check), h("h4", {}, "By direction"), counts(g.by_direction),
-            h("h4", {}, "By action"), counts(g.by_action), h("h4", {}, "By department"), counts(g.by_department)),
+          h("div", { class: "panel" }, h("h3", {}, "Guardrails: " + n(g.total) + " times something was caught"),
+            h("h4", {}, "Which check"), counts(g.by_check, true), h("h4", {}, "Question or answer"), counts(g.by_direction, true),
+            h("h4", {}, "What was done"), counts(g.by_action, true), h("h4", {}, "Which department"), counts(g.by_department)),
           h("div", { class: "panel" }, h("h3", {}, "Knowledge bases"),
-            table(["Knowledge base", "Documents", "Chunks", "Size", "Last indexed", "Answered", "Not found", "Embedding tokens"],
+            table(["Knowledge base", "Documents", "Passages", "Size", "Last updated", "Answered", "No answer found", "Tokens used for search"],
               k.rows.map(function (x) {
                 return [x.name, Object.keys(x.by_status).map(function (s) { return x.by_status[s] + " " + s.toLowerCase(); }).join(", ") || "none", n(x.chunks), bytes(x.size_bytes),
                   x.last_indexed ? when(x.last_indexed) : "never", n(x.answered), n(x.not_found), n(x.embedding_tokens)];
               }))),
           h("div", { class: "panel" }, h("h3", {}, "Channels"),
-            table(["Channel", "Switched on", "Running", "Conversations", "Last activity"],
+            table(["Channel", "Switched on", "Running now", "Conversations", "Last activity"],
               c.rows.map(function (x) { return [x.title, x.enabled ? "yes" : "no", x.running ? "yes" : "no", n(x.conversations), x.last_activity ? when(x.last_activity) : "never"]; }))));
       } catch (err) { if (me) holder.replaceChildren(msg("bad", err.message)); }
     }
@@ -721,7 +765,7 @@
     var copied = h("span", { class: "meta" });
     return h("div", { class: "panel" },
       h("b", {}, "One-time password link"),
-      h("p", { class: "note" }, "Send this to the person yourself (chat or in person). It works once and expires " + when(link.expires_at) + ". It is shown only now."),
+      h("p", { class: "note" }, "Send this link to the person yourself, in chat or in person. It works once and expires " + when(link.expires_at) + ". It is shown only now."),
       field,
       h("div", { class: "actions" }, h("button", { type: "button", class: "btn small", onclick: function () {
         field.select();
@@ -774,7 +818,7 @@
   // ---- users -----------------------------------------------------------------------
   async function viewUsers(main) {
     main.appendChild(h("h2", {}, "Users"));
-    main.appendChild(h("p", { class: "sub" }, "Admins and Editors sign in to this page; everyone (Viewers too) can sign in to the Web UI with the password they set from their link. Only company-domain addresses can be added."));
+    main.appendChild(h("p", { class: "sub" }, "Admins and Editors sign in to this admin page. Everyone, Viewers included, can sign in to the Web UI with the password they set from their link. Only company email addresses can be added."));
     var list = h("div", {});
     var result = h("div", { "aria-live": "polite" });
     var depts = [];
@@ -810,7 +854,7 @@
               panel && !u.credentials_set ? h("div", { class: "meta" }, "no password yet") : null),
             h("td", { class: "nw", "data-label": "Last sign-in" }, when(u.last_sign_in)),
             h("td", { class: "act" }, self ? h("span", { class: "meta" }, "you") : [
-              panel && u.status === "Active" ? h("button", { type: "button", class: "btn small", onclick: function () { newLink(u); } }, "New link") : null,
+              panel && u.status === "Active" ? h("button", { type: "button", class: "btn small", onclick: function () { newLink(u); } }, "New password link") : null,
               u.status === "Active"
                 ? confirmButton("Deactivate", "Confirm deactivate", function () { save(u, { status: "Deactivated" }, "Deactivated " + u.email + "."); }, true)
                 : h("button", { type: "button", class: "btn small", onclick: function () { save(u, { status: "Active" }, "Activated " + u.email + "."); } }, "Activate")])));
@@ -884,7 +928,7 @@
   // ---- groups ---------------------------------------------------------------------------
   async function viewGroups(main) {
     main.appendChild(h("h2", {}, "Groups"));
-    main.appendChild(h("p", { class: "sub" }, "A group is a named set of people, used to share documents. Membership is checked each time someone asks a question, so a change applies straight away."));
+    main.appendChild(h("p", { class: "sub" }, "A group is a named list of people. Use groups to decide who can read a document or who can ask a knowledge base. When you change who is in a group, it applies from the very next question."));
     var holder = h("div", {}, msg("wait", "Loading…"));
     var result = h("div", { "aria-live": "polite" });
     main.appendChild(holder);
@@ -958,9 +1002,9 @@
   // ---- knowledge bases ------------------------------------------------------------
   async function viewKnowledge(main) {
     main.appendChild(h("h2", {}, "Knowledge bases"));
-    main.appendChild(h("p", { class: "sub" }, "A knowledge base is a set of documents the assistant answers from. Each belongs to a department and can use its own chunk settings. Choose which ones a channel uses on the Channels screen."));
+    main.appendChild(h("p", { class: "sub" }, "A knowledge base is a collection of documents the assistant answers from. Each one belongs to a department. Use Part 1 to add and manage documents. Use Part 2 to change how they are processed and who can ask. Which channel uses which knowledge base is set on the Channels screen."));
     // Two parts: 1 is where documents are uploaded and managed, 2 is where a knowledge base is configured.
-    var PARTS = [["documents", "Part 1: Documents", "Upload files and manage who can read them"], ["config", "Part 2: Configuration", "Chunking, embedding model, vector store, rebuilds and who can ask"]];
+    var PARTS = [["documents", "Part 1: Documents", "Add files and decide who can read each one"], ["config", "Part 2: Configuration", "How documents are split and searched, rebuilds, and who can ask"]];
     if (!state.kbPart) state.kbPart = "documents";
     var partNote = h("p", { class: "note" });
     var partButtons = PARTS.map(function (p) {
@@ -1048,11 +1092,11 @@
             h("div", { class: "meta" }, d.visibility === "everyone" ? "Visible to everyone" : d.visibility === "groups" ? "Restricted to selected groups" : "Restricted to selected people"),
             d.error ? h("div", { class: "meta bad" }, d.error) : null),
           h("td", { "data-label": "Status" }, pill(d)),
-          h("td", { class: "nw", "data-label": "Chunks" }, d.status === "Indexed" ? String(d.chunks) : "–"),
+          h("td", { class: "nw", "data-label": "Passages" }, d.status === "Indexed" ? String(d.chunks) : "–"),
           h("td", { class: "nw", "data-label": "Size" }, d.size ? size(d.size) : "–"),
           h("td", { class: "nw", "data-label": "Updated" }, when(d.updated_at)),
           h("td", { class: "act" },
-            h("button", { type: "button", class: "btn small", onclick: function () { act(api("POST", "/documents/" + d.id + "/reindex", {}), "Re-indexing " + d.name + "."); } }, d.status === "Failed" ? "Retry" : "Re-index"),
+            h("button", { type: "button", class: "btn small", onclick: function () { act(api("POST", "/documents/" + d.id + "/reindex", {}), "Reprocessing " + d.name + "."); } }, d.status === "Failed" ? "Retry" : "Re-index"),
             h("button", { type: "button", class: "btn small", onclick: function () { openAccess(d); } }, "Access"),
             h("button", { type: "button", class: "btn small", onclick: function () { replaceInput.click(); } }, "Replace"), replaceInput, mover,
             confirmButton("Delete", "Confirm delete", function () { act(api("DELETE", "/documents/" + d.id), "Deleted " + d.name + "."); }, true)));
@@ -1064,7 +1108,7 @@
           r.documents.forEach(function (d) { body.appendChild(row(d, r.types)); });
           table.replaceChildren(r.documents.length
             ? h("div", { class: "tablewrap" }, h("table", {}, h("thead", {}, h("tr", {},
-                ["Document", "Status", "Chunks", "Size", "Updated", ""].map(function (t) { return h("th", {}, t); }))), body))
+                ["Document", "Status", "Passages", "Size", "Updated", ""].map(function (t) { return h("th", {}, t); }))), body))
             : h("p", { class: "meta" }, "No documents yet. Upload one below (" + r.types.join(", ") + "; up to " + r.max_upload_mb + " MB)."));
           fileInput.accept = r.types.join(",");
           watch(r.documents);
@@ -1090,7 +1134,7 @@
       } }, "Upload");
       var reindexAll = h("button", { type: "button", class: "btn small", onclick: function () {
         act(api("POST", "/kbs/" + k.id + "/reindex", {}).then(function (r) { out.replaceChildren(msg("ok", r.queued + " documents queued for re-indexing.")); }));
-      } }, "Re-index all");
+      } }, "Reprocess all");
       box.appendChild(h("h4", {}, "Documents"));
       box.appendChild(table);
       box.appendChild(accessBox);
@@ -1108,7 +1152,7 @@
       var form = h("div", {});
       var info = h("div", {});
       var options = data.embeddings;
-      var pick = selectOf(options.map(function (o) { return [o.name, o.title]; }), k.embedding, null, "Embedding model");
+      var pick = selectOf(options.map(function (o) { return [o.name, o.title]; }), k.embedding, null, "Search model");
       pick.id = "em" + k.id;
       var current = null;                                              // { opt, sf, defaults }
 
@@ -1135,8 +1179,8 @@
           } }, "Download the model")));
         }
         form.replaceChildren.apply(form, kids);
-        info.replaceChildren(h("div", { class: "meta" }, "The current index was built with: " + (options.filter(function (o) { return o.name === k.active_embedding; })[0] || { title: k.active_embedding || "?" }).title
-          + (k.embedding !== k.active_embedding ? ". The chosen model is different, so the index needs a rebuild." : ".")));
+        info.replaceChildren(h("div", { class: "meta" }, "Your documents were processed with: " + (options.filter(function (o) { return o.name === k.active_embedding; })[0] || { title: k.active_embedding || "?" }).title
+          + (k.embedding !== k.active_embedding ? ". You chose a different model, so they need to be processed again (Rebuild below)." : ".")));
       }
       function collect() {
         var vals = Object.assign({}, current.defaults, current.sf.collect());
@@ -1155,11 +1199,11 @@
       } }, "Test");
       var save = h("button", { type: "button", class: "btn primary", onclick: async function () {
         out.replaceChildren(msg("wait", "Testing and saving…"));
-        try { var r = await api("PUT", "/kbs/" + k.id, collect()); out.replaceChildren(msg("ok", "Saved. Rebuild the index below to start using it; until then the current index keeps answering.")); }
+        try { var r = await api("PUT", "/kbs/" + k.id, collect()); out.replaceChildren(msg("ok", "Saved. Use Rebuild below to start using it; until then the current search data keeps answering.")); }
         catch (err) { if (me) out.replaceChildren(msg("bad", err.message)); }
       } }, "Save");
-      box.appendChild(h("h4", {}, "Embedding model"));
-      box.appendChild(h("p", { class: "note" }, "Turns document text into vectors for searching. Changing it needs a rebuild of the index (see below); questions keep using the model the current index was built with until the switch."));
+      box.appendChild(h("h4", {}, "Search model"));
+      box.appendChild(h("p", { class: "note" }, "How your documents are turned into something the assistant can search (technically an embedding model). Changing it means the documents must be processed again: use Rebuild below. Until the new one is ready, questions keep using the current one."));
       box.appendChild(h("div", { class: "field wide" }, h("label", { class: "l", for: "em" + k.id }, "Model"), pick));
       box.appendChild(info);
       box.appendChild(form);
@@ -1176,7 +1220,7 @@
       var form = h("div", {});
       var options = data.stores;
       var title = function (n) { return (options.filter(function (o) { return o.name === n; })[0] || { title: n || "?" }).title; };
-      var pick = selectOf(options.map(function (o) { return [o.name, o.title]; }), k.store, null, "Vector store");
+      var pick = selectOf(options.map(function (o) { return [o.name, o.title]; }), k.store, null, "Search storage");
       pick.id = "vs" + k.id;
       var current = null;
 
@@ -1210,7 +1254,7 @@
       var status = h("div", { class: "meta" }, h("span", { class: "pill " + (k.health && k.health.ok ? "ok" : "bad") }, k.health && k.health.ok ? "Reachable" : "Not reachable"),
         " Active index in " + title(k.active_store) + " · " + (k.chunks === null ? "?" : k.chunks) + " chunks" + size
         + (k.last_indexed ? " · last indexed " + when(k.last_indexed) : "") + (k.health && !k.health.ok ? " · " + k.health.message : "")
-        + (k.store !== k.active_store ? ". The chosen store is different, so the index needs a rebuild." : "."));
+        + (k.store !== k.active_store ? ". You chose a different store, so a rebuild is needed (below)." : "."));
       var test = h("button", { type: "button", class: "btn", onclick: async function () {
         out.replaceChildren(msg("wait", "Testing…"));
         try { var r = await api("POST", "/kbs/" + k.id + "/store/test", collect()); out.replaceChildren(msg(r.ok ? "ok" : "bad", r.message)); }
@@ -1218,11 +1262,11 @@
       } }, "Test");
       var save = h("button", { type: "button", class: "btn primary", onclick: async function () {
         out.replaceChildren(msg("wait", "Testing and saving…"));
-        try { await api("PUT", "/kbs/" + k.id, collect()); out.replaceChildren(msg("ok", "Saved. Rebuild the index below to move it; until then the current index keeps answering.")); }
+        try { await api("PUT", "/kbs/" + k.id, collect()); out.replaceChildren(msg("ok", "Saved. Use Rebuild below to move the search data; until then the current search data keeps answering.")); }
         catch (err) { if (me) out.replaceChildren(msg("bad", err.message)); }
       } }, "Save");
-      box.appendChild(h("h4", {}, "Vector store"));
-      box.appendChild(h("p", { class: "note" }, "Where this knowledge base keeps its vectors. Changing it needs a rebuild of the index (see below): the new index is built beside the old one and used only when it is complete."));
+      box.appendChild(h("h4", {}, "Search storage"));
+      box.appendChild(h("p", { class: "note" }, "Where this knowledge base keeps its search data. Changing it means a rebuild (below): the new copy is built beside the old one and is used only once it is complete."));
       box.appendChild(status);
       box.appendChild(h("div", { class: "field wide" }, h("label", { class: "l", for: "vs" + k.id }, "Store"), pick));
       box.appendChild(form);
@@ -1242,7 +1286,7 @@
         if (!f) { out.replaceChildren(msg("bad", "Choose a sample file first.")); return; }
         var fd = new FormData();
         fd.append("file", f); fd.append("strategy", strat.value); fd.append("chunk_size", size.value); fd.append("chunk_overlap", overlap.value);
-        out.replaceChildren(msg("wait", "Working out the chunks…"));
+        out.replaceChildren(msg("wait", "Splitting the sample…"));
         try {
           var r = await api("POST", "/kbs/" + k.id + "/chunk-preview", fd);
           var body = h("tbody", {});
@@ -1260,9 +1304,9 @@
             h("div", { class: "tablewrap" }, h("table", {}, h("thead", {}, h("tr", {}, ["#", "Page", "Heading", "Size", "Text"].map(function (t) { return h("th", {}, t); }))), body)),
             r.count > r.shown ? h("div", { class: "meta" }, "Showing the first " + r.shown + " chunks.") : null);
         } catch (err) { if (me) out.replaceChildren(msg("bad", err.message)); }
-      } }, "Preview chunks");
-      box.appendChild(h("h4", {}, "Preview chunking"));
-      box.appendChild(h("p", { class: "note" }, "Try the strategy and sizes above on a sample file before you save them. Nothing is stored or indexed."));
+      } }, "Show the passages");
+      box.appendChild(h("h4", {}, "Preview how documents are split"));
+      box.appendChild(h("p", { class: "note" }, "Try the splitting settings above on a sample file before you save them. Nothing is stored."));
       box.appendChild(h("div", { class: "actions" }, file, run));
       box.appendChild(out);
       return box;
@@ -1289,7 +1333,7 @@
             h("p", { class: "note" }, e.documents + " documents → about " + e.chunks + " chunks (" + e.tokens + " tokens), chunk size " + e.target.chunk_size
               + " / overlap " + e.target.chunk_overlap + ", " + e.model + ". Time: about " + secs(e.seconds) + ". " + money(e) + ". "
               + e.note + (e.warning ? " " + e.warning : "") + (e.skipped_documents ? " " + e.skipped_documents + " document(s) cannot be read and will be left out." : "")),
-            h("p", { class: "note" }, "The current index keeps answering until the new one is complete. Documents cannot be changed while it builds."),
+            h("p", { class: "note" }, "The current version keeps answering until the new one is complete. Documents cannot be changed while the new one is being built."),
             h("div", { class: "actions" },
               h("button", { type: "button", class: "btn primary", onclick: start }, "Start rebuild"),
               h("button", { type: "button", class: "btn small", onclick: function () { action.replaceChildren(); } }, "Not now"))));
@@ -1334,19 +1378,19 @@
             body.appendChild(h("tr", {},
               h("td", { "data-label": "Version" }, "v" + v.version, v.is_active ? h("span", { class: "pill ok" }, "Active") : null),
               h("td", { "data-label": "Settings" }, v.chunk_size + " / " + v.chunk_overlap),
-              h("td", { class: "nw", "data-label": "Chunks" }, String(v.chunks)),
+              h("td", { class: "nw", "data-label": "Passages" }, String(v.chunks)),
               h("td", { "data-label": "Status" }, h("span", { class: "pill " + pillKind }, v.status), v.error ? h("div", { class: "meta bad" }, v.error) : null),
               h("td", { class: "nw", "data-label": "Built" }, when(v.finished_at || v.created_at)),
               h("td", { class: "act" }, v.status === "Ready" && !v.is_active && !s.building
                 ? confirmButton("Roll back", "Confirm roll back", function () { rollback(v); }, true) : null)));
           });
           table.replaceChildren(s.versions.length ? h("div", { class: "tablewrap" }, h("table", {}, h("thead", {}, h("tr", {},
-            ["Version", "Chunk size / overlap", "Chunks", "Status", "Built", ""].map(function (t) { return h("th", {}, t); }))), body)) : null);
+            ["Version", "Passage size / overlap", "Passages", "Status", "Built", ""].map(function (t) { return h("th", {}, t); }))), body)) : null);
           if (s.building && !timer) timer = setInterval(function () { if (!document.body.contains(box)) { stop(); return; } refresh(); }, 2500);
           if (!s.building) stop();
         } catch (err) { stop(); if (me) top.replaceChildren(msg("bad", err.message)); }
       }
-      box.appendChild(h("h4", {}, "Index"));
+      box.appendChild(h("h4", {}, "Rebuild"));
       box.appendChild(top);
       box.appendChild(action);
       box.appendChild(table);
@@ -1365,7 +1409,7 @@
           var cur = await api("GET", "/kbs/" + k.id + "/access");
           var ch = await api("GET", "/groups");
           var picker = accessPicker({ visibility: cur.restricted ? "groups" : "everyone", group_ids: cur.group_ids }, ch.groups, [],
-            { noPeople: true, label: "Who can ask", everyoneText: "Anyone on a channel that uses this knowledge base can ask it. They still only see documents they are allowed to see." });
+            { noPeople: true, label: "Who can ask", everyoneText: "Anyone on a channel that uses this knowledge base can ask it. They still only get answers from documents they are allowed to read." });
           body.replaceChildren(picker.el, h("div", { class: "actions" }, h("button", { type: "button", class: "btn", onclick: async function () {
             var v = picker.value();
             try { await api("PUT", "/kbs/" + k.id + "/access", { group_ids: v.visibility === "groups" ? v.group_ids : [] }); out.replaceChildren(msg("ok", "Saved. Applies to the next question.")); }
@@ -1387,7 +1431,7 @@
       var dept = selectOf(data.departments.map(function (d) { return [d.id, d.name]; }), k.department_id, null, "Department");
       dept.id = "kp" + k.id;
       var size = h("input", { type: "number", id: "ks" + k.id, value: blank(k.chunk_size), min: 100, max: 8000, step: 50, placeholder: "inherit (" + data.global.chunk_size + ")" });
-      var strat = selectOf(data.strategies.map(function (s) { return [s.name, s.title]; }), k.chunk_strategy, null, "Chunking strategy");
+      var strat = selectOf(data.strategies.map(function (s) { return [s.name, s.title]; }), k.chunk_strategy, null, "How to split documents");
       strat.id = "kst" + k.id;
       var stratHelp = h("div", { class: "help" });
       function showStratHelp() { var s = data.strategies.filter(function (x) { return x.name === strat.value; })[0]; stratHelp.textContent = s ? s.help : ""; }
@@ -1417,12 +1461,12 @@
           h("div", { class: "field" }, h("label", { class: "l", for: "kn" + k.id }, "Name"), name),
           h("div", { class: "field" }, h("label", { class: "l", for: "kp" + k.id }, "Owning department"), dept),
           h("div", { class: "field wide" }, h("label", { class: "l", for: "kd" + k.id }, "Description"), desc),
-          h("div", { class: "field wide" }, h("label", { class: "l", for: "kst" + k.id }, "Chunking strategy"), strat, stratHelp),
-          h("div", { class: "field" }, h("label", { class: "l", for: "ks" + k.id }, "Chunk size (characters)"), size,
-            h("div", { class: "help" }, "Empty = use the global value. For per-page, heading and semantic strategies this is the largest a chunk can be. The index keeps its current settings until you rebuild it.")),
-          h("div", { class: "field" }, h("label", { class: "l", for: "ko" + k.id }, "Chunk overlap (characters)"), overlap),
-          h("div", { class: "field" }, h("div", { class: "l" }, "Embedding model"), h("div", {}, "Local MiniLM (built in)")),
-          h("div", { class: "field" }, h("div", { class: "l" }, "Vector store"), h("div", {}, "Chroma"))),
+          h("div", { class: "field wide" }, h("label", { class: "l", for: "kst" + k.id }, "How to split documents"), strat, stratHelp),
+          h("div", { class: "field" }, h("label", { class: "l", for: "ks" + k.id }, "Passage size (characters)"), size,
+            h("div", { class: "help" }, "Leave empty to use the global value from Settings. For splitting per page, by heading or by meaning, this is the largest a passage can be. The current search data keeps its settings until you rebuild.")),
+          h("div", { class: "field" }, h("label", { class: "l", for: "ko" + k.id }, "Overlap between passages (characters)"), overlap),
+          h("div", { class: "field" }, h("div", { class: "l" }, "Search model"), h("div", {}, "Local MiniLM (built in)")),
+          h("div", { class: "field" }, h("div", { class: "l" }, "Search storage"), h("div", {}, "Chroma"))),
         h("div", { class: "actions" }, save, del), out, askPanel(k), embeddingPanel(k, data), storePanel(k, data), previewPanel(k, data, strat, size, overlap), indexPanel(k));
     }
 
@@ -1551,7 +1595,7 @@
     box.appendChild(h("div", { class: "actions" }, saveBtn, publishBtn));
     box.appendChild(out);
     box.appendChild(h("h4", {}, "Try it before publishing"));
-    box.appendChild(h("p", { class: "note" }, "Runs the normal answering steps with the text in the box. Nothing is published or saved to a conversation."));
+    box.appendChild(h("p", { class: "note" }, "Ask a test question using the text in the box. Nothing is published and nothing is stored in any conversation."));
     box.appendChild(h("div", { class: "actions" }, question, tryBtn));
     box.appendChild(previewOut);
     box.appendChild(h("h4", {}, "Versions"));
@@ -1564,8 +1608,8 @@
     var isAdmin = state.perm && state.perm.can_manage_all;
     main.appendChild(h("h2", {}, "Prompts"));
     main.appendChild(h("p", { class: "sub" }, isAdmin
-      ? "The base prompts set who the assistant is and how it answers; only Admins change them and a department cannot override them. A department prompt adds tone and focus for that department. Every save is a new draft, nothing goes live until you publish, and you can roll back in one step."
-      : "Your department's prompt adds tone and focus on top of the base prompt, which always takes priority. Every save is a new draft; nothing goes live until you publish, and you can roll back in one step."));
+      ? "The base prompts set who the assistant is and how it answers. Only Admins can change them, and a department cannot override them. A department prompt adds tone and focus for that department. Every save is a draft; nothing changes for people until you publish."
+      : "Your department's prompt adds tone and focus on top of the base prompt, which always comes first. Every save is a draft; nothing changes for people until you publish, and you can roll back in one step."));
     var holder = h("div", {}, msg("wait", "Loading…"));
     main.appendChild(holder);
     try {
@@ -1599,24 +1643,182 @@
   // ---- guardrails -----------------------------------------------------------------------
   async function viewGuardrails(main) {
     main.appendChild(h("h2", {}, "Guardrails"));
-    main.appendChild(h("p", { class: "sub" }, "Checks around every question and answer. A blocked question gets the blocked reply and no model is called. Personal data is masked before it reaches the model, the conversation history or any log. Banned topics are set per department on the Departments screen. Changes apply within a few seconds."));
+    main.appendChild(h("p", { class: "sub" }, "Safety checks that run around every question and answer. Each check can be switched on or off, and most can be fine-tuned. Changes apply within a few seconds."));
     var holder = h("div", {}, msg("wait", "Loading…"));
     main.appendChild(holder);
 
+    var TYPE_LABELS = { EMAIL_ADDRESS: "Email addresses", PHONE_NUMBER: "Phone numbers", CREDIT_CARD: "Card numbers", US_SSN: "US social security numbers", IN_AADHAAR: "Aadhaar numbers (India)",
+      IN_PAN: "PAN numbers (India)", IBAN_CODE: "Bank account numbers (IBAN)", IP_ADDRESS: "IP addresses", URL: "Web addresses", US_PASSPORT: "US passport numbers", US_BANK_NUMBER: "US bank account numbers",
+      US_DRIVER_LICENSE: "US driving licences", US_ITIN: "US tax numbers (ITIN)", UK_NHS: "UK NHS numbers", CRYPTO: "Crypto wallet addresses", MEDICAL_LICENSE: "Medical licence numbers" };
+    var LEVELS = {
+      injection_sensitivity: { low: "Blocks only clear attacks. Fewest false alarms.", medium: "Balanced. Recommended.", high: "Also blocks mild wording, and may block some normal questions." },
+      toxicity_sensitivity: { low: "Threats only.", medium: "Threats and profanity. Recommended.", high: "Also plain insults." }
+    };
+
     function show(data, notice) {
-      var sf = specForm(data.fields);
-      var result = h("div", { "aria-live": "polite" }, notice || null);
+      var fields = {}; data.fields.forEach(function (f) { fields[f.name] = f; });
+      var orig = {}, cur = {};
+      data.fields.forEach(function (f) { orig[f.name] = JSON.parse(JSON.stringify(f.value)); cur[f.name] = JSON.parse(JSON.stringify(f.value)); });
+      var redraw = [];                                   // functions that refresh parts of the screen when something changes
+      var uid = 0;
+
+      function changed() { return Object.keys(cur).filter(function (k) { return JSON.stringify(cur[k]) !== JSON.stringify(orig[k]); }); }
+      function set(name, value) { cur[name] = value; redraw.forEach(function (fn) { fn(); }); }
+      function id() { return "gr" + (++uid); }
+
+      // ---- small controls ------------------------------------------------------------
+      function toggle(name, label) {
+        var cb = h("input", { type: "checkbox", id: id(), checked: cur[name], "aria-label": label, onchange: function () { set(name, cb.checked); } });
+        redraw.push(function () { cb.checked = cur[name]; });
+        return h("label", { class: "switch" }, cb);
+      }
+      function segmented(name, label) {
+        var wrap = h("div", { class: "field" });
+        var note = h("div", { class: "help", "aria-live": "polite" });
+        var seg = h("div", { class: "chips", role: "group", "aria-label": label });
+        var btns = fields[name].choices.map(function (c) {
+          return h("button", { type: "button", class: "chip", onclick: function () { set(name, c); } }, c.charAt(0).toUpperCase() + c.slice(1));
+        });
+        btns.forEach(function (b) { seg.appendChild(b); });
+        function paint() { btns.forEach(function (b, i) { b.setAttribute("aria-pressed", String(fields[name].choices[i] === cur[name])); }); note.textContent = LEVELS[name][cur[name]] || ""; }
+        redraw.push(paint); paint();
+        wrap.append(h("span", { class: "l" }, label), seg, note);
+        return wrap;
+      }
+      function tags(name, label, help, placeholder) {
+        var wrap = h("div", { class: "field" });
+        var box = h("div", { class: "tags" });
+        var inp = h("input", { type: "text", id: id(), autocomplete: "off", placeholder: placeholder, "aria-label": label });
+        function add(text) {
+          var v = text.trim(); if (!v) return;
+          if (cur[name].some(function (x) { return x.toLowerCase() === v.toLowerCase(); })) return;
+          set(name, cur[name].concat([v]));
+        }
+        function commit() { inp.value.split(",").forEach(add); inp.value = ""; }
+        inp.addEventListener("keydown", function (e) {
+          if (e.key === "Enter" || e.key === ",") { e.preventDefault(); commit(); }
+          else if (e.key === "Backspace" && !inp.value && cur[name].length) set(name, cur[name].slice(0, -1));
+        });
+        inp.addEventListener("blur", commit);
+        function paint() {
+          box.replaceChildren.apply(box, cur[name].map(function (v) {
+            return h("span", { class: "tag" }, v, h("button", { type: "button", class: "x", "aria-label": "Remove " + v, onclick: function () { set(name, cur[name].filter(function (x) { return x !== v; })); } }, "×"));
+          }).concat([inp]));
+        }
+        redraw.push(paint); paint();
+        box.addEventListener("click", function () { inp.focus(); });
+        wrap.append(h("label", { class: "l", for: inp.id }, label), box, h("div", { class: "help" }, help));
+        return wrap;
+      }
+      function typeChecks() {
+        var wrap = h("div", { class: "field" });
+        var grid = h("div", { class: "checks" });
+        var boxes = fields.masked_types.choices.map(function (t) {
+          var cb = h("input", { type: "checkbox", id: id(), checked: cur.masked_types.indexOf(t) >= 0, onchange: function () {
+            var s = cur.masked_types.filter(function (x) { return x !== t; }); if (cb.checked) s.push(t);
+            set("masked_types", fields.masked_types.choices.filter(function (x) { return s.indexOf(x) >= 0; }));
+          } });
+          grid.appendChild(h("label", { class: "check", for: cb.id }, cb, TYPE_LABELS[t] || t));
+          return [t, cb];
+        });
+        redraw.push(function () { boxes.forEach(function (p) { p[1].checked = cur.masked_types.indexOf(p[0]) >= 0; }); });
+        wrap.append(h("span", { class: "l" }, "What counts as personal data"), grid);
+        return wrap;
+      }
+      function sub2(name, label, help) {                    // a plain on/off option inside a card
+        var t = toggle(name, label);
+        return h("div", { class: "opt" }, t, h("div", {}, h("b", {}, label), help ? h("div", { class: "help" }, help) : null));
+      }
+      function lengthControl() {
+        var n = h("input", { type: "number", id: id(), min: fields.max_input_tokens.min, max: fields.max_input_tokens.max, step: fields.max_input_tokens.step, value: cur.max_input_tokens,
+          "aria-label": "Longest question in tokens", oninput: function () { var v = Number(n.value); set("max_input_tokens", n.value === "" || isNaN(v) ? n.value : v); } });
+        var approx = h("span", { class: "help" });
+        redraw.push(function () { var v = Number(cur.max_input_tokens); approx.textContent = isNaN(v) ? "" : "About " + (v * 4).toLocaleString() + " characters, around " + Math.max(1, Math.round(v * 4 / 6)).toLocaleString() + " words. Longer questions get the blocked reply."; });
+        redraw[redraw.length - 1]();
+        return h("div", { class: "field" }, h("label", { class: "l", for: n.id }, "Longest question (tokens)"), n, approx);
+      }
+
+      // ---- one card per check ----------------------------------------------------------
+      function card(title, scope, what, enabledName, body) {
+        if (!enabledName) {                                   // a check that is always on: no switch, only its setting
+          return h("section", { class: "gr-card" },
+            h("div", { class: "gr-head" }, h("div", {}, h("h4", {}, title, " ", h("span", { class: "pill off" }, scope)), h("p", { class: "meta" }, what))),
+            h("div", { class: "gr-body" }, body));
+        }
+        var tog = toggle(enabledName, title);
+        var state = h("span", { class: "pill" });
+        var detail = h("div", { class: "gr-body" });
+        detail.appendChild(body);
+        var off = h("p", { class: "meta" }, "Switched off. Nothing is checked here.");
+        var el = h("section", { class: "gr-card" },
+          h("div", { class: "gr-head" }, h("div", {}, h("h4", {}, title, " ", h("span", { class: "pill off" }, scope)), h("p", { class: "meta" }, what)), h("div", { class: "gr-switch" }, state, tog)),
+          detail, off);
+        redraw.push(function () { var on = !!cur[enabledName]; state.textContent = on ? "On" : "Off"; state.className = "pill " + (on ? "ok" : "off"); detail.hidden = !on; off.hidden = on; el.classList.toggle("is-off", !on); });
+        redraw[redraw.length - 1]();
+        return el;
+      }
+      function stack() { var d = h("div", { class: "gr-stack" }); for (var i = 0; i < arguments.length; i++) d.appendChild(arguments[i]); return d; }
+
       var kind = data.status === "ready" ? "ok" : data.status === "off" ? "off" : data.status === "loading" ? "off" : "bad";
       var label = { ready: "Detection model ready", off: "Guardrails off", loading: "Detection model loading…", error: "Detection model failed to load" }[data.status] || data.status;
-      var save = h("button", { type: "button", class: "btn primary", onclick: async function () {
+
+      // master switch
+      var masterTitle = h("h3", {});
+      var masterNote = h("p", { class: "meta" });
+      var master = h("section", { class: "gr-master" },
+        h("div", {}, masterTitle, masterNote), h("div", { class: "gr-switch" }, h("span", { class: "pill " + kind }, label), toggle("enabled", "Guardrails")));
+      var warn = h("div", { class: "msg warn" }, "Guardrails are off, so none of the checks below run. Questions and answers go through unchecked.");
+      redraw.push(function () { var on = !!cur.enabled; masterTitle.textContent = on ? "Guardrails are on" : "Guardrails are off"; masterNote.textContent = "The master switch. Last changed " + when(data.updated_at) + " by " + data.updated_by + "."; warn.hidden = on; page.classList.toggle("all-off", !on); });
+
+      var questionCards = h("div", { class: "gr-grid" },
+        card("Question length", "Questions", "Very long messages are refused before any AI model is called.", null, lengthControl()),
+        card("Prompt injection", "Questions", "Blocks attempts to make the assistant ignore its rules or reveal its instructions.", "injection_enabled",
+          stack(segmented("injection_sensitivity", "How strict"), tags("injection_phrases", "Always block these phrases", "Press Enter after each one. Any question containing one is blocked.", "for example: act as root"))),
+        card("Toxic language", "Questions and answers", "Blocks threats, profanity and insults in what people ask and in what the assistant says.", "toxicity_enabled",
+          stack(segmented("toxicity_sensitivity", "How strict"), tags("toxicity_words", "Also treat these as toxic", "Add anything your workplace needs. The built-in list leaves slurs out on purpose.", "type a word, press Enter"),
+            tags("toxicity_allow", "Never treat these as toxic", "For example a product or place name that looks rude.", "type a word, press Enter"))),
+        card("Banned topics", "Questions and answers", "Blocks anything about a topic banned for the asker's department.", "banned_topics_enabled",
+          h("p", { class: "help" }, "The topics are set per department. Open the Departments screen to change them.")),
+        card("Mask personal data", "Questions", "Replaces personal data with a label such as <EMAIL_ADDRESS> before the question reaches the AI model, the history or any log.", "mask_enabled",
+          stack(typeChecks(), sub2("mask_names", "Also mask people's names", "Off by default, because names are often needed to answer. Detection is approximate."))));
+      var answerCards = h("div", { class: "gr-grid" },
+        card("Check answers before sending", "Answers", "The finished answer is checked for banned topics and for citations before anyone sees it.", "output_checks_enabled", h("p", { class: "help" }, "If an answer fails the check, the blocked reply is sent instead.")),
+        card("Redact personal data in answers", "Answers", "Personal data found in an answer is replaced, except what you allow here.", "output_redaction",
+          tags("allow_list", "Never redact these", "Exact values that may appear in answers, for example the HR mailbox hr@company.com.", "name@company.com")),
+        card("Protect the instructions", "Answers", "Stops an answer that repeats the assistant's hidden instructions.", "leak_check_enabled", h("p", { class: "help" }, "A hidden marker is added to the instructions. An answer that repeats it is replaced by the blocked reply.")));
+
+      // blocked reply with a preview
+      var reply = h("textarea", { id: id(), rows: "3", "aria-label": "Blocked reply text", oninput: function () { set("blocked_reply", reply.value); } });
+      reply.value = cur.blocked_reply;
+      var bubble = h("div", { class: "bubble" });
+      redraw.push(function () { bubble.textContent = cur.blocked_reply || "(empty: people would see nothing)"; });
+      var blockedBox = h("section", { class: "gr-card" },
+        h("div", { class: "gr-head" }, h("div", {}, h("h4", {}, "When something is blocked"), h("p", { class: "meta" }, "This is what people see instead of an answer. No AI model is called for a blocked question."))),
+        h("div", { class: "gr-body gr-two" }, h("div", { class: "field" }, h("label", { class: "l", for: reply.id }, "Message"), reply),
+          h("div", { class: "field" }, h("span", { class: "l" }, "Preview"), bubble)));
+
+      // save bar
+      var result = h("div", { "aria-live": "polite" }, notice || null);
+      var count = h("span", { class: "meta" });
+      var saveBtn = h("button", { type: "button", class: "btn primary", onclick: async function () {
+        var values = {}; changed().forEach(function (k) { values[k] = cur[k]; });
         result.replaceChildren(msg("wait", "Saving…"));
-        try { show(await api("PUT", "/guardrails", { values: sf.collect() }), msg("ok", "Saved. The new values are in use within a few seconds.")); }
+        try { show(await api("PUT", "/guardrails", { values: values }), msg("ok", "Saved. The new values are in use within a few seconds.")); }
         catch (err) { if (me) result.replaceChildren(msg("bad", err.message)); }
       } }, "Save changes");
-      holder.replaceChildren(h("div", { class: "panel" },
-        h("div", { class: "meta" }, h("span", { class: "pill " + kind }, label), " Last changed " + when(data.updated_at) + " by " + data.updated_by),
-        sf.el, h("div", { class: "actions" }, save), result,
-        h("p", { class: "note" }, "Injection, toxicity and banned-topic checks are rule-based: they catch known phrasing and listed words, not paraphrases or other languages. Names are not masked unless you turn that on; detection of names is approximate.")));
+      var discard = h("button", { type: "button", class: "btn", onclick: function () { show(data); } }, "Discard changes");
+      var bar = h("div", { class: "savebar" }, count, h("div", { class: "actions" }, discard, saveBtn));
+      redraw.push(function () { var n = changed().length; count.textContent = n ? n + " unsaved change" + (n === 1 ? "" : "s") : "No unsaved changes"; saveBtn.disabled = !n; discard.disabled = !n; bar.classList.toggle("dirty", n > 0); });
+
+      var how = h("details", { class: "gr-how" }, h("summary", {}, "How these checks work"),
+        h("p", { class: "note" }, "Prompt-injection, toxicity and banned-topic checks are rules: they catch known phrasing and listed words, not paraphrases or other languages. Personal data is found with a language model that runs on this server and is masked before it reaches the AI model. Names are not masked unless you turn that on."));
+
+      var page = h("div", { class: "gr-page" }, master, warn,
+        h("h3", { class: "gr-h" }, "Checks on the question"), h("p", { class: "meta" }, "Run first. A blocked question never reaches the AI model."), questionCards,
+        h("h3", { class: "gr-h" }, "Checks on the answer"), h("p", { class: "meta" }, "Run on the finished answer, before the person sees it."), answerCards,
+        blockedBox, how, result, bar);
+      holder.replaceChildren(page);
+      redraw.forEach(function (fn) { fn(); });
     }
     try { show(await api("GET", "/guardrails")); }
     catch (err) { if (me) holder.replaceChildren(msg("bad", err.message)); }
@@ -1625,7 +1827,7 @@
   // ---- conversations (Admin) -------------------------------------------------------------
   async function viewConversations(main) {
     main.appendChild(h("h2", {}, "Conversations"));
-    main.appendChild(h("p", { class: "sub" }, "Stored conversations from every channel. Personal data was masked before it was stored. Opening or deleting one is recorded in the audit log."));
+    main.appendChild(h("p", { class: "sub" }, "Every stored conversation, from every channel. Personal data was masked before it was stored. Opening or deleting a conversation is recorded in the audit log."));
     var filters = h("div", { class: "form" });
     var dept = h("select", { id: "cv_dept", "aria-label": "Department" }, h("option", { value: "", text: "All departments" }));
     var chan = selectOf([["", "All channels"], ["web", "Web UI"], ["slack", "Slack"], ["teams", "Teams"], ["gchat", "Google Chat"], ["other", "Other"]], "", null, "Channel");
@@ -1691,13 +1893,13 @@
         var total = r.preview.reduce(function (n, d) { return n + d.expired; }, 0);
         var body = h("tbody", {});
         r.preview.forEach(function (d) {
-          body.appendChild(h("tr", {}, h("td", { "data-label": "Department" }, d.department), h("td", { "data-label": "Keeps" }, d.days + " days"),
-            h("td", { "data-label": "Expired now" }, String(d.expired))));
+          body.appendChild(h("tr", {}, h("td", { "data-label": "Department" }, d.department), h("td", { "data-label": "Kept for" }, d.days + " days"),
+            h("td", { "data-label": "Due for deletion" }, String(d.expired))));
         });
-        retBox.replaceChildren(h("h3", {}, "Retention"),
-          h("p", { class: "note" }, "Conversations with no activity for longer than their department's retention are deleted for good, once a day" + (r.enabled ? "." : " (the daily job is turned off in Settings).")),
+        retBox.replaceChildren(h("h3", {}, "Automatic deletion"),
+          h("p", { class: "note" }, "Conversations with no activity for longer than their department's keep-for period are deleted for good, once a day" + (r.enabled ? "." : " (the daily job is turned off in Settings).")),
           h("div", { class: "meta" }, r.last_run ? "Last run " + when(r.last_run.ts) + " by " + r.last_run.actor + ": " + r.last_run.detail : "No run yet."),
-          h("div", { class: "tablewrap" }, h("table", {}, h("thead", {}, h("tr", {}, ["Department", "Keeps", "Expired now"].map(function (t) { return h("th", {}, t); }))), body)),
+          h("div", { class: "tablewrap" }, h("table", {}, h("thead", {}, h("tr", {}, ["Department", "Kept for", "Due for deletion"].map(function (t) { return h("th", {}, t); }))), body)),
           h("div", { class: "actions" },
             confirmButton("Delete " + total + " expired now", "Confirm: delete for good", async function () {
               try { var d = await api("POST", "/conversations/retention/run", {}); await loadRetention(msg("ok", "Deleted " + d.conversations + " conversations (" + d.messages + " messages).")); load(); }
@@ -1712,7 +1914,7 @@
         var s = await api("GET", "/settings");
         var on = s.fields.filter(function (f) { return f.name === "export_enabled"; })[0].value;
         if (!on) {
-          exBox.replaceChildren(h("h3", {}, "Export"), h("p", { class: "note" }, "Conversation export is turned off. Turn on \"Allow conversation export\" under Settings once the privacy sign-off is recorded."));
+          exBox.replaceChildren(h("h3", {}, "Export"), h("p", { class: "note" }, "Exporting conversations is turned off. Turn on \"Allow exporting conversations\" under Settings once the privacy sign-off is recorded."));
           return;
         }
         var reason = h("textarea", { id: "ex_reason", rows: "2", placeholder: "Why is this export needed? (recorded in the audit log)", "aria-label": "Reason" });
@@ -1736,7 +1938,7 @@
           } }, "Export")), out);
       } catch (err) { if (me) exBox.replaceChildren(msg("bad", err.message)); }
     }
-    var go = h("button", { type: "button", class: "btn", onclick: function () { page = 0; load(); } }, "Apply filters");
+    var go = h("button", { type: "button", class: "btn", onclick: function () { page = 0; load(); } }, "Filter");
     filters.appendChild(h("div", { class: "field" }, h("label", { class: "l", for: "cv_dept" }, "Department"), dept));
     filters.appendChild(h("div", { class: "field" }, h("label", { class: "l", for: "cv_chan" }, "Channel"), chan));
     filters.appendChild(h("div", { class: "field" }, h("label", { class: "l", for: "cv_person" }, "Person"), person));
@@ -1757,8 +1959,8 @@
     var isAdmin = state.perm && state.perm.can_manage_all;
     main.appendChild(h("h2", {}, "Usage and cost"));
     main.appendChild(h("p", { class: "sub" }, (isAdmin ? "Every model call: answers, routing, summaries, previews and embeddings." : "Model usage of your departments.")
-      + " Cost is counted only for models that have a price; calls without one are shown as unpriced, so a total is never the whole truth."));
-    var GROUPS = [["provider", "Provider"], ["model", "Model"], ["department", "Department"], ["kb", "Knowledge base"], ["purpose", "Purpose"], ["kind", "Answers or embeddings"], ["day", "Day"], ["month", "Month"]];
+      + " Cost is counted only for models that have a price. Calls to a model without a price are listed as \"no price\", so a total is never mistaken for the whole bill."));
+    var GROUPS = [["provider", "Provider"], ["model", "Model"], ["department", "Department"], ["kb", "Knowledge base"], ["purpose", "Purpose"], ["kind", "Type of use"], ["day", "Day"], ["month", "Month"]];
     var group = selectOf(GROUPS, "provider", null, "Group by");
     group.id = "us_group";
     var dr = dateRange("us", function () { load(); }, false);
@@ -1780,14 +1982,14 @@
             h("td", { class: "nw", "data-label": "Tokens in" }, n(x.input_tokens)),
             h("td", { class: "nw", "data-label": "Tokens out" }, n(x.output_tokens)),
             h("td", { class: "nw", "data-label": "Cost" }, money(x.cost), " ", h("meter", { min: 0, max: maxCost, value: x.cost, "aria-label": "Share of cost" })),
-            h("td", { class: "nw", "data-label": "Unpriced" }, x.unpriced_calls ? h("span", { class: "pill off" }, x.unpriced_calls + " calls") : "–")));
+            h("td", { class: "nw", "data-label": "No price" }, x.unpriced_calls ? h("span", { class: "pill off" }, x.unpriced_calls + " calls") : "–")));
         });
         var t = r.totals;
         body.appendChild(h("tr", {}, h("td", {}, h("b", {}, "Total (" + r.scope + ")")), h("td", { class: "nw" }, n(t.calls)), h("td", { class: "nw" }, n(t.input_tokens)),
           h("td", { class: "nw" }, n(t.output_tokens)), h("td", { class: "nw" }, h("b", {}, money(t.cost))),
           h("td", { class: "nw" }, t.unpriced_calls ? h("span", { class: "pill bad" }, t.unpriced_calls + " unpriced") : "–")));
         list.replaceChildren(r.rows.length ? h("div", { class: "tablewrap" }, h("table", {}, h("thead", {}, h("tr", {},
-          ["Group", "Calls", "Tokens in", "Tokens out", "Cost", "Unpriced"].map(function (c) { return h("th", {}, c); }))), body)) : h("p", { class: "sub" }, "No usage in this period."),
+          ["Group", "Calls", "Tokens in", "Tokens out", "Cost", "No price"].map(function (c) { return h("th", {}, c); }))), body)) : h("p", { class: "sub" }, "No usage in this period."),
           t.unpriced_calls ? msg("bad", t.unpriced_calls + " successful calls have no price, so the cost above is a minimum. " + (isAdmin ? "Set prices below." : "Ask an Admin to set prices.")) : null);
       } catch (err) { if (me) list.replaceChildren(msg("bad", err.message)); }
     }
@@ -1809,7 +2011,7 @@
         var pout = h("input", { type: "number", id: "pr_out", step: "any", min: 0, placeholder: "USD per 1,000 output tokens", "aria-label": "Output price" });
         var out = h("div", { "aria-live": "polite" });
         priceBox.replaceChildren(h("h3", {}, "Prices"),
-          h("p", { class: "note" }, "Typed in by hand, per 1,000 tokens (check your provider's price page). Nothing is guessed: a model without a price shows its calls as unpriced."),
+          h("p", { class: "note" }, "Enter prices by hand, per 1,000 tokens (check your provider's price page). Nothing is guessed: a model without a price has its calls counted as \"no price\" and left out of the cost."),
           r.unpriced.length ? h("div", { class: "meta" }, "Used without a price: " + r.unpriced.map(function (u) { return u.provider + " / " + u.model + " (" + u.unpriced_calls + ")"; }).join(", ")) : null,
           r.prices.length ? h("div", { class: "tablewrap" }, h("table", {}, h("thead", {}, h("tr", {}, ["Provider type", "Model", "Input / 1k", "Output / 1k", ""].map(function (c) { return h("th", {}, c); }))), body)) : null,
           h("form", { class: "inline", onsubmit: async function (e) {
@@ -1841,7 +2043,7 @@
     var isAdmin = state.perm && state.perm.can_manage_all;
     main.appendChild(h("h2", {}, "Departments"));
     main.appendChild(h("p", { class: "sub" }, isAdmin
-      ? "Each department has its own conversation retention and topics the assistant must not discuss. Editors can change these for the departments they look after."
+      ? "Each department has its own period for keeping conversations, and its own list of topics the assistant must not discuss. Editors can change these for the departments they look after."
       : "The departments you look after. You can change the banned topics and how long conversations are kept."));
     var holder = h("div", {}, msg("wait", "Loading…"));
     main.appendChild(holder);
@@ -1888,10 +2090,10 @@
         h("div", { class: "meta" }, d.members + (d.members === 1 ? " person" : " people")),
         h("div", { class: "form" },
           isAdmin ? h("div", { class: "field" }, h("label", { class: "l", for: "dn" + d.id }, "Name"), name) : null,
-          h("div", { class: "field" }, h("label", { class: "l", for: "dr" + d.id }, "Keep conversations (days)"), days,
+          h("div", { class: "field" }, h("label", { class: "l", for: "dr" + d.id }, "Keep conversations for (days)"), days,
             h("div", { class: "help" }, "Between 1 and " + max + " (the global maximum).")),
           h("div", { class: "field wide" }, h("label", { class: "l", for: "dt" + d.id }, "Banned topics"), topics,
-            h("div", { class: "help" }, "The assistant politely declines these. One per line."))),
+            h("div", { class: "help" }, "Topics the assistant politely refuses to discuss. One per line."))),
         isAdmin ? h("div", { class: "field" }, h("div", { class: "l" }, "Editors"),
           picks.length ? picks.map(function (p) { return h("label", { class: "check", for: p[1].id }, p[1], p[0].name || p[0].email); })
                        : h("div", { class: "help" }, "No active Editors yet. Add a user with the Editor role first.")) : null,
@@ -1923,7 +2125,7 @@
         } catch (err) { if (me) result.replaceChildren(msg("bad", err.message)); }
       } },
         h("div", { class: "field" }, h("label", { class: "l", for: "nd_name" }, "Name"), nn),
-        h("div", { class: "field" }, h("label", { class: "l", for: "nd_days" }, "Keep conversations (days)"), nr),
+        h("div", { class: "field" }, h("label", { class: "l", for: "nd_days" }, "Keep conversations for (days)"), nr),
         h("div", {}, h("button", { class: "btn", type: "submit" }, "Add department"))));
       main.appendChild(result);
     }

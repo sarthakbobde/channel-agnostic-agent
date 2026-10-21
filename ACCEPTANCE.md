@@ -17,7 +17,7 @@ Date: 19 October 2026. Plan: `docs/development-plan-v3.md`, phases 0 to 11. Per-
 
 | # | Action | Who | Why it cannot be done here |
 |---|---|---|---|
-| 1 | Add credit to the Gemini account, or add another provider on the Providers tab (the fallback model then takes over automatically) | Account owner | The live system cannot answer without a working model |
+| 1 | Add credit to the Gemini account, or add another provider on the AI models tab (the fallback model then takes over automatically) | Account owner | The live system cannot answer without a working model |
 | 2 | Add Slack scopes `users:read` and `users:read.email`, then reinstall the app | Slack workspace admin | Without them people are unknown Viewers and see only Everyone documents |
 | 3 | Create the Azure Bot, enable the Teams channel, build and sideload the Teams app, point the endpoint at a public HTTPS address, then enter the credentials on the Channels tab and press Test | Azure owner, Teams admin | Needs a tenant (see `PLATFORM_RUNBOOK.md`) |
 | 4 | Create the Google Chat app in a Workspace, choose the audience, enter it and press Test | Workspace admin | Needs a Workspace |

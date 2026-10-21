@@ -62,7 +62,7 @@ the `.env` lines are ignored. More settings arrive with the features that use th
 
 ## Providers screen
 
-**Providers** controls which AI models answer questions. Everything here applies within a few seconds,
+**AI models** (earlier called Providers) controls which AI models answer questions. Everything here applies within a few seconds,
 with no restart.
 
 1. **Approved providers.** Nothing is approved until an Admin chooses. Only approved types can be
