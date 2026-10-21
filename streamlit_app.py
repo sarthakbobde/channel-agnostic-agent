@@ -9,7 +9,10 @@ load_dotenv()
 # Configuration
 BACKEND_URL = os.getenv("RAG_BACKEND_URL", "http://localhost:8000")
 
-st.set_page_config(page_title="Channel Agnostic Agent", page_icon="💬")
+st.set_page_config(page_title="Channel Agnostic Agent", page_icon="💬", layout="wide", initial_sidebar_state="auto")
+# Wide layout uses the screen; the chat itself stays at a comfortable reading width, and on a phone it fills the screen.
+st.markdown("<style>.block-container{max-width:1100px;padding-left:1rem;padding-right:1rem}"
+            "@media (max-width:640px){.block-container{padding-top:2.5rem}}</style>", unsafe_allow_html=True)
 st.title("Channel Agnostic Agent")
 
 # Check backend connection

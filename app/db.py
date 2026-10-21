@@ -3,6 +3,7 @@
 Holds channel settings, encrypted secrets, admins, global settings and the audit log.
 The schema is managed by Alembic migrations (app/migrations); Database runs them on start.
 """
+import threading
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from functools import lru_cache
@@ -401,6 +402,9 @@ class Alert(Base):
     audience: Mapped[str] = mapped_column(String(254), default="")        # '' = Admins only; an email = that person sees it too
 
 
+_MIGRATION_LOCK = threading.RLock()
+
+
 class Database:
     """`target` is a SQLite file path, ':memory:', or a SQLAlchemy URL such as
     postgresql+psycopg://user:pass@host/db."""
@@ -438,7 +442,7 @@ class Database:
 
         cfg = Config()
         cfg.set_main_option("script_location", str(MIGRATIONS_DIR))
-        with self.engine.begin() as conn:
+        with _MIGRATION_LOCK, self.engine.begin() as conn:      # Alembic's environment is process-wide: one migration at a time
             cfg.attributes["connection"] = conn
             tables = inspect(conn)
             if tables.has_table("channels") and not tables.has_table("alembic_version"):
@@ -451,7 +455,7 @@ class Database:
 
         cfg = Config()
         cfg.set_main_option("script_location", str(MIGRATIONS_DIR))
-        with self.engine.begin() as conn:
+        with _MIGRATION_LOCK, self.engine.begin() as conn:
             cfg.attributes["connection"] = conn
             command.downgrade(cfg, revision)
 
@@ -468,6 +472,15 @@ class Database:
             s.close()
 
 
+_db_lock = threading.Lock()
+
+
 @lru_cache(maxsize=1)
-def get_db() -> Database:
+def _open_db() -> Database:
     return Database(settings.database_url or settings.admin_db_path)
+
+
+def get_db() -> Database:
+    """The one shared database. The lock matters on the very first call: two threads must not both create and migrate it."""
+    with _db_lock:
+        return _open_db()
