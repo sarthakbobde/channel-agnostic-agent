@@ -1,21 +1,25 @@
 # User manual: configuring the Channel Agnostic Agent
 
-Everything below is set on the **admin page** (`/admin`) unless it says `.env`. Changes to providers, channels, prompts, guardrails and
+Everything below is set on the **admin page** (`/admin`) unless it says `.env`. The side menu is grouped in the order you set things up:
+**Home**; **Settings** (Channels, LLM providers, KB configuration, RAG settings, Guardrails); **User management** (Users, Groups,
+Departments); **Input** (Prompts, KB documents); **Monitoring** (Reports, Audit log, Conversations, Usage and cost). The ☰ button
+collapses the menu to icons. Each screen's title has an (i) that explains it. Changes to providers, channels, prompts, guardrails and
 settings apply within seconds, with no restart. Secrets (keys, tokens, passwords) are stored encrypted and are **never shown again**:
 to change one you type a new value, and leaving the box empty keeps the stored one.
 
 | I want to… | Go to | Section |
 |---|---|---|
-| Connect an AI model (Azure OpenAI, OpenAI, Anthropic, Gemini, Grok, DeepSeek, your own) | **AI models** | 2 |
-| Choose which model answers and which one takes over if it fails | **AI models → Step 3** | 2 |
-| Choose how documents are searched (search model, search storage) | **Knowledge bases** | 3, 4 |
-| Add documents and decide who can read them | **Knowledge bases → Part 1: Documents**, **Groups** | 5 |
-| Choose how documents are processed and searched | **Knowledge bases → Part 2: Configuration** | 3, 4, 5 |
-| Connect Slack, Teams, Google Chat, the Web UI | **Channels** | 6 |
-| Add people, departments, roles | **Users**, **Departments** | 7 |
-| Change the assistant's instructions, safety checks | **Prompts**, **Guardrails** | 8 |
-| Tune search, retention, the question limit | **Settings** | 9 |
-| Get alerts by webhook or email | **Settings → Alert notifications** | 10 |
+| See what is left to set up, this week's numbers, what needs attention | **Home** | 1 |
+| Connect an AI model (Azure OpenAI, OpenAI, Anthropic, Gemini, Grok, DeepSeek, your own) | **Settings → LLM providers** | 2 |
+| Choose which model answers and which one takes over if it fails | **LLM providers → Which model answers** | 2 |
+| Create a knowledge base; choose how its documents are split and searched | **Settings → KB configuration** | 3, 4, 5 |
+| Upload documents and decide who can read them | **Input → KB documents**, **User management → Groups** | 5 |
+| Connect Slack, Teams, Google Chat, the Web UI | **Settings → Channels** | 6 |
+| Add people, departments, roles | **User management → Users**, **Departments** | 7 |
+| Change the assistant's instructions, safety checks | **Input → Prompts**, **Settings → Guardrails** | 8 |
+| Tune search, retention, the question limit | **Settings → RAG settings** | 9 |
+| Get alerts by webhook or email | **RAG settings → Alert notifications** | 10 |
+| Your photo, theme (light or dark), accent colour, password | **Account** (your name, top right) | 1 |
 | Server addresses, ports, database | the `.env` file | 11 |
 
 Roles: **Admin** can do everything. **Editor** manages the knowledge bases, groups, prompts and usage of *their own departments*.
@@ -30,17 +34,29 @@ The first Admin is created at the command line: `python -m app.admin.cli create-
 (Docker: `docker compose exec rag python -m app.admin.cli create-admin you@yourcompany.com`).
 Forgot the password: `python -m app.admin.cli set-password you@yourcompany.com`.
 
+After signing in you land on **Home**: a greeting, a **Finish setting up** checklist (each step is checked against the real
+configuration and opens its screen), this week's numbers against last week's (questions searched, share answered from documents,
+guardrail blocks, AI cost), channel status, and **Needs your attention** (open alerts, channels that are on but not running,
+failing provider connections).
+
+Your name at the top right opens **Account**: your department, groups and the departments you edit; a profile photo (PNG, JPEG or
+WebP, cropped to a square); **Appearance** (Light, Dark or System theme, and an accent colour: Blue, Teal, Purple, Green, Orange,
+Pink, Graphite; saved in this browser only); and **Change password**. The moon/sun button in the top bar switches the theme too.
+
 ---
 
 ## 2. Model providers
 
-The assistant needs at least one AI model to answer. The order is always the same:
+The assistant needs at least one AI model to answer. The **LLM providers** screen has three parts:
 
-1. **Step 1. Choose which AI providers are allowed** (top of the **AI models** tab): tick the providers your data policy allows and click **Save choices**.
+1. **Allowed providers** (right-hand column): tick the providers your data policy allows and click **Save**.
    A type that is not ticked cannot be added.
-2. **Step 2. Connect a provider**: choose the type, give it a **Name**, fill the fields, and click **Test and add**. The key is tested against
-   the provider first; nothing is saved if the test fails. **Test only** tests without saving.
-3. **Step 3. Choose which model answers**: choose the **Preferred model**, an optional **Fallback model**, and the request timeout, then **Save model choice**.
+2. **Add connection** (button at the top): pick the provider by its logo, give the connection a **Name**, fill the fields, and click
+   **Test and add**. The key is tested against the provider first; nothing is saved if the test fails. **Test only** tests without saving.
+   Connections are listed under **Connections** with their status and a *Preferred* or *Fallback* badge; **Test** re-checks one and
+   **Edit** opens its settings (one at a time), where it can also be deleted.
+3. **Which model answers** (top of the screen): choose the connection and model for **Preferred** and, optionally, **Fallback**, and the
+   timeout, then **Save**.
 
 When the preferred model fails because of no credit (402), rate limiting (429), a server error (5xx) or a timeout, the answer comes from
 the fallback model and the Admin sees a banner. A request the provider rejects as invalid (other 4xx) is not retried elsewhere.
@@ -86,7 +102,7 @@ To use the same Azure resource for **document search** as well, see 3.4 (that ne
 | API key | `sk-…` | platform.openai.com → **API keys** → *Create new secret key* |
 | Endpoint | leave empty (uses `https://api.openai.com/v1`) | set only for a compatible proxy |
 
-The models available to the key are listed after the test; choose one in step 3.
+The models available to the key are listed after the test; choose one under **Which model answers**.
 
 ### 2.3 Anthropic (Claude)
 
@@ -136,14 +152,14 @@ For anything that speaks the OpenAI chat API: LiteLLM, vLLM, Ollama (`http://loc
 
 ## 3. Search models (how documents are turned into something searchable; technically "embedding models")
 
-Set per knowledge base: **Knowledge bases → Part 2: Configuration → Search model**. Use the **Test** button before saving. Changing the model
+Set per knowledge base: **KB configuration** → pick the knowledge base at the top → **Search model**. Use the **Test** button before saving. Changing the model
 re-processes every document, so it is done as a **rebuild** into a new version (section 5.4); the old version keeps answering until the new one is ready.
 
 | Model | Needs | Notes |
 |---|---|---|
 | **Local MiniLM (built in)** | nothing | The default. English-focused. Runs on this machine; about 80 MB is fetched the first time it is used |
 | **Local multilingual (e5-small)** | the one-time **Download** button on the form (about 129 MB) | Many languages. Runs on this machine, no key, no data leaves it |
-| **OpenAI** | an OpenAI or OpenAI-compatible provider already connected on the AI models tab | Pick that provider in **Key from AI models** (the key is reused, not copied), the model (`text-embedding-3-small`, `-large`, `ada-002`), and optionally a smaller vector size |
+| **OpenAI** | an OpenAI or OpenAI-compatible provider already connected on the LLM providers screen | Pick that provider in **Key from LLM Providers** (the key is reused, not copied), the model (`text-embedding-3-small`, `-large`, `ada-002`), and optionally a smaller vector size |
 | **Azure OpenAI** | an *embedding* deployment | see 3.4 |
 | **Cohere** | a Cohere key | Choose the model (`embed-multilingual-v3.0` and others) and enter the key |
 
@@ -175,30 +191,33 @@ The status of every store is checked every 5 minutes; an unreachable store shows
 
 ---
 
-## 5. Knowledge bases: two parts
+## 5. Knowledge bases: configuration and documents
 
-The **Knowledge bases** tab has two parts, chosen with the two buttons under the title.
+Two screens work on the same knowledge bases; both pick the knowledge base at the top, and the choice carries over between them.
 
-| | **Part 1: Documents** | **Part 2: Configuration** |
+| | **KB configuration** (Settings) | **KB documents** (Input) |
 |---|---|---|
-| For | Putting files in and deciding who may read them | Deciding how the documents are processed and searched |
-| You do | Upload, replace, re-index, move, delete; set each document's *Visible to* | Name and department; how to split documents; search model (section 3); search storage (section 4); preview of the split; rebuild and rollback; who may ask the knowledge base; delete the knowledge base; add a new one |
+| For | Deciding how the documents are processed and searched | Putting files in and deciding who may read them |
+| You do | Add a knowledge base; name, department, description; how to split documents; preview of the split; search model (section 3); search storage (section 4); rebuild and rollback; who may ask it; delete it | Upload (drag and drop, several files at once); search and filter the file list; set each document's *Visible to*; re-index, replace, move, delete |
 | Who | Admins and the Editors of that department | Admins and the Editors of that department |
 
-Start with Part 2 for a new knowledge base (add it and set it up), then use Part 1 to fill it.
+Start with KB configuration for a new knowledge base (add it and set it up), then use KB documents to fill it.
 
-### Part 1.1 Upload documents
-Open **Part 1: Documents** → the knowledge base → **Upload** (PDF, Word, PowerPoint, Markdown, text; the size limit is shown on the screen). The status goes
-*Pending → Indexing → Indexed*. If it says *Failed*, the reason is shown and the uploader and Admins get an alert; fix the file and **Replace** it.
-Other actions: **Replace**, **Re-index**, **Move** to another knowledge base, **Delete** (removes it from answers at once).
+### 5.1 Upload documents
+Open **KB documents**, pick the knowledge base, drop files on the upload area (or **browse**), choose **Who can see them**, and click **Upload**
+(PDF, Word, PowerPoint, Markdown, text; the size limit is shown on the screen). The status goes *Pending → Indexing → Indexed*. If it says
+*Failed*, the reason is shown under the file name and the uploader and Admins get an alert; fix the file and **Replace** it.
+Each row's **⋯** menu has **Re-index**, **Replace with a new version**, **Move to** another knowledge base and **Delete** (removes it from answers at once).
 
-### Part 1.2 Who can read a document
-For every document choose **Visible to**: *Everyone*, *Selected people* or *Selected groups* (**Groups** tab: a named list of people, owned by a department).
-Anyone asking is checked at question time, inside the search itself, so a change takes effect on the next question with no re-processing.
-A knowledge base can also be limited to certain groups (**Who can ask**, in Part 2); a person needs both that and the document's permission.
+### 5.2 Who can read a document
+Every document has **Visible to**: *Everyone*, *Selected groups* or *Selected people* (**Groups**: a named list of people, owned by a department).
+The **Visible to** column lists the groups or people by name; **Access** on a row changes it. Anyone asking is checked at question time,
+inside the search itself, so a change takes effect on the next question with no re-processing.
+A knowledge base can also be limited to certain groups (**Who can ask**, in KB configuration); a person needs both that and the document's permission.
 
-### Part 2.1 Create a knowledge base and choose how documents are split
-**Knowledge bases → Add a knowledge base** (bottom of **Part 2: Configuration**): a name and the department that owns it; then open it to set a description, the way documents are split, the **embedding model** and the **vector store** (sections 3 and 4).
+### 5.3 Create a knowledge base and choose how documents are split
+**KB configuration → Add knowledge base** (top right): a name and the department that owns it. The new knowledge base opens straight away;
+set its description, the way documents are split, the **search model** and the **search storage** (sections 3 and 4).
 
 | How to split documents | Use for |
 |---|---|
@@ -207,9 +226,9 @@ A knowledge base can also be limited to certain groups (**Who can ask**, in Part
 | By heading | Structured documents (Markdown, Word) |
 | Semantic | Long prose; splits where the topic changes |
 
-Use **Preview how documents are split** (upload a sample file) to see the passages before anything is processed. Tables and code blocks are kept whole.
+Use **Preview splitting** (upload a sample file) to see the passages before anything is processed. Tables and code blocks are kept whole.
 
-### Part 2.2 Rebuilds and rollback
+### 5.4 Rebuilds and rollback
 Changing how documents are split, the search model or the search storage: **Rebuild**. The estimate shows the cost for paid models. The new index is built beside the old one
 and switched on when ready; the last two ready versions are kept, so **Rollback** is one click.
 
@@ -217,7 +236,7 @@ and switched on when ready; the last two ready versions are kept, so **Rollback*
 
 ## 6. Channels
 
-**Channels** tab: one entry per platform. Enter the values, press **Test connection**, then switch **Enabled** on and **Save**. Saving starts the
+**Channels**: one card per platform, with its official logo and status. Enter the values, press **Test connection**, then switch **Enabled** on and **Save**. Saving starts the
 channel first; if the credentials are bad the error is shown and nothing changes, and a working channel is never stopped by a bad edit.
 On every channel, **Knowledge bases** chooses which knowledge bases it answers from (empty = the default one) and **Show sources** adds the file and page under each answer.
 
@@ -259,33 +278,36 @@ Only **Knowledge bases** to choose. People sign in with the email and password a
 (one per line; questions and answers about them are blocked). One department is the **default**: unknown senders belong to it.
 
 **Users**: add a person with their email (it must be on your company domain, `ADMIN_EMAIL_DOMAIN`), a role (Admin, Editor, Viewer) and a department.
-The screen shows a **one-time set-password link** (valid 24 hours) to give to that person; no email is sent. **New link** issues a fresh one (for a forgotten password).
+The screen shows a **one-time set-password link** (valid 24 hours) to give to that person; no email is sent. **Password link** issues a fresh one (for a forgotten password).
+The list has a search box and filters for role, department and status (including *No password yet*); your own row is marked **You**.
 To stop someone at once, set them to **Deactivated**: they are refused immediately in every channel.
 The system identifies a person in Slack, Teams and Google Chat by their email address.
 
-**Groups** (Groups tab): named lists of people used to restrict documents and knowledge bases (5.3).
+**Groups**: named lists of people used to restrict documents and knowledge bases (5.2). **Edit** opens one group at a time; its member list has a filter.
+**Departments** works the same way: each row shows its retention, banned topics and Editors, and **Edit** opens it.
 
 ---
 
 ## 8. Prompts and guardrails
 
-**Prompts**: the **base prompt** (Admin only) sets the assistant's rules; each department can add its own **department prompt** (its Editors and the Admins).
-Every change is a new version (*Draft → Published → Archived*). Use **Preview** with a test question before publishing, and **Rollback** to go back in one click.
+**Prompts**: the **base prompts** (Admin only) set the assistant's rules; each department can add its own **department prompt** (its Editors and the Admins).
+The list on the left shows every prompt with its status (*Live v3*, *Built-in*, *Not set*, *Draft*); the selected one opens on the right with three tabs:
+**Edit** (**Save and publish**, **Save draft**, **Discard edits**), **Test** (ask a question with the text in the editor, unsaved edits included) and
+**History** (every version, with **Open in editor**, **Publish** and **Roll back**). Every change is a new version (*Draft → Published → Archived*).
 The base prompt always comes first and a closing line keeps its rules in force, so a department prompt cannot override them.
 
-**Guardrails** (Admin) is laid out as cards, one per check, in the order things happen:
-- **The master switch** at the top turns every check on or off. While it is off, a warning says nothing is being checked.
-- **Checks on the question** (they run first; a blocked question never reaches the AI model): *Question length*; *Prompt injection* (how strict: Low, Medium, High, plus phrases to always block); *Toxic language* (how strict, extra words, words that are fine); *Banned topics* (the topics are set per department); *Mask personal data* (tick which kinds: emails, phones, card numbers and so on; optionally names).
-- **Checks on the answer** (they run before anyone sees it): *Check answers before sending*; *Redact personal data in answers* (with a list of values that may stay, for example `hr@company.com`); *Protect the instructions* (stops an answer that repeats the hidden instructions).
-- **When something is blocked**: the message people see, with a live preview.
-- Each check has its own On/Off switch; its fine-tuning appears only while it is on. Lists work like tags: type, press Enter, click the × to remove.
-- The bar at the bottom shows how many changes are unsaved. **Save changes** applies them within seconds; **Discard changes** goes back.
+**Guardrails** (Admin): the master switch at the top turns every check on or off (while it is off, a warning says nothing is being checked).
+Below it, two columns, one row per check with its own switch; a check's settings appear underneath while it is on:
+- **Question checks** (left; they run first, so a blocked question never reaches the AI model): *Question length*; *Prompt injection* (strictness Low, Medium, High, plus phrases to always block); *Toxic language* (strictness, extra words, words that are fine); *Banned topics* (the topics are set per department); *Mask personal data* (tick which kinds: emails, phones, card numbers and so on; optionally names). Toxic language and banned topics are marked *Also checks answers*.
+- **Answer checks** (right; they run before anyone sees the answer): *Check answers*; *Redact personal data* (with values that may stay, for example `hr@company.com`); *Protect instructions* (stops an answer that repeats the hidden instructions).
+- **Blocked reply** (right, below): the message people see, with a live preview.
+- Lists work like tags: type, press Enter, click the × to remove. The bar at the bottom shows how many changes are unsaved; **Save** applies them within seconds and **Discard** goes back.
 
 The injection and toxicity checks are rules, not an AI model: they catch known wording, not every paraphrase or language.
 
 ---
 
-## 9. Settings (global)
+## 9. RAG settings (global)
 
 | Setting | Default | Meaning |
 |---|---|---|
@@ -307,13 +329,13 @@ The injection and toxicity checks are rules, not an AI model: they catch known w
 Alerts always appear as banners at the top of the admin page: fallback model used, provider failing (for example no credit), a channel down,
 a document that failed to index (also shown to the uploader), a search storage unreachable. They clear themselves when the problem is fixed.
 
-To also receive each **new** alert elsewhere: **Settings → Alert notifications** (off by default).
+To also receive each **new** alert elsewhere: **RAG settings → Alert notifications** (off by default).
 
 | Field | Value |
 |---|---|
-| Send to a webhook / Webhook address | A Slack-compatible incoming-webhook address, `https://…` only (stored encrypted) |
-| Send by email | Mail server, port, user name, password (encrypted), From, To (comma-separated) |
 | Send | *Warnings and errors* or *Errors only* |
+| Webhook switch / Webhook URL | A Slack-compatible incoming-webhook address, `https://…` only (stored encrypted) |
+| Email switch | Mail server, port, user name, password (encrypted), From, To (comma-separated) |
 
 Use **Send a test** to check. A failing notification never stops the banner.
 
@@ -327,8 +349,8 @@ Edited on the server, then restart. Never commit this file.
 |---|---|---|
 | `APP_SECRET_KEY` | **yes** | Master key that encrypts every stored secret. Generate: `python -m app.secretstore generate`. Back it up elsewhere; lose it and every credential must be re-entered |
 | `CHAT_API_TOKEN` | **yes** | Token for the chat API and the Streamlit page. Generate: `python -c "import secrets; print(secrets.token_urlsafe(32))"` |
-| `NINEROUTER_BASE_URL`, `NINEROUTER_API_KEY`, `LLM_MODEL` | first start only | Seeds the first provider; afterwards use the AI models tab |
-| `SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN`, `TEAMS_*`, `GCHAT_*` | first start only | Seed the channels once; afterwards use the Channels tab |
+| `NINEROUTER_BASE_URL`, `NINEROUTER_API_KEY`, `LLM_MODEL` | first start only | Seeds the first provider; afterwards use the LLM providers screen |
+| `SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN`, `TEAMS_*`, `GCHAT_*` | first start only | Seed the channels once; afterwards use the Channels screen |
 | `ADMIN_EMAIL_DOMAIN` | if not `sysfore.com` | Domain people's emails must be on |
 | `ADMIN_DB_PATH` / `DATABASE_URL` | optional | SQLite file location, or a PostgreSQL address (`postgresql+psycopg://user:pass@host:5432/db`) |
 | `CHROMA_PATH`, `DOCS_DIR`, `CHAT_DIR`, `MODELS_DIR` | optional | Where the vector files, uploaded documents and downloaded models live |
@@ -350,10 +372,10 @@ Edited on the server, then restart. Never commit this file.
 | Symptom | Likely cause and fix |
 |---|---|
 | The assistant replies "Sorry, something went wrong" | The model failed. Check the banner: no credit, a rejected key, or both models down. Add credit or another provider |
-| "X is not an approved provider" | Tick it in step 1 of the **AI models** tab and click **Save choices** |
+| "X is not an approved provider" | Tick it under **Allowed providers** on the **LLM providers** screen and click **Save** |
 | Azure test fails | See the table in 2.1 |
 | "I couldn't find this in the knowledge base" | No passage scored above the minimum, the documents are not indexed, or the asker is not allowed to read them |
 | A person sees fewer documents than expected | Their email was not read (Slack scopes, 6.1) so they are an unknown Viewer, or the document is limited to a group they are not in |
-| A document shows *Failed* | Open it to read the reason (empty file, unsupported type, embedding service down), fix it and **Replace** |
+| A document shows *Failed* | The reason is shown under its name in **KB documents** (empty file, unsupported type, embedding service down); fix it and use **⋯ → Replace** |
 | Date or filter shows nothing | Choose **Any time**, or widen the range |
 | Admin page says it is only available from this machine | By design; see `DEPLOYMENT.md` to allow Editors in over HTTPS |

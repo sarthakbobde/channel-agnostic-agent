@@ -4,10 +4,12 @@ import logging
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel
+from sqlalchemy import select
 
 from app.admin.api import AdminContext, Session, admin_session, get_ctx
 from app.admin.kbs_api import _can
 from app.config import settings
+from app.db import DocumentAccess, Group, User
 from app.knowledge import access, documents, kbs
 
 log = logging.getLogger(__name__)
@@ -59,10 +61,36 @@ def _public(d: dict) -> dict:
     return {k: v for k, v in d.items() if k != "doc_key"}
 
 
+def _access_names(ctx: AdminContext, docs: list[dict]) -> dict[int, list[str]]:
+    """Who each restricted document is visible to, by name (groups) or name/email (people), for the document list."""
+    kind_for = {"groups": "group", "people": "user"}
+    restricted = {d["id"]: kind_for.get(d["visibility"]) for d in docs if d["visibility"] in kind_for}
+    if not restricted:
+        return {}
+    with ctx.db.session() as s:
+        rows = s.execute(select(DocumentAccess.document_id, DocumentAccess.kind, DocumentAccess.ref_id)
+                         .where(DocumentAccess.document_id.in_(list(restricted)))).all()
+        rows = [r for r in rows if restricted[r[0]] == r[1]]          # only the kind the document is set to
+        gids = {ref for _, kind, ref in rows if kind == "group"}
+        uids = {ref for _, kind, ref in rows if kind == "user"}
+        gname = dict(s.execute(select(Group.id, Group.name).where(Group.id.in_(gids))).all()) if gids else {}
+        uname = {i: (n or e) for i, n, e in s.execute(select(User.id, User.name, User.email).where(User.id.in_(uids))).all()} if uids else {}
+    out: dict[int, list[str]] = {}
+    for doc_id, kind, ref in rows:
+        name = gname.get(ref) if kind == "group" else uname.get(ref)
+        if name:
+            out.setdefault(doc_id, []).append(name)
+    return {k: sorted(v, key=str.lower) for k, v in out.items()}
+
+
 @router.get("/kbs/{kb_id}/documents")
 def list_documents(kb_id: int, sess: Session = Depends(admin_session), ctx: AdminContext = Depends(get_ctx)):
     _kb_or_404(ctx, sess, kb_id)
-    return {"documents": [_public(d) for d in documents.list_for_kb(ctx.db, kb_id)],
+    docs = [_public(d) for d in documents.list_for_kb(ctx.db, kb_id)]
+    names = _access_names(ctx, docs)
+    for d in docs:
+        d["access_names"] = names.get(d["id"], [])
+    return {"documents": docs,
             "max_upload_mb": settings.max_upload_mb,
             "types": sorted(documents.parsers.SUPPORTED)}
 

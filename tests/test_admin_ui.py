@@ -54,14 +54,14 @@ def test_javascript_never_uses_innerhtml():
 
 def test_settings_screen_reuses_the_generic_spec_form():
     js = (Path(ui.ROOT) / "admin.js").read_text(encoding="utf-8")
-    assert '["settings", "Settings"]' in js and "viewSettings" in js and '"/settings"' in js
+    assert '["settings", "RAG settings"]' in js and "viewSettings" in js and '"/settings"' in js
     # one renderer for every spec-driven screen: channels and settings both build their form with it
     assert js.count("specForm(") >= 3 and "function specField(" in js and 'f.kind === "number"' in js
 
 
 def test_providers_screen_and_alert_banners_exist():
     js = (Path(ui.ROOT) / "admin.js").read_text(encoding="utf-8")
-    assert '["providers", "AI models"]' in js and "viewProviders" in js and "loadAlerts" in js
+    assert '["providers", "LLM providers"]' in js and "viewProviders" in js and "loadAlerts" in js
     for path in ('"/providers"', '"/providers/approval"', '"/model-settings"', '"/me/alerts"'):
         assert path in js
-    assert "LLM provider" not in js            # no longer shown as 'upcoming'
+    assert "upcoming" not in js.lower()        # a real screen now, no longer listed as upcoming

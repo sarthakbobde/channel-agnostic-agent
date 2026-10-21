@@ -37,14 +37,14 @@ source of truth, so deleting a channel in the page is not undone by a restart.
 | **Delete** | Two-step: click, then confirm within 5 seconds. Stops the channel and removes its settings and secrets. |
 | **Audit log** | Who did what and when. Secret values are never recorded. |
 | **Admins** | Add or remove admins. You cannot remove yourself or the last admin. |
-| **Account** | Change your password. This signs out every other session. |
+| **Account** | Your name at the top right. Profile photo, department and groups, theme and accent colour, and your password (changing it signs out every other session). |
 
 Teams and Google Chat show the endpoint path to enter at the provider. They need a public HTTPS
 address (for example `.\start.ps1 -Tunnel`); Slack uses Socket Mode and needs none.
 
-## Settings screen
+## RAG settings screen
 
-**Settings** holds values the assistant reads while it runs. Changes apply within a few seconds, with
+**RAG settings** holds values the assistant reads while it runs. Changes apply within a few seconds, with
 no restart. Each field shows its allowed range and what it does; a value outside the range is refused
 with a message and nothing changes. Every change is written to the audit log (old value to new value).
 
@@ -60,9 +60,11 @@ On first start these are copied from the matching `.env` lines (`TOP_K`, `SCORE_
 `MEMORY_MAX_TURNS`, `CHUNK_SIZE`, `CHUNK_OVERLAP`); after that the database is the source of truth and
 the `.env` lines are ignored. More settings arrive with the features that use them.
 
-## Providers screen
+## LLM providers screen
 
-**AI models** (earlier called Providers) controls which AI models answer questions. Everything here applies within a few seconds,
+**LLM providers** (earlier called AI models, and before that Providers) controls which AI models answer questions.
+The screen shows **Which model answers** at the top, the **Connections** list below it, **Allowed providers** in the right-hand column,
+and **Add connection** at the top right. Everything here applies within a few seconds,
 with no restart.
 
 1. **Approved providers.** Nothing is approved until an Admin chooses. Only approved types can be

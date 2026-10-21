@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from functools import lru_cache
 from pathlib import Path
 
-from sqlalchemy import (JSON, Boolean, DateTime, Float, Integer, String, Text, UniqueConstraint,
+from sqlalchemy import (JSON, Boolean, DateTime, Float, Integer, LargeBinary, String, Text, UniqueConstraint,
                         create_engine, event, inspect)
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -71,6 +71,9 @@ class User(Base):
     password_hash: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
     last_sign_in: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Profile photo (PNG, JPEG or WebP, at most 512 KB). Deferred so listing users never loads the bytes.
+    avatar: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True, deferred=True)
+    avatar_type: Mapped[str] = mapped_column(String(32), default="")
 
 
 class Department(Base):

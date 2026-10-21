@@ -108,10 +108,12 @@ Web chat page (optional, a separate process): `streamlit run streamlit_app.py` t
 
 ## 3. First use, on the admin page (<http://127.0.0.1:8000/admin>)
 
-1. **AI models**: allow a provider (step 1), connect it with your key (step 2, tested before it is saved), then choose the preferred and, if you have one, a fallback model (step 3).
+**Home** shows a *Finish setting up* checklist that follows these steps and ticks each one off as it is done.
+
+1. **LLM providers**: tick a provider under *Allowed providers*, use **Add connection** with your key (tested before it is saved), then choose the preferred and, if you have one, a fallback model under *Which model answers*.
 2. **Departments** and **Users**: add people; share the one-time set-password link shown on screen with each person.
-3. **Knowledge bases**: add one and set it up (Part 2: Configuration), then upload documents (Part 1: Documents), wait for *Indexed*, and set who may see each document.
-4. **Channels**: enter and test the Slack credentials (Teams and Google Chat: see `PLATFORM_RUNBOOK.md`), bind a knowledge base, switch on.
+3. **KB configuration**: add a knowledge base and set it up; then **KB documents**: upload files, wait for *Indexed*, and set who may see each one.
+4. **Channels**: enter and test the Slack credentials (Teams and Google Chat: see `PLATFORM_RUNBOOK.md`), choose its knowledge bases, switch on.
 5. **Prompts** and **Guardrails**: review the defaults. **Usage and cost**, **Reports** and **Audit log** show what happened.
 
 ## 4. Run it in Docker instead

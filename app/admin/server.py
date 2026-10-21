@@ -28,10 +28,11 @@ from app.admin.ui import router as ui_router
 from app.admin.reports_api import router as reports_router
 from app.admin.usage_api import router as usage_router
 from app.admin.users_api import router as users_router
+from app.admin.profile_api import router as profile_router
 from app.config import settings
 
 log = logging.getLogger(__name__)
-ROUTERS = (admin_router, providers_router, users_router, departments_router, kbs_router, documents_router, groups_router, prompts_router, guardrails_router, conversations_router, usage_router, alerts_router, reports_router, ui_router)
+ROUTERS = (admin_router, providers_router, users_router, departments_router, kbs_router, documents_router, groups_router, prompts_router, guardrails_router, conversations_router, usage_router, alerts_router, reports_router, profile_router, ui_router)
 
 
 def include_admin(app: FastAPI) -> None:
