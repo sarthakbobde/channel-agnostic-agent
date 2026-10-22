@@ -211,6 +211,10 @@
     chevron: "M6 9l6 6 6-6",
     camera: "M4 7h3l2-3h6l2 3h3v13H4zM12 17a4 4 0 1 0 0-8 4 4 0 0 0 0 8z",
     trash: "M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3",
+    more: "M5 12a1 1 0 1 0 2 0 1 1 0 1 0-2 0zM11 12a1 1 0 1 0 2 0 1 1 0 1 0-2 0zM17 12a1 1 0 1 0 2 0 1 1 0 1 0-2 0z",
+    refresh: "M20 11a8 8 0 0 0-14.9-3.9L3 9M3 4v5h5M4 13a8 8 0 0 0 14.9 3.9L21 15M21 20v-5h-5",
+    upload: "M12 16V4M7 9l5-5 5 5M4 20h16",
+    folder: "M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z",
     star: "M12 3l2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.4 2.9 1-6.1-4.4-4.3 6.1-.9z",
     backup: "M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6zM9 12.5l2 2 4-4.5",
     search: "M11 18a7 7 0 1 0 0-14 7 7 0 0 0 0 14zM21 21l-5-5",
@@ -1432,12 +1436,39 @@
     return h("div", { class: "vis" }, h("span", { class: "vis-kind" }, d.visibility === "groups" ? "Groups" : "People"),
       names.length ? h("div", { class: "chips-static" }, shown) : h("span", { class: "meta bad" }, "Nobody selected"));
   }
-  // A small "more actions" menu (details/summary: keyboard friendly, no script positioning).
+  // A "more actions" menu. It opens as a browser popover, so it floats above the page and no scrolling table can clip it;
+  // it closes on a click outside or Esc. CSS anchors it under its button where the browser supports anchor positioning.
+  var menuSeq = 0;
   function moreMenu(label, items) {
-    var menu = h("details", { class: "menu" }, h("summary", { class: "btn small", "aria-label": label, title: label }, "⋯"));
-    menu.appendChild(h("div", { class: "menu-list", role: "menu" }, items.filter(Boolean)));
-    menu.addEventListener("click", function (e) { if (e.target.closest(".menu-list button")) setTimeout(function () { menu.open = false; }, 0); });
-    return menu;
+    var id = "menu" + (++menuSeq);
+    var pop = h("div", { class: "menu-pop", id: id, popover: "auto", role: "menu", "aria-label": label }, items.filter(Boolean));
+    var btn = h("button", { type: "button", class: "btn small menu-btn", popovertarget: id, "aria-haspopup": "menu", "aria-expanded": "false", "aria-label": label, title: label }, icon("more", 18));
+    pop.addEventListener("toggle", function (e) {
+      var open = e.newState === "open";
+      btn.classList.toggle("anchor", open);                     // only the open menu's button is the anchor
+      btn.setAttribute("aria-expanded", String(open));
+    });
+    pop.addEventListener("click", function (e) {
+      var b = e.target.closest("button");
+      if (b && !b.classList.contains("arming")) pop.hidePopover();
+    });
+    return h("span", { class: "menu" }, btn, pop);
+  }
+  function menuItem(iconName, text, onClick, sub) {
+    return h("button", { type: "button", class: "menu-item", role: "menuitem", onclick: onClick }, icon(iconName, 16),
+      h("span", { class: "menu-text" }, text, sub ? h("span", { class: "meta" }, sub) : null));
+  }
+  // A destructive menu item that needs a second click within 5 seconds (no browser dialogs).
+  function menuDanger(text, armedText, action) {
+    var timer = null;
+    var label = h("span", { class: "menu-text" }, text);
+    var b = h("button", { type: "button", class: "menu-item danger", role: "menuitem" }, icon("trash", 16), label);
+    b.addEventListener("click", function () {
+      if (timer) { clearTimeout(timer); timer = null; b.classList.remove("arming"); action(); return; }
+      b.classList.add("arming"); label.textContent = armedText;
+      timer = setTimeout(function () { label.textContent = text; b.classList.remove("arming"); timer = null; }, 5000);
+    });
+    return b;
   }
 
   async function viewKbDocs(main) {
@@ -1551,12 +1582,16 @@
       } });
       var others = data.kbs.filter(function (x) { return x.id !== k.id; });
       var menu = moreMenu("More actions for " + d.name, [
-        h("button", { type: "button", role: "menuitem", onclick: function () { act(api("POST", "/documents/" + d.id + "/reindex", {}), "Re-indexing " + d.name + "."); } }, d.status === "Failed" ? "Retry indexing" : "Re-index"),
-        h("button", { type: "button", role: "menuitem", onclick: function () { replaceInput.click(); } }, "Replace with a new version…"),
-        others.length ? h("div", { class: "menu-sub" }, h("span", { class: "meta" }, "Move to"), others.map(function (x) {
-          return h("button", { type: "button", role: "menuitem", onclick: function () { act(api("POST", "/documents/" + d.id + "/move", { kb_id: x.id }), "Moved " + d.name + " to " + x.name + "."); } }, x.name);
-        })) : null,
-        confirmButton("Delete", "Confirm delete", function () { act(api("DELETE", "/documents/" + d.id), "Deleted " + d.name + "."); }, true)]);
+        menuItem("refresh", d.status === "Failed" ? "Retry indexing" : "Re-index", function () { act(api("POST", "/documents/" + d.id + "/reindex", {}), "Re-indexing " + d.name + "."); },
+          "Split and index this file again"),
+        menuItem("upload", "Replace with a new version", function () { replaceInput.click(); }, "Keeps its access settings"),
+        others.length ? h("div", { class: "menu-sep", role: "separator" }) : null,
+        others.length ? h("div", { class: "menu-head" }, "Move to") : null,
+        others.map(function (x) {
+          return menuItem("folder", x.name, function () { act(api("POST", "/documents/" + d.id + "/move", { kb_id: x.id }), "Moved " + d.name + " to " + x.name + "."); });
+        }),
+        h("div", { class: "menu-sep", role: "separator" }),
+        menuDanger("Delete file", "Click again to delete", function () { act(api("DELETE", "/documents/" + d.id), "Deleted " + d.name + "."); })]);
       return h("tr", { class: openAccessId === d.id ? "is-open" : "" },
         h("td", { class: "wrap", "data-label": "File" }, h("div", { class: "file" }, fileIcon(d.name),
           h("div", { class: "row-text" }, h("b", { class: "fname", title: d.name }, d.name),
@@ -1934,20 +1969,41 @@
           await load(msg("ok", "Deleted " + r.name + ": " + r.documents_removed + " documents and " + r.chunks_removed + " passages removed" + (r.channels_unbound.length ? ", unbound from " + r.channels_unbound.join(", ") : "") + "."));
         } catch (err) { if (me) out.replaceChildren(msg("bad", err.message)); }
       }, !k.is_default);
-      return h("section", { class: "panel" },
-        kbHead(k),
-        h("h4", { class: "formhead" }, "General"),
-        h("div", { class: "form" },
-          h("div", { class: "field" }, fieldLabel("kn" + k.id, "Name"), name),
-          h("div", { class: "field" }, fieldLabel("kp" + k.id, "Owning department"), dept),
-          h("div", { class: "field wide" }, fieldLabel("kd" + k.id, "Description"), desc)),
-        h("h4", { class: "formhead" }, "Splitting", tip("How documents are cut into passages. Leave size and overlap empty to use the defaults from Settings. Changes apply after a rebuild.")),
-        h("div", { class: "form" },
-          h("div", { class: "field wide" }, fieldLabel("kst" + k.id, "Strategy"), strat, stratHelp),
-          h("div", { class: "field" }, fieldLabel("ks" + k.id, "Passage size (characters)", "For per-page, by-heading and by-meaning splitting, this is the largest a passage can be."), size),
-          h("div", { class: "field" }, fieldLabel("ko" + k.id, "Overlap (characters)"), overlap)),
-        h("div", { class: "actions" }, save, del), out,
-        h("div", { class: "folds" }, previewPanel(k, data, strat, size, overlap), embeddingPanel(k, data), storePanel(k, data), indexPanel(k), askPanel(k)));
+      // one tab per job, so the card stays short however much each part grows
+      var saveSplit = h("button", { type: "button", class: "btn primary", onclick: function () { save.click(); } }, "Save");
+      var parts = { preview: foldToPane(previewPanel(k, data, strat, size, overlap)), search: foldToPane(embeddingPanel(k, data)),
+                    storage: foldToPane(storePanel(k, data)), rebuild: foldToPane(indexPanel(k)), access: foldToPane(askPanel(k)) };
+      var panes = {
+        general: h("div", { class: "pane" },
+          h("div", { class: "form" },
+            h("div", { class: "field" }, fieldLabel("kn" + k.id, "Name"), name),
+            h("div", { class: "field" }, fieldLabel("kp" + k.id, "Owning department"), dept),
+            h("div", { class: "field wide" }, fieldLabel("kd" + k.id, "Description"), desc)),
+          h("div", { class: "actions" }, save, del)),
+        splitting: h("div", { class: "pane" },
+          h("p", { class: "help" }, "How documents are cut into passages. Leave size and overlap empty to use the defaults from RAG settings. Changes apply after a rebuild."),
+          h("div", { class: "form" },
+            h("div", { class: "field wide" }, fieldLabel("kst" + k.id, "Strategy"), strat, stratHelp),
+            h("div", { class: "field" }, fieldLabel("ks" + k.id, "Passage size (characters)", "For per-page, by-heading and by-meaning splitting, this is the largest a passage can be."), size),
+            h("div", { class: "field" }, fieldLabel("ko" + k.id, "Overlap (characters)"), overlap)),
+          h("div", { class: "actions" }, saveSplit),
+          h("div", { class: "subpanel" }, parts.preview.pane)),
+        search: parts.search.pane, storage: parts.storage.pane, rebuild: parts.rebuild.pane, access: parts.access.pane
+      };
+      var tabs = tabBar([["general", "General"], ["splitting", "Splitting"], ["search", "Search model"], ["storage", "Search storage"],
+        ["rebuild", ["Rebuild", parts.rebuild.flag]], ["access", "Who can ask"]], panes, state.kbTab || "general");
+      tabs.el.addEventListener("click", function (e) { var b = e.target.closest("button[role=tab]"); if (b) state.kbTab = Object.keys(panes)[Array.prototype.indexOf.call(tabs.el.children, b)]; });
+      return h("section", { class: "panel kb-card" }, kbHead(k), out, tabs.el,
+        panes.general, panes.splitting, panes.search, panes.storage, panes.rebuild, panes.access);
+    }
+
+    // The sub-sections were built as collapsible <details>; inside a tab they become a plain pane with a heading.
+    function foldToPane(d) {
+      var sum = d.firstChild;
+      var flag = sum.querySelector(".fold-flag");
+      var pane = h("div", { class: "pane" }, h("div", { class: "pane-head" }, h("h4", {}, sum.querySelector(".fold-title").textContent, sum.querySelector(".tip"))));
+      while (sum.nextSibling) pane.appendChild(sum.nextSibling);
+      return { pane: pane, flag: flag };
     }
 
     function kbHead(k) {
