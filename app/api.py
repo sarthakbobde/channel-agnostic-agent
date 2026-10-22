@@ -137,6 +137,15 @@ def _audit(actor: str, action: str, target: str, detail: str = "") -> None:
         log.warning("could not audit %s", action, exc_info=True)
 
 
+PROVIDER_REFUSED_REPLY = "The AI service refused to process this message. Please rephrase your question and try again."
+
+
+def _refused_by_provider(e: BaseException) -> bool:
+    """True when the model host (for example Azure OpenAI) rejected the prompt with its own content filter."""
+    text = str(e).lower()
+    return "content_filter" in text or "content management policy" in text
+
+
 def _conv(caller: Caller, conv_id: str) -> str:
     """A person's conversations live under their own prefix, so nobody can read or delete another's."""
     return caller.prefix + conv_id
@@ -163,6 +172,9 @@ def chat(request: MessageRequest, caller: Caller = Depends(require_chat_caller))
             query=meta.get("query", ""),
         )
     except Exception as e:
+        if _refused_by_provider(e):
+            log.warning("the AI provider's own content filter refused the request: %s", e)
+            return ChatResponse(answer=PROVIDER_REFUSED_REPLY, sources=[], searched=False, query="")
         log.error(f"Chat error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Internal error")
     finally:

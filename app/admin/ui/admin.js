@@ -536,7 +536,7 @@
         control = h("label", { class: "check", for: id }, inp, "On");
       } else if (f.kind === "choice") {
         inp = h("select", { id: id }, (f.choices || []).map(function (c) { return h("option", { value: c, text: c }); }));
-        inp.value = f.value || "";
+        if (f.value != null && (f.choices || []).indexOf(f.value) >= 0) inp.value = f.value;      // no saved value: keep the first choice selected, never a blank box
         control = inp;
       } else if (f.kind === "number") {
         inp = h("input", { type: "number", id: id, value: f.value, min: f.min, max: f.max, step: f.step, inputmode: "decimal" });
@@ -2327,7 +2327,7 @@
       }
 
       // ---- one row per check: name and switch on one line, its settings underneath while it is on ---------
-      function card(title, scope, what, enabledName, body) {
+      function card(title, scope, what, enabledName, body, needs) {         // needs: another switch this check only works under
         var name = h("div", { class: "gr-name" }, h("h4", {}, title, tip(what)),
           scope === "Questions and answers" ? h("span", { class: "pill off" }, "Also checks answers") : null);
         if (!enabledName) {                                   // a check that is always on: no switch, only its setting
@@ -2338,7 +2338,14 @@
         var detail = h("div", { class: "gr-body" });
         detail.appendChild(body);
         var el = h("div", { class: "gr-row" }, h("div", { class: "gr-head" }, name, tog), detail);
-        redraw.push(function () { var on = !!cur[enabledName]; detail.hidden = !on; el.classList.toggle("is-off", !on); });
+        var needNote = needs ? h("div", { class: "meta need-note", hidden: true }, "Not applied while “Check answers” is off. Switch that on for this to work.") : null;
+        if (needNote) el.appendChild(needNote);
+        redraw.push(function () {
+          var on = !!cur[enabledName]; detail.hidden = !on; el.classList.toggle("is-off", !on);
+          var blocked = !!needs && !cur[needs];
+          el.classList.toggle("needs-off", blocked);
+          if (needNote) needNote.hidden = !blocked;
+        });
         redraw[redraw.length - 1]();
         return el;
       }
@@ -2367,10 +2374,10 @@
         card("Mask personal data", "Questions", "Replaces personal data with a label such as <EMAIL_ADDRESS> before the question reaches the AI model, the history or any log.", "mask_enabled",
           stack(typeChecks(), sub2("mask_names", "Also mask names", "Off by default, because names are often needed to answer. Detection is approximate."))));
       var answerCards = h("div", { class: "gr-list" },
-        card("Check answers", "Answers", "The finished answer is checked for banned topics and citations before anyone sees it.", "output_checks_enabled", hint("Failed answers are replaced by the blocked reply.")),
+        card("Check answers", "Answers", "The finished answer is checked before anyone sees it. This is the master switch for all three answer checks: if it is off, redaction and instruction protection below are not applied either.", "output_checks_enabled", hint("Failed answers are replaced by the blocked reply.")),
         card("Redact personal data", "Answers", "Personal data found in an answer is replaced, except values you allow.", "output_redaction",
-          tags("allow_list", "Never redact", "Exact values that may appear in answers, for example hr@company.com.", "name@company.com")),
-        card("Protect instructions", "Answers", "A hidden marker is added to the instructions; an answer that repeats it is replaced by the blocked reply.", "leak_check_enabled", hint("Stops answers that leak the hidden instructions.")));
+          tags("allow_list", "Never redact", "Exact values that may appear in answers, for example hr@company.com.", "name@company.com"), "output_checks_enabled"),
+        card("Protect instructions", "Answers", "A hidden marker is added to the instructions; an answer that repeats it is replaced by the blocked reply.", "leak_check_enabled", hint("Stops answers that leak the hidden instructions."), "output_checks_enabled"));
 
       // blocked reply with a preview
       var reply = h("textarea", { id: id(), rows: "3", "aria-label": "Blocked reply text", oninput: function () { set("blocked_reply", reply.value); } });
@@ -2690,7 +2697,7 @@
           return h("div", { class: "row" + (open ? " open" : "") },
             h("div", { class: "row-main" }, h("span", { class: "vis-icon", "aria-hidden": "true" }, icon("departments", 18)),
               h("div", { class: "row-text" }, h("b", {}, d.name, d.is_default ? h("span", { class: "pill ok" }, "Default") : null),
-                h("span", { class: "meta" }, "Keeps conversations " + d.retention_days + " days · " + topics + (topics === 1 ? " banned topic" : " banned topics")
+                h("span", { class: "meta" }, "Keeps conversations " + d.retention_days + " days · " + topicCount + (topicCount === 1 ? " banned topic" : " banned topics")
                   + " · " + (eds.length ? "Editors: " + eds.join(", ") : "No editors"))),
               h("div", { class: "row-side" }, h("span", { class: "pill off" }, d.members + (d.members === 1 ? " person" : " people")),
                 h("button", { type: "button", class: "btn small", "aria-expanded": String(open), onclick: function () { openId = open ? null : d.id; load(); } }, icon("edit", 14), open ? "Close" : "Edit"))),

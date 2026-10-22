@@ -40,7 +40,7 @@ SPEC = (
      "help": "How many of the best-matching passages from your documents are given to the AI model with each question. More gives it more to work with but costs more. Default 5."},
     {"name": "score_threshold", "label": "How closely a passage must match", "min": 0.0, "max": 1.0, "step": 0.01, "integer": False,
      "help": "From 0 to 1. Passages that match less well than this are ignored. If nothing matches well enough, the assistant says it could not find the answer. Default 0.35."},
-    {"name": "recent_turns", "label": "Recent messages the AI model remembers", "min": 1, "max": 50, "step": 1, "integer": True,
+    {"name": "recent_turns", "label": "Recent question-and-answer pairs the AI model remembers", "min": 1, "max": 50, "step": 1, "integer": True,
      "help": "How many of the latest question-and-answer pairs the AI model sees with each new question. Default 6."},
     {"name": "chunk_size", "label": "Passage size (characters)", "min": 100, "max": 8000, "step": 50, "integer": True,
      "help": "How long each piece of a document is when it is split for searching. Applies the next time documents are indexed. Default 900."},

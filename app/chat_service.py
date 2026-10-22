@@ -42,6 +42,17 @@ def _decide(message: str, history: list[tuple[str, str]], purpose: str = "router
     return {"search": do_search, "query": query if do_search else ""}
 
 
+def trim_sources(answer: str, sources: list[dict]) -> None:
+    """Keeps only the sources the finished answer actually relies on (in place, so the caller's meta follows).
+    A "could not find" reply has none; an answer that cites [1], [2]... keeps just those; one with no citations keeps all."""
+    if rag.FALLBACK.lower().rstrip(".") in answer.lower():
+        sources.clear()
+        return
+    cited = {int(n) for grp in re.findall(r"\[(\d+(?:\s*,\s*\d+)*)\]", answer) for n in re.findall(r"\d+", grp)}
+    if cited:
+        sources[:] = [s for s in sources if s["n"] in cited]
+
+
 def chat_stream(message: str, conv_id: str | None, kb_ids=None, preview: bool = False) -> tuple[Iterator[str], dict]:
     """Routing + retrieval happen now; the answer streams from the returned iterator.
     The question is saved before any model runs; the answer is saved as soon as it is complete (or kept, marked
@@ -87,6 +98,7 @@ def chat_stream(message: str, conv_id: str | None, kb_ids=None, preview: bool = 
                 for tok in tokens:
                     collected.append(tok)
                 final = guardrails.guard_output("".join(collected), len(sources), decision["search"])
+                trim_sources(final, sources)
                 parts.append(final)
                 if turn:
                     memory.finish_turn(turn, final, meta)       # saved before it is handed over, so it cannot be lost
@@ -100,6 +112,8 @@ def chat_stream(message: str, conv_id: str | None, kb_ids=None, preview: bool = 
             if turn:                       # the model failed or the caller went away: keep what arrived, marked incomplete
                 memory.fail_turn(turn, "".join(parts))
             raise
+        if not checked:
+            trim_sources("".join(parts), sources)
         if turn and not checked:
             memory.finish_turn(turn, "".join(parts), meta)
             summaries.schedule(conv_id, identity.current().department)
