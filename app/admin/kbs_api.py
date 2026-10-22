@@ -419,8 +419,8 @@ async def chunk_preview(kb_id: int, file: UploadFile = File(...), strategy: str 
     strategy = strategy or kb["chunk_strategy"]
     if strategy not in chunkers.STRATEGIES:
         raise HTTPException(422, "Unknown chunking strategy.")
-    size, overlap = chunkers.effective(_int_or_none(chunk_size, "Chunk size") or kb["chunk_size"],
-                                       _int_or_none(chunk_overlap, "Chunk overlap") if chunk_overlap.strip() else kb["chunk_overlap"], ctx.db)
+    size, overlap = chunkers.effective(_int_or_none(chunk_size, "Passage size") or kb["chunk_size"],
+                                       _int_or_none(chunk_overlap, "Overlap") if chunk_overlap.strip() else kb["chunk_overlap"], ctx.db)
     try:
         kbs.check_chunking(size, overlap, ctx.db)
     except ValueError as e:

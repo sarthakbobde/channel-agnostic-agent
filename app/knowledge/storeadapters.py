@@ -59,9 +59,9 @@ class PgVectorStore(VectorStore):
             raise ValueError("Enter the PostgreSQL connection string (the admin database is not PostgreSQL).")
         return re.sub(r"^postgresql\+\w+://", "postgresql://", dsn)
 
-    def _connect(self):
+    def _connect(self, timeout: int = 10):
         import psycopg
-        return psycopg.connect(self._dsn, connect_timeout=10)
+        return psycopg.connect(self._dsn, connect_timeout=timeout)
 
     def _t(self):
         from psycopg import sql
@@ -79,7 +79,7 @@ class PgVectorStore(VectorStore):
     def test(cls, config: dict, secrets: dict) -> tuple[bool, str]:
         try:
             store = cls("test", config, secrets, None)
-            with store._connect() as conn:
+            with store._connect(4) as conn:         # a test should fail fast
                 version = conn.execute("SELECT version()").fetchone()[0].split(",")[0]
                 has = conn.execute("SELECT 1 FROM pg_available_extensions WHERE name = 'vector'").fetchone()
             if not has:

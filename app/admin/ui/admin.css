@@ -679,3 +679,5 @@ td.act .menu { margin-left: 6px; vertical-align: middle; }
 
 .chan-name { display: inline-flex; align-items: center; gap: 8px; font-weight: 500; }
 .chan-name .logo { flex: 0 0 auto; }
+.gr-row.needs-off { opacity: .6; }
+.need-note { padding: 0 var(--gr-pad, 16px) 12px; }

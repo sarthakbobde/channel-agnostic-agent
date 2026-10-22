@@ -115,12 +115,12 @@ def default_store() -> ChromaStore:
 # ---- writing ---------------------------------------------------------------------------------
 def check_chunking(size: int | None, overlap: int | None, db: Database | None = None) -> None:
     """Raises ValueError if the overrides (combined with Global Settings) are not usable."""
-    for label, v, lo, hi in (("Chunk size", size, 100, 8000), ("Chunk overlap", overlap, 0, 7999)):
+    for label, v, lo, hi in (("Passage size", size, 100, 8000), ("Overlap", overlap, 0, 7999)):
         if v is not None and (isinstance(v, bool) or not isinstance(v, int) or not lo <= v <= hi):
             raise ValueError(f"{label} must be a whole number between {lo} and {hi}, or left empty to use the global value.")
     s, o = chunkers.effective(size, overlap, db)
     if o >= s:
-        raise ValueError(f"Chunk overlap ({o}) must be smaller than the chunk size ({s}).")
+        raise ValueError(f"Overlap ({o}) must be smaller than the passage size ({s}).")
 
 
 def check_strategy(strategy: str) -> None:

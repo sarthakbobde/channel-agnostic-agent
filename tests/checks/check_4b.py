@@ -144,7 +144,7 @@ access.set_kb_query_groups(db, hrkb["id"], [])
 # ---- several KBs on one channel, merged by reciprocal rank fusion
 r, seen = ask("carl@sysfore.com", "executive parking bay and leave days", kb_ids=[hrkb["id"], other["id"]])
 srcs = {s["source"] for s in r["sources"]}
-ok("other.txt" in srcs and "public.txt" in srcs and "bonus.txt" not in srcs, f"two KBs merged, each with its own access filter: {sorted(srcs)}")
+ok("Parking is free" in seen and "18 days" in seen and "XYZZY" not in seen, "two KBs merged, each with its own access filter (what the model was given)")   # listed sources are only the cited ones
 r, seen = ask("carl@sysfore.com", "executive parking bay", kb_ids=[other["id"]])
 ok({s["source"] for s in r["sources"]} == {"other.txt"}, "a channel bound to one KB searches only that KB")
 

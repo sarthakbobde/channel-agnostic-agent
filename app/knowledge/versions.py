@@ -11,7 +11,7 @@ import threading
 import time
 from datetime import datetime, timezone
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from app import alerts
 from app.db import Database, Document, KBIndexVersion, KnowledgeBase, get_db
@@ -57,8 +57,16 @@ def _audit(actor: str, action: str, target: str, detail: str = "") -> None:
 # ---- reading --------------------------------------------------------------------------------------
 def list_versions(db: Database, kb_id: int) -> list[dict]:
     with db.session() as s:
-        return [_view(v) for v in s.scalars(select(KBIndexVersion).where(KBIndexVersion.kb_id == kb_id)
-                                            .order_by(KBIndexVersion.version.desc()))]
+        out = [_view(v) for v in s.scalars(select(KBIndexVersion).where(KBIndexVersion.kb_id == kb_id)
+                                           .order_by(KBIndexVersion.version.desc()))]
+        if any(v["is_active"] and v["status"] == "Ready" for v in out):
+            # documents added or removed after the build change what the active index holds, so count them live
+            n_docs, n_chunks = s.execute(select(func.count(Document.id), func.coalesce(func.sum(Document.chunks), 0))
+                                         .where(Document.kb_id == kb_id, Document.status == "Indexed")).one()
+            for v in out:
+                if v["is_active"] and v["status"] == "Ready":
+                    v["documents"], v["chunks"] = int(n_docs), int(n_chunks)
+        return out
 
 
 def active(db: Database, kb_id: int) -> dict | None:

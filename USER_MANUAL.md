@@ -313,7 +313,7 @@ The injection and toxicity checks are rules, not an AI model: they catch known w
 |---|---|---|
 | Passages used per question | 5 | How many of the best-matching passages are given to the AI model |
 | How closely a passage must match | 0.35 | Passages that match less well are ignored; if none match well enough, the assistant says it could not find the answer |
-| Recent messages the AI model remembers | 6 | How many of the latest question-and-answer pairs it sees |
+| Recent question-and-answer pairs the AI model remembers | 6 | How many of the latest question-and-answer pairs it sees |
 | Passage size / overlap between passages | 900 / 150 characters | How documents are cut up; applies the next time documents are processed |
 | Longest time conversations may be kept (days) | 365 | No department may keep conversations longer |
 | Longest department prompt | 4000 characters | Longer prompts are rejected |

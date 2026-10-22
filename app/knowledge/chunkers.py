@@ -19,7 +19,8 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 from app import global_settings
 from app.knowledge import parsers
 
-MIN_CHARS = 120              # a section smaller than this is merged into the next one
+MIN_ROOM = 50                # a chunk always has at least this much room for text, however long its heading path
+MIN_CHARS = 60              # a section smaller than this is merged into a neighbour
 HUGE_FACTOR = 4              # tables and code blocks bigger than this x size are split
 
 
@@ -61,7 +62,7 @@ def _splitter(size: int, overlap: int):
 
 def _check(size: int, overlap: int) -> None:
     if overlap >= size:
-        raise ValueError("Chunk overlap must be smaller than the chunk size.")
+        raise ValueError("Overlap must be smaller than the passage size.")
 
 
 class RecursiveChunker(Chunker):
@@ -113,17 +114,19 @@ def _pack(blocks: list[parsers.Block], size: int, overlap: int, prefix: str = ""
     out: list[tuple[int, str]] = []
     cur: list[str] = []
     cur_page = 0
-    cur_len = len(prefix)
+    cur_len = 0
+    room = max(size - (len(prefix) + 1 if prefix else 0), MIN_ROOM)     # the heading path is written on top of every chunk and counts toward the size
+    overlap = min(overlap, room - 1)
 
     def flush():
         nonlocal cur, cur_len, cur_page
         if cur:
             out.append((cur_page, (prefix + "\n" if prefix else "") + "\n\n".join(cur)))
-        cur, cur_len, cur_page = [], len(prefix), 0
+        cur, cur_len, cur_page = [], 0, 0
 
     for b in blocks:
-        for piece in _pieces(b, size, overlap):
-            if cur and cur_len + len(piece) + 2 > size:
+        for piece in _pieces(b, room, overlap):
+            if cur and cur_len + len(piece) + 2 > room:
                 flush()
             if not cur:
                 cur_page = b.page
