@@ -172,3 +172,10 @@ def test_sources_say_how_each_passage_was_found():
     from app import rag
     out = rag.format_sources([{"text": "x", "source": "a.txt", "page": None, "score": 0.5, "via": "keywords"}])
     assert out[0]["via"] == "keywords"
+
+
+def test_strategy_specific_settings_say_when_they_apply():
+    shown = {f["name"]: f for f in global_settings.view()["fields"]}
+    assert shown["hybrid_keyword_weight"]["show_when"] == {"field": "retrieval_strategy", "values": ["hybrid"]}
+    assert shown["diversity"]["show_when"] == {"field": "retrieval_strategy", "values": ["mmr"]}
+    assert "show_when" not in shown["top_k"]

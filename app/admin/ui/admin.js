@@ -558,7 +558,16 @@
   function specForm(fields) {
     var inputs = {};
     var form = h("div", { class: "form aligned" });
-    fields.forEach(function (f) { form.appendChild(specField(f, inputs)); });
+    var wraps = {};
+    fields.forEach(function (f) { wraps[f.name] = specField(f, inputs); form.appendChild(wraps[f.name]); });
+    // a field with show_when {field, values} is only shown while that other field has one of those values
+    fields.forEach(function (f) {
+      var cond = f.show_when, dep = cond && inputs[cond.field];
+      if (!dep) return;
+      var apply = function () { wraps[f.name].hidden = cond.values.indexOf(dep.value) < 0; };
+      dep.addEventListener("change", apply);
+      apply();
+    });
 
     function collect() {
       var out = {};
@@ -891,11 +900,15 @@
       prov.value = current && current.provider_id ? String(current.provider_id) : (optional ? "" : String(data.providers[0].id));
       fill();
       if (current && current.model) model.value = current.model;
+      var modelField = h("div", { class: "field" }, fieldLabel(id + "_m", "Model"), model);
+      function showModel() { modelField.hidden = optional && !prov.value; }         // an optional slot with no connection chosen has no model to pick
+      prov.addEventListener("change", showModel);
+      showModel();
       return { el: h("div", { class: "slot" },
           h("div", { class: "slot-head" }, h("span", { class: "role-icon " + id }, icon(roleIcon, 20)),
             h("div", { class: "row-text" }, h("b", {}, title), h("span", { class: "meta" }, roleText)), mark),
           h("div", { class: "field" }, fieldLabel(id + "_p", "Connection"), prov),
-          h("div", { class: "field" }, fieldLabel(id + "_m", "Model"), model)),
+          modelField),
         get: function () { return prov.value ? { provider_id: Number(prov.value), model: model.value } : null; } };
     }
     var pref = slot("pref", "Preferred", cur.preferred, false, "star", "Answers every question");
@@ -1954,6 +1967,10 @@
       strat.addEventListener("change", showStratHelp);
       showStratHelp();
       var overlap = h("input", { type: "number", id: "ko" + k.id, value: blank(k.chunk_overlap), min: 0, max: 7999, step: 10, placeholder: "inherit (" + data.global.chunk_overlap + ")" });
+      var overlapField = h("div", { class: "field" }, fieldLabel("ko" + k.id, "Overlap (characters)", "How much neighbouring passages share. Not used when splitting by meaning, which cuts where the topic changes."), overlap);
+      function showOverlap() { overlapField.hidden = strat.value === "semantic"; }
+      strat.addEventListener("change", showOverlap);
+      showOverlap();
       var out = h("div", { "aria-live": "polite" });
       var save = h("button", { type: "button", class: "btn primary", onclick: async function () {
         out.replaceChildren(msg("wait", "Saving…"));
@@ -1985,7 +2002,7 @@
           h("div", { class: "form" },
             h("div", { class: "field wide" }, fieldLabel("kst" + k.id, "Strategy"), strat, stratHelp),
             h("div", { class: "field" }, fieldLabel("ks" + k.id, "Passage size (characters)", "For per-page, by-heading and by-meaning splitting, this is the largest a passage can be."), size),
-            h("div", { class: "field" }, fieldLabel("ko" + k.id, "Overlap (characters)"), overlap)),
+            overlapField),
           h("div", { class: "actions" }, saveSplit),
           h("div", { class: "subpanel" }, parts.preview.pane)),
         search: parts.search.pane, storage: parts.storage.pane, rebuild: parts.rebuild.pane, access: parts.access.pane
