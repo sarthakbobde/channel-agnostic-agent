@@ -104,15 +104,28 @@
     else if (body !== undefined) { opts.body = JSON.stringify(body); opts.headers["Content-Type"] = "application/json"; }
     if (method !== "GET" && csrf) opts.headers["X-CSRF-Token"] = csrf;
     var res = await fetch(API + path, opts);
-    var data = null;
-    try { data = await res.json(); } catch (e) { /* no body */ }
+    var data = null, raw = "";
+    try { raw = await res.text(); data = JSON.parse(raw); } catch (e) { /* no body, or not JSON */ }
     if (!res.ok) {
       var d = data && data.detail;
       if (Array.isArray(d)) d = d.map(function (x) { return x.msg; }).join("; ");
       if (res.status === 401 && me) { me = null; csrf = null; renderLogin("Your session ended. Sign in again."); }
-      throw new ApiError(res.status, d || "Request failed (" + res.status + ")");
+      throw new ApiError(res.status, d || unexplained(res.status, method, path, raw, res.headers.get("server")));
     }
     return data;
+  }
+
+  // The app always explains its own refusals. A failure with no explanation was most likely stopped before it reached the app
+  // (a proxy, firewall, VPN or gateway), so say that, and show what came back so it can be reported.
+  function unexplained(status, method, path, raw, server) {
+    var text = "Request failed (" + status + ") on " + method + " " + path + ".";
+    if (status === 403 || status === 401 || status === 502 || status === 503 || status === 504) {
+      text += " The server gave no reason, so this was probably blocked or dropped before it reached the app (a proxy, firewall, VPN or gateway). Ask whoever runs the network, and include this message.";
+    }
+    var snippet = String(raw || "").replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim().slice(0, 160);
+    if (snippet) text += " Response: " + snippet;
+    if (server && !/uvicorn/i.test(server)) text += " (served by " + server + ")";
+    return text;
   }
 
   // ---- boot / login ---------------------------------------------------------------
