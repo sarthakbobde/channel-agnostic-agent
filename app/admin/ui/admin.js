@@ -535,7 +535,7 @@
         inp = h("input", { type: "checkbox", id: id, checked: !!f.value });
         control = h("label", { class: "check", for: id }, inp, "On");
       } else if (f.kind === "choice") {
-        inp = h("select", { id: id }, (f.choices || []).map(function (c) { return h("option", { value: c, text: c }); }));
+        inp = h("select", { id: id }, (f.choices || []).map(function (c) { return h("option", { value: c, text: (f.choice_labels && f.choice_labels[c]) || c }); }));
         if (f.value != null && (f.choices || []).indexOf(f.value) >= 0) inp.value = f.value;      // no saved value: keep the first choice selected, never a blank box
         control = inp;
       } else if (f.kind === "number") {
@@ -642,7 +642,7 @@
     main.appendChild(holder);
 
     var SECTIONS = [
-      ["Finding answers", "How documents are searched, and how much of the conversation is remembered.", ["top_k", "score_threshold", "recent_turns"]],
+      ["Finding answers", "How documents are searched, and how much of the conversation is remembered.", ["retrieval_strategy", "hybrid_keyword_weight", "diversity", "top_k", "score_threshold", "recent_turns"]],
       ["Splitting documents", "How documents are cut into searchable passages. Applies the next time documents are indexed.", ["chunk_size", "chunk_overlap"]],
       ["Conversations and privacy", "How long conversations are kept, when long chats are summarised, and whether they can be exported.", ["max_retention_days", "retention_job_enabled", "summarise_after_turns", "export_enabled"]],
       ["Limits", "Caps on question length and on how fast one person can ask.", ["prompt_max_chars", "chat_rate_per_minute"]]

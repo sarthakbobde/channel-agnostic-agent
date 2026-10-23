@@ -62,6 +62,11 @@ class VectorStore(ABC):
     def iter_metadata(self, batch: int = 500):
         """Yield (ids, metadatas) pages: used for one-off metadata back-fills."""
 
+    def iter_texts(self, batch: int = 500):
+        """Yield (ids, texts, metadatas) pages: the whole index, for keyword search. A store that cannot list its text
+        raises NotImplementedError and keyword search falls back to similarity."""
+        raise NotImplementedError(f"{self.name} cannot list its passages")
+
 
 class ChromaStore(VectorStore):
     name = "chroma"
@@ -147,6 +152,16 @@ class ChromaStore(VectorStore):
             if not got["ids"]:
                 return
             yield got["ids"], got["metadatas"]
+            offset += len(got["ids"])
+
+    def iter_texts(self, batch=500):
+        col = self._col()
+        offset = 0
+        while True:
+            got = col.get(limit=batch, offset=offset, include=["documents", "metadatas"])
+            if not got["ids"]:
+                return
+            yield got["ids"], got["documents"], [m or {} for m in got["metadatas"]]
             offset += len(got["ids"])
 
 

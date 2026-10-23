@@ -320,6 +320,9 @@ class GlobalSettings(Base):
     retention_job_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     export_enabled: Mapped[bool] = mapped_column(Boolean, default=False)    # off until the privacy sign-off (D7)
     chat_rate_per_minute: Mapped[int] = mapped_column(Integer, default=20)  # questions per person per minute; 0 = no limit
+    retrieval_strategy: Mapped[str] = mapped_column(String(16), default="similarity")   # similarity | keyword | hybrid | mmr
+    hybrid_keyword_weight: Mapped[float] = mapped_column(Float, default=0.5)
+    diversity: Mapped[float] = mapped_column(Float, default=0.3)
 
 
 class JobLock(Base):
