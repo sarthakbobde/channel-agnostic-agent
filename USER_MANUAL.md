@@ -43,6 +43,32 @@ Your name at the top right opens **Account**: your department, groups and the de
 WebP, cropped to a square); **Appearance** (Light, Dark or System theme, and an accent colour: Blue, Teal, Purple, Green, Orange,
 Pink, Graphite; saved in this browser only); and **Change password**. The moon/sun button in the top bar switches the theme too.
 
+### 1.1 Sign in with Microsoft or Google (optional)
+
+**Settings → Sign-in** adds "Sign in with Microsoft" and "Sign in with Google" buttons to the sign-in page. Email and password
+keep working, so nobody is locked out if single sign-on stops working.
+
+- **Who can use it:** only Admins and Editors already under **Users**. Single sign-on never creates an account. The first time,
+  the Microsoft or Google account is linked to the person with the same email; after that, the link is used (a later email
+  change in Microsoft or Google does not move it to someone else). **Users** shows how each person signs in; the **×** on a
+  Microsoft or Google chip unlinks it and signs that person out everywhere.
+- **Microsoft (Entra ID):** in the Azure portal, **Microsoft Entra ID → App registrations → New registration**, supported
+  account types **this organisational directory only**. Under **Authentication**, add a **Web** redirect URI: copy the
+  **Return address** shown on the Sign-in screen. Under **Certificates & secrets**, create a client secret and copy its
+  **Value**. On the Sign-in screen enter the **Application (client) ID**, the secret and the **Directory (tenant) ID**, switch
+  it on and save. No API permissions or admin consent are needed beyond the default `openid`, `email` and `profile`. Client
+  secrets expire (at most 24 months): renew it in Azure and paste the new one before then.
+- **Google:** in the Google Cloud console (a project inside your Google Workspace organisation), **APIs & Services → OAuth
+  consent screen**, user type **Internal** (only your Workspace accounts; no Google review). Then **Credentials → Create
+  credentials → OAuth client ID → Web application**, and add the **Return address** as an authorised redirect URI. Enter the
+  client ID, client secret and your **company domain** (accounts outside it are refused), switch it on and save.
+- **Return address:** it must match exactly. On your own machine, open the admin center as `http://localhost:8000/admin`
+  and register `http://localhost:8000/admin/api/auth/sso/<microsoft|google>/callback`. On a server it must be HTTPS; set
+  `ADMIN_PUBLIC_URL` (for example `https://agent.example.com`) if the address the browser sees differs from the server's.
+  You can register both addresses on the same app.
+- Every sign-in, refusal, link and unlink is in the **Audit log** (`login`, `login.sso_denied`, `login.sso_failed`,
+  `user.sso_link`, `user.sso_unlink`, `sso.update`).
+
 ---
 
 ## 2. Model providers

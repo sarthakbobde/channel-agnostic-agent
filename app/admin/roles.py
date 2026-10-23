@@ -15,7 +15,7 @@ PREFIXES = {
 
 # Screens (tabs) shown in the panel for each role.
 SCREENS = {
-    "admin": ("channels", "settings", "providers", "knowledge", "groups", "prompts", "guardrails", "conversations", "usage", "reports", "departments", "users", "audit", "account"),
+    "admin": ("channels", "settings", "providers", "signin", "knowledge", "groups", "prompts", "guardrails", "conversations", "usage", "reports", "departments", "users", "audit", "account"),
     "editor": ("knowledge", "groups", "prompts", "usage", "departments", "account"),
     "viewer": (),
 }

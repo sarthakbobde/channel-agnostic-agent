@@ -11,7 +11,7 @@ from app.db import Database
 from app.secretstore import FernetSecretStore, generate_key
 from tests.conftest import TEST_DB
 
-HEAD = "0024"
+HEAD = "0025"
 TABLES = {"meta", "channels", "secrets", "users", "departments", "department_editors", "set_password_tokens", "knowledge_bases", "documents", "kb_index_versions", "groups", "group_members", "document_access", "kb_access", "prompts", "guardrail_settings", "guardrail_events", "conversations", "messages", "audit_log", "global_settings", "job_locks",
           "alembic_version", "llm_providers", "model_settings", "model_prices", "usage_records", "alerts"}
 

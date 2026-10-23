@@ -131,10 +131,152 @@
   // ---- boot / login ---------------------------------------------------------------
   function renderBoot(text) { mount(h("p", { class: "boot" }, text)); }
 
+  // What the sign-in page says when Microsoft or Google sign-in comes back without signing the person in (?sso_error=…).
+  var SSO_ERRORS = {
+    not_invited: "There is no admin center account for that email. Ask an Admin to add you under Users.",
+    not_allowed: "That account cannot open the admin center (it is deactivated, or a Viewer).",
+    linked_elsewhere: "Your admin center account is linked to a different account with that provider. Ask an Admin to unlink it.",
+    wrong_domain: "Use your company account.",
+    no_email: "That account has no verified email address.",
+    cancelled: "Sign-in was cancelled.",
+    expired: "Sign-in took too long or was started elsewhere. Try again.",
+    blocked: "Too many failed attempts. Try again in a few minutes.",
+    unavailable: "That sign-in option is not available right now.",
+    failed: "Sign-in did not work. Try again, or use your email and password."
+  };
+  var SSO_LOGO = { microsoft: "microsoft", google: "google_g" };
+
+  // "Sign in with Microsoft / Google", shown only for providers an Admin has set up and switched on.
+  function ssoButtons(box) {
+    api("GET", "/auth/sso").then(function (r) {
+      if (!r.providers.length) return;
+      box.replaceChildren(h("div", { class: "sso-list" }, r.providers.map(function (p) {
+        return h("a", { class: "sso-btn", href: API + "/auth/sso/" + p.id + "/start" }, logo(SSO_LOGO[p.id], 20), "Sign in with " + p.label);
+      })), h("div", { class: "or", role: "separator" }, h("span", {}, "or use your email")));
+      box.hidden = false;
+    }, function () { /* no buttons: email and password still work */ });
+  }
+
+  // The sign-in and set-password pages: a branded showcase on the left (stacked on top on a phone), the form on the right.
+  function authPage(title, subtitle, body) {
+    var themeBtn = h("button", { type: "button", class: "auth-theme", onclick: function () {
+      var next = currentTheme() === "dark" ? "light" : "dark";
+      applyTheme(next); themePref(next); paintTheme();
+    } });
+    function paintTheme() {
+      var dark = currentTheme() === "dark";
+      themeBtn.replaceChildren(icon(dark ? "sun" : "moon", 18));
+      themeBtn.setAttribute("aria-label", dark ? "Switch to light theme" : "Switch to dark theme");
+      themeBtn.title = themeBtn.getAttribute("aria-label");
+    }
+    paintTheme();
+    var pills = {};
+    var chans = ["slack", "teams", "gchat", "web"].map(function (k) { return (pills[k] = h("span", {}, logo(k, 18), CHANNEL_TITLES[k])); });
+    var demo = chatDemo(pills);
+    mount(h("div", { class: "auth" },
+      h("aside", { class: "auth-show" },
+        h("div", { class: "auth-brand" }, h("span", { class: "brandmark" }, icon("brand", 20)), "Channel Agnostic Agent"),
+        h("div", { class: "auth-pitch" },
+          h("h2", {}, "One assistant. Every channel."),
+          h("p", { class: "lead" }, "Answers from your company's own documents, in the apps your people already use."),
+          h("div", { class: "auth-channels", "aria-label": "Channels" }, chans),
+          demo.el),
+        h("div", { class: "auth-trust" },
+          h("span", {}, icon("guardrails", 14), "Guardrails on every answer"),
+          h("span", {}, icon("key", 14), "Encrypted secrets"),
+          h("span", {}, icon("audit", 14), "Full audit log"))),
+      h("div", { class: "auth-main", role: "main" }, themeBtn,             // not <main>: the app shell styles that element
+        h("div", { class: "auth-card" }, h("h1", {}, title), h("p", { class: "sub" }, subtitle), body))));
+    setTimeout(demo.start, 500);
+  }
+
+  // A live-looking chat on the sign-in page: a question is typed in, the assistant "thinks", then types its answer and
+  // cites the document. It loops through a few channels (their pill lights up) and stops when the page is replaced.
+  // Answers are from the sample policies in tests/sample_docs. With reduced motion, the text appears without typing.
+  var DEMO_CHATS = [
+    ["slack", "How many days of annual leave do I get?", "Every full-time employee gets 18 days of paid annual leave a year, and up to 5 unused days carry over.", "Leave policy"],
+    ["teams", "What is the hotel limit on a business trip?", "Up to 120 USD a night. Keep the receipt: anything above 25 USD needs one.", "Expense policy"],
+    ["gchat", "My laptop was stolen. What should I do?", "Report it within 2 hours. For urgent IT issues, call extension 4444.", "IT helpdesk"],
+    ["web", "How early does travel need approval?", "At least 7 days before departure, by your manager. International trips also need your department head.", "Travel policy"]
+  ];
+  function chatDemo(pills) {
+    var via = h("span", { class: "via" });
+    var qText = h("span", {});
+    var q = h("div", { class: "q" }, qText);
+    var aText = h("span", {});
+    var src = h("span", { class: "src" });
+    var dots = h("span", { class: "dots" }, h("i", {}), h("i", {}), h("i", {}));
+    var bubble = h("div", { class: "bubble" });
+    var a = h("div", { class: "a", hidden: true }, h("span", { class: "brandmark" }, icon("brand", 14)), bubble);
+    var box = h("div", { class: "demo", "aria-hidden": "true" }, via, q, a);
+    var still = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+    function wait(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
+    async function type(el, text, ms) {                        // false once the page has gone
+      el.classList.add("typing");
+      for (var i = 1; i <= text.length; i++) {
+        if (!box.isConnected) return false;
+        el.textContent = text.slice(0, i);
+        await wait(ms + (text[i - 1] === " " ? ms : Math.random() * ms));
+      }
+      el.classList.remove("typing");
+      return box.isConnected;
+    }
+    function light(k) { Object.keys(pills).forEach(function (p) { pills[p].classList.toggle("on", p === k); }); }
+
+    async function run() {
+      for (var n = 0; box.isConnected; n++) {
+        var c = DEMO_CHATS[n % DEMO_CHATS.length];
+        box.classList.remove("out");
+        light(c[0]);
+        via.replaceChildren(logo(c[0], 14), "Asked in " + CHANNEL_TITLES[c[0]]);
+        src.replaceChildren(icon("reports", 12), c[3]);
+        a.hidden = true;
+        if (still) {
+          qText.textContent = c[1]; aText.textContent = c[2];
+          bubble.replaceChildren(aText, src); a.hidden = false;
+          await wait(6000);
+        } else {
+          qText.textContent = "";
+          if (!(await type(qText, c[1], 34))) return;
+          await wait(350);
+          bubble.replaceChildren(dots); a.hidden = false;
+          await wait(1100);
+          aText.textContent = "";
+          bubble.replaceChildren(aText);
+          if (!(await type(aText, c[2], 13))) return;
+          src.classList.remove("pop"); bubble.appendChild(src); void src.offsetWidth; src.classList.add("pop");
+          await wait(3800);
+          box.classList.add("out");
+          await wait(450);
+        }
+      }
+      light(null);
+    }
+    return { el: box, start: function () { if (box.isConnected) run(); } };
+  }
+  // A text box with an icon in front; a password box also gets a show/hide button.
+  function iconInput(input, iconName) {
+    var wrap = h("div", { class: "ifield" }, icon(iconName, 18), input);
+    if (input.type === "password") {
+      var peek = h("button", { type: "button", class: "peek", "aria-label": "Show password", title: "Show password", onclick: function () {
+        var show = input.type === "password";
+        input.type = show ? "text" : "password";
+        peek.replaceChildren(icon(show ? "eyeoff" : "eye", 18));
+        peek.setAttribute("aria-label", show ? "Hide password" : "Show password"); peek.title = peek.getAttribute("aria-label");
+        input.focus();
+      } }, icon("eye", 18));
+      wrap.classList.add("has-peek");
+      wrap.appendChild(peek);
+    }
+    return wrap;
+  }
+
   function renderLogin(notice) {
-    var email = h("input", { type: "email", id: "email", autocomplete: "username", required: true });
+    var sso = h("div", { class: "sso", hidden: true });
+    var email = h("input", { type: "email", id: "email", autocomplete: "username", placeholder: "you@company.com", required: true });
     var pw = h("input", { type: "password", id: "pw", autocomplete: "current-password", required: true });
-    var out = h("div", {}, notice ? msg("bad", notice) : null);
+    var out = h("div", { "aria-live": "polite" }, notice ? msg(/^Password saved/.test(notice) ? "ok" : "bad", notice) : null);
     var form = h("form", {
       onsubmit: async function (e) {
         e.preventDefault();
@@ -146,14 +288,13 @@
         } catch (err) { out.replaceChildren(msg("bad", err.message)); pw.value = ""; }
       }
     },
-      h("div", { class: "field" }, h("label", { class: "l", for: "email" }, "Email"), email),
-      h("div", { class: "field" }, h("label", { class: "l", for: "pw" }, "Password"), pw),
-      h("div", { class: "actions" }, h("button", { class: "btn primary", type: "submit" }, "Sign in")),
-      out);
-    mount(h("div", { class: "login-page" },
-      h("div", { class: "login" },
-        h("div", { class: "login-brand" }, h("span", { class: "brandmark" }, icon("brand", 20)), h("span", {}, "Channel Agnostic Agent")),
-        h("h1", {}, "Sign in"), h("p", {}, "Admin center for your knowledge assistant"), form)));
+      h("div", { class: "field" }, h("label", { class: "l", for: "email" }, "Email"), iconInput(email, "mail")),
+      h("div", { class: "field" }, h("label", { class: "l", for: "pw" }, "Password"), iconInput(pw, "lock")),
+      h("div", { class: "actions" }, h("button", { class: "btn primary", type: "submit" }, "Sign in", icon("arrow", 16))),
+      out,
+      h("p", { class: "auth-help" }, "Forgot your password? Ask an Admin for a new link."));
+    authPage("Welcome back", "Sign in to the admin center", h("div", {}, sso, form));
+    ssoButtons(sso);
     email.focus();
   }
 
@@ -164,6 +305,8 @@
       renderSetPassword(m[1]);
       return;
     }
+    var ssoError = new URLSearchParams(location.search).get("sso_error");
+    if (ssoError !== null) history.replaceState(null, "", location.pathname);   // a reload should not repeat the message
     try {
       var r = await api("GET", "/auth/me");
       me = r.email; csrf = r.csrf;
@@ -171,7 +314,7 @@
     } catch (e) {
       if (e.status === 503) renderBoot(e.message + " Set APP_SECRET_KEY in .env and restart the server.");
       else if (e.status === 403) renderBoot(e.message);
-      else renderLogin();
+      else renderLogin(ssoError !== null ? (SSO_ERRORS[ssoError] || SSO_ERRORS.failed) : undefined);
     }
   }
 
@@ -232,7 +375,14 @@
     backup: "M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6zM9 12.5l2 2 4-4.5",
     search: "M11 18a7 7 0 1 0 0-14 7 7 0 0 0 0 14zM21 21l-5-5",
     home: "M3 11l9-8 9 8M5 10v10h14V10M10 20v-6h4v6",
-    check: "M5 12.5l4.5 4.5L19 7.5"
+    check: "M5 12.5l4.5 4.5L19 7.5",
+    signin: "M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4M10 17l5-5-5-5M15 12H3",
+    key: "M8 20a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM10.8 13.2L20 4M17 7l3 3M15 9l2 2",
+    mail: "M3 5h18v14H3zM3 6l9 7 9-7",
+    lock: "M6 11h12v10H6zM8 11V7a4 4 0 0 1 8 0v4",
+    eye: "M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12zM12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z",
+    eyeoff: "M3 3l18 18M10.6 5.1A10.9 10.9 0 0 1 12 5c6.5 0 10 7 10 7a17.6 17.6 0 0 1-3.2 4.1M6.6 6.6C3.8 8.4 2 12 2 12s3.5 7 10 7c1.9 0 3.5-.5 4.9-1.3M9.9 9.9a3 3 0 0 0 4.2 4.2",
+    x: "M6 6l12 12M18 6L6 18"
   };
 
   // Official platform marks (Slack, Microsoft Teams, Google Chat; from each brand's published SVG) drawn with DOM calls,
@@ -300,6 +450,15 @@
         ["path", { fill: "url(#" + g + "1)", d: "M15.272.857H7.497L0 23.071h7.775l1.596-4.73 5.068 4.73h6.665l-2.707-7.775h-7.998L15.272.857z" }],
         ["path", { fill: "url(#" + g + "2)", d: "M17.193 1.613a1.11 1.11 0 00-1.052-.756h-7.81.035c.477 0 .9.304 1.052.756l6.748 19.992a1.11 1.11 0 01-1.052 1.466h-.12 7.895a1.11 1.11 0 001.052-1.466L17.193 1.613z" }]] };
     },
+    // Sign-in marks, as Microsoft and Google publish them for "Sign in with" buttons (used unchanged, as both require).
+    microsoft: function () { return { box: "0 0 21 21", parts: [
+      ["rect", { x: "1", y: "1", width: "9", height: "9", fill: "#F25022" }], ["rect", { x: "11", y: "1", width: "9", height: "9", fill: "#7FBA00" }],
+      ["rect", { x: "1", y: "11", width: "9", height: "9", fill: "#00A4EF" }], ["rect", { x: "11", y: "11", width: "9", height: "9", fill: "#FFB900" }]] }; },
+    google_g: function () { return { box: "0 0 48 48", parts: [
+      ["path", { fill: "#EA4335", d: "M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z" }],
+      ["path", { fill: "#4285F4", d: "M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z" }],
+      ["path", { fill: "#FBBC05", d: "M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z" }],
+      ["path", { fill: "#34A853", d: "M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z" }]] }; },
     web: function () { return { box: "0 0 48 48", parts: [
       ["rect", { width: "48", height: "48", rx: "10", fill: "#0F6CBD" }],
       ["g", { fill: "none", stroke: "#fff", "stroke-width": "2.4", "stroke-linecap": "round", "stroke-linejoin": "round" }, [
@@ -342,14 +501,14 @@
 
   // ---- shell ----------------------------------------------------------------------
   // [screen, menu label, permission the server grants for it (defaults to the screen name)]
-  var TABS = [["home", "Home"], ["channels", "Channels"], ["providers", "LLM providers"], ["kbconfig", "KB configuration", "knowledge"], ["settings", "RAG settings"], ["guardrails", "Guardrails"],
+  var TABS = [["home", "Home"], ["channels", "Channels"], ["providers", "LLM providers"], ["kbconfig", "KB configuration", "knowledge"], ["settings", "RAG settings"], ["guardrails", "Guardrails"], ["signin", "Sign-in"],
               ["users", "Users"], ["groups", "Groups"], ["departments", "Departments"],
               ["prompts", "Prompts"], ["kbdocs", "KB documents", "knowledge"],
               ["reports", "Reports"], ["audit", "Audit log"], ["conversations", "Conversations"], ["usage", "Usage and cost"],
               ["account", "Account"]];
   // The side menu, in the order an admin works: configure the assistant, add people, give it content, then watch it run.
   var NAV_GROUPS = [["", ["home"]],
-                    ["Settings", ["channels", "providers", "kbconfig", "settings", "guardrails"]],
+                    ["Settings", ["channels", "providers", "kbconfig", "settings", "guardrails", "signin"]],
                     ["User management", ["users", "groups", "departments"]],
                     ["Input", ["prompts", "kbdocs"]],
                     ["Monitoring", ["reports", "audit", "conversations", "usage"]]];
@@ -465,7 +624,7 @@
     var view = { home: viewHome, channels: viewChannels, settings: viewSettings, providers: viewProviders,
       kbconfig: viewKnowledge, kbdocs: viewKbDocs,
       groups: viewGroups, prompts: viewPrompts, guardrails: viewGuardrails, conversations: viewConversations, usage: viewUsage, reports: viewReports,
-      departments: viewDepartments, users: viewUsers, audit: viewAudit, account: viewAccount }[state.tab] || viewAccount;
+      departments: viewDepartments, users: viewUsers, audit: viewAudit, account: viewAccount, signin: viewSignin }[state.tab] || viewAccount;
     view(main);
     loadAlerts(main);
   }
@@ -1122,13 +1281,10 @@
         renderLogin("Password saved. Sign in with your email and the new password.");
       } catch (err) { out.replaceChildren(msg("bad", err.message)); }
     } },
-      h("div", { class: "field" }, h("label", { class: "l", for: "spw" }, "New password (12+ characters)"), nw),
-      h("div", { class: "field" }, h("label", { class: "l", for: "spr" }, "Repeat password"), rep),
+      h("div", { class: "field" }, h("label", { class: "l", for: "spw" }, "New password"), iconInput(nw, "lock"), hint("At least 12 characters.")),
+      h("div", { class: "field" }, h("label", { class: "l", for: "spr" }, "Repeat password"), iconInput(rep, "lock")),
       h("div", { class: "actions" }, h("button", { class: "btn primary", type: "submit" }, "Save password")), out);
-    mount(h("div", { class: "login-page" },
-      h("div", { class: "login" },
-        h("div", { class: "login-brand" }, h("span", { class: "brandmark" }, icon("brand", 20)), h("span", {}, "Channel Agnostic Agent")),
-        h("h1", {}, "Choose your password"), h("p", {}, "You will use it to sign in to the admin center"), form)));
+    authPage("Choose your password", "You will use it to sign in to the admin center", form);
     nw.focus();
   }
 
@@ -1188,6 +1344,92 @@
     return s;
   }
 
+  // ---- sign-in (single sign-on) ------------------------------------------------------
+  var SSO_SETUP = {
+    microsoft: "In the Azure portal: Microsoft Entra ID > App registrations > New registration, for accounts in this organisation only. " +
+      "Add the return address below as a Web redirect URI. Copy the Application (client) ID and Directory (tenant) ID from Overview, " +
+      "and create a client secret under Certificates & secrets.",
+    google: "In the Google Cloud console: APIs & Services > OAuth consent screen, user type Internal. " +
+      "Then Credentials > Create credentials > OAuth client ID > Web application, and add the return address below as an authorised redirect URI. " +
+      "Copy the client ID and client secret."
+  };
+
+  function copyRow(value, label) {
+    var field = h("input", { type: "text", readonly: true, value: value, "aria-label": label });
+    var copied = h("span", { class: "meta", "aria-live": "polite" });
+    return h("div", {}, h("div", { class: "copyrow" }, field, h("button", { type: "button", class: "btn", onclick: function () {
+      field.select();
+      if (navigator.clipboard) navigator.clipboard.writeText(value).then(function () { copied.textContent = "Copied."; }, function () { copied.textContent = "Press Ctrl+C to copy."; });
+      else copied.textContent = "Press Ctrl+C to copy.";
+    } }, icon("copy", 16), "Copy")), copied);
+  }
+
+  async function viewSignin(main) {
+    pageHead(main, "Sign-in", "How Admins and Editors sign in to this admin center. Email and password always work. " +
+      "Microsoft and Google sign-in are only for people already under Users: the first time, their account is linked by email, and from then on by the account itself.");
+    var holder = h("div", {}, msg("wait", "Loading…"));
+    main.appendChild(holder);
+    var data;
+    try { data = await api("GET", "/sso"); }
+    catch (err) { if (me) holder.replaceChildren(msg("bad", err.message)); return; }
+    holder.replaceChildren(
+      h("section", { class: "panel signin-row" }, h("span", { class: "plogo" }, icon("key", 20)),
+        h("div", { class: "row-text" }, h("b", {}, "Email and password"), h("span", { class: "meta" }, "Always available, so nobody is locked out if single sign-on stops working.")),
+        h("span", { class: "pill ok" }, "Always on")),
+      h("div", { class: "sso-cards" }, data.providers.map(function (p) { return providerCard(p, data.domain); })));
+  }
+
+  function providerCard(p, domain) {
+    var pre = "sso_" + p.id + "_";
+    var status = h("span", {});
+    var result = h("div", { "aria-live": "polite" });
+    var clientId = h("input", { type: "text", id: pre + "id", autocomplete: "off", spellcheck: "false", value: p.client_id });
+    var secret = h("input", { type: "password", id: pre + "secret", autocomplete: "new-password" });
+    var extra = h("input", { type: "text", id: pre + "extra", autocomplete: "off", spellcheck: "false",
+      value: p.extra || (p.id === "google" ? domain : ""), placeholder: p.id === "microsoft" ? "00000000-0000-0000-0000-000000000000" : "example.com" });
+    var on = h("input", { type: "checkbox", id: pre + "on", checked: p.enabled });
+    var removeSlot = h("span", {});
+
+    function field(input, label, help) { return h("div", { class: "field" }, h("label", { class: "l", for: input.id }, label), input, hint(help)); }
+    function paint(v) {
+      p = v;
+      status.replaceChildren(h("span", { class: "pill " + (v.ready ? "ok" : "off") }, v.ready ? "On" : (v.client_id ? "Off" : "Not set up")));
+      secret.value = "";
+      secret.placeholder = v.secret_set ? "Saved. Leave blank to keep it." : "";
+      removeSlot.replaceChildren(confirmButton("Remove", "Confirm remove", remove, v.client_id || v.secret_set) || "");
+    }
+    async function save(e) {
+      e.preventDefault();
+      result.replaceChildren(msg("wait", "Saving…"));
+      try {
+        paint(await api("PUT", "/sso/" + p.id, { enabled: on.checked, client_id: clientId.value, client_secret: secret.value, extra: extra.value }));
+        result.replaceChildren(msg("ok", p.ready ? "Saved. The sign-in page now shows “Sign in with " + p.label + "”." : "Saved. It is not shown on the sign-in page until it is switched on."));
+      } catch (err) { if (me) result.replaceChildren(msg("bad", err.message)); }
+    }
+    async function remove() {
+      try {
+        await api("DELETE", "/sso/" + p.id);
+        clientId.value = ""; extra.value = p.id === "google" ? domain : ""; on.checked = false;
+        paint({ id: p.id, label: p.label, enabled: false, ready: false, client_id: "", secret_set: false, extra: "", redirect_uri: p.redirect_uri });
+        result.replaceChildren(msg("ok", p.label + " sign-in removed. People who used it can still sign in with a password, if they have one."));
+      } catch (err) { if (me) result.replaceChildren(msg("bad", err.message)); }
+    }
+    paint(p);
+
+    return h("section", { class: "panel sso-card" },
+      h("div", { class: "head" }, h("h3", {}, h("span", { class: "plogo" }, logo(SSO_LOGO[p.id], 20)), "Sign in with " + p.label, tip(SSO_SETUP[p.id])), h("div", { class: "head-right" }, status)),
+      h("form", { onsubmit: save },
+        h("div", { class: "field" }, h("span", { class: "l" }, "Return address to register"), copyRow(p.redirect_uri, p.label + " return address"),
+          hint("Register it exactly. It is where " + p.label + " sends people back after they sign in.")),
+        h("div", { class: "form aligned" },
+          field(clientId, p.id === "microsoft" ? "Application (client) ID" : "Client ID", ""),
+          field(secret, "Client secret", p.id === "microsoft" ? "The secret's Value, not its ID. Secrets expire: renew it before then." : "Stored encrypted. Never shown again."),
+          field(extra, p.extra_label, p.id === "microsoft" ? "Only accounts in this organisation can sign in." : "Only accounts in this Google Workspace domain can sign in.")),
+        h("div", { class: "sso-foot" }, h("label", { class: "switch" }, on, "Show on the sign-in page"),
+          h("div", { class: "actions" }, removeSlot, h("button", { class: "btn primary", type: "submit" }, "Save"))),
+        result));
+  }
+
   // ---- users -----------------------------------------------------------------------
   async function viewUsers(main) {
     var addBox = h("section", { class: "panel" });
@@ -1221,6 +1463,32 @@
     var statusF = selectOf([["", "Any status"], ["Active", "Active"], ["Deactivated", "Deactivated"], ["nopw", "No password yet"]], "", draw, "Status");
     var count = h("span", { class: "pill off" });
 
+    // How the person signs in. A linked Microsoft or Google account has an × that unlinks it (second click confirms).
+    var METHOD = { local: "Password", microsoft: "Microsoft", google: "Google" };
+    function signInCell(u, self) {
+      var ways = u.sign_in || [];
+      if (!ways.length) return h("span", { class: "meta" }, "Not set up yet");
+      return h("div", { class: "signin-list" }, ways.map(function (k) {
+        var chip = h("span", { class: "signin-chip" }, k === "local" ? icon("key", 14) : logo(SSO_LOGO[k], 14), METHOD[k]);
+        if (k !== "local" && !self) {
+          var timer = null;
+          var x = h("button", { type: "button", class: "chip-x", title: "Unlink this " + METHOD[k] + " account", "aria-label": "Unlink the " + METHOD[k] + " account of " + u.email }, icon("x", 12));
+          x.addEventListener("click", async function () {
+            if (!timer) {
+              chip.classList.add("arming"); x.title = "Click again to unlink. They are signed out everywhere.";
+              timer = setTimeout(function () { chip.classList.remove("arming"); x.title = "Unlink this " + METHOD[k] + " account"; timer = null; }, 5000);
+              return;
+            }
+            clearTimeout(timer); timer = null;
+            try { await api("POST", "/users/" + u.id + "/sso/" + k + "/unlink", {}); result.replaceChildren(msg("ok", "Unlinked the " + METHOD[k] + " account of " + u.email + ".")); }
+            catch (err) { if (me) result.replaceChildren(msg("bad", err.message)); }
+            refresh();
+          });
+          chip.appendChild(x);
+        }
+        return chip;
+      }));
+    }
     function personCell(u, self) {
       return h("div", { class: "file" }, h("span", { class: "avatar sm", "aria-hidden": "true" }, initials(u.email)),
         h("div", { class: "row-text" }, h("b", {}, u.name || u.email, self ? h("span", { class: "pill ok" }, "You") : null), h("span", { class: "meta" }, u.email)));
@@ -1245,8 +1513,8 @@
           h("td", { "data-label": "Role" }, self ? h("span", { class: "fixed-value", title: "You cannot change your own role" }, ROLE_LABEL[u.role])
             : selectOf(roleOptions, u.role, function (e) { save(u, { role: e.target.value }, "Role updated."); }, "Role of " + u.email)),
           h("td", { "data-label": "Department" }, selectOf(deptOptions, u.department_id, function (e) { save(u, { department_id: Number(e.target.value) }, "Department updated."); }, "Department of " + u.email)),
-          h("td", { "data-label": "Status" }, h("span", { class: "pill " + (u.status === "Active" ? "ok" : "off") }, u.status),
-            !u.credentials_set ? h("div", { class: "meta" }, "No password yet") : null),
+          h("td", { "data-label": "Status" }, h("span", { class: "pill " + (u.status === "Active" ? "ok" : "off") }, u.status)),
+          h("td", { "data-label": "Sign-in" }, signInCell(u, self)),
           h("td", { class: "nw", "data-label": "Last sign-in" }, u.last_sign_in ? when(u.last_sign_in) : h("span", { class: "meta" }, "Never")),
           h("td", { class: "act" }, self ? null : [
             u.status === "Active" ? h("button", { type: "button", class: "btn small", onclick: function () { newLink(u); } }, "Password link") : null,
@@ -1255,7 +1523,7 @@
               : h("button", { type: "button", class: "btn small", onclick: function () { save(u, { status: "Active" }, "Activated " + u.email + "."); } }, "Activate")])));
       });
       list.replaceChildren(h("div", { class: "tablewrap" }, h("table", { class: "people-table" },
-        h("thead", {}, h("tr", {}, ["Person", "Role", "Department", "Status", "Last sign-in", ""].map(function (t) { return h("th", {}, t); }))), body)));
+        h("thead", {}, h("tr", {}, ["Person", "Role", "Department", "Status", "Sign-in", "Last sign-in", ""].map(function (t) { return h("th", {}, t); }))), body)));
     }
     async function refresh() {
       try { all = await api("GET", "/users"); draw(); }

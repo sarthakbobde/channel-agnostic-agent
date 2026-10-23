@@ -18,7 +18,7 @@ from pydantic import BaseModel
 
 from app import global_settings
 from app.admin import roles, users
-from app.admin.auth import LoginLimiter, SessionSigner, fingerprint
+from app.admin.auth import LoginLimiter, SessionSigner, session_fingerprint
 from app.channels import get_store
 from app.channels.manager import manager as default_manager
 from app.channels.store import ChannelStore
@@ -98,7 +98,7 @@ def admin_session(request: Request, ctx: AdminContext = Depends(get_ctx),
                   _: None = Depends(local_only)) -> Session:
     payload = ctx.signer.read(request.cookies.get(COOKIE))
     user = users.get_user(ctx.db, payload["sub"]) if payload else None
-    if not payload or not user or not user["password_hash"]             or fingerprint(user["password_hash"]) != payload.get("pw")             or user["status"] != "Active" or user["role"] not in users.PANEL_ROLES:
+    if not payload or not user or not users.sign_in_methods(user)             or session_fingerprint(user) != payload.get("pw")             or user["status"] != "Active" or user["role"] not in users.PANEL_ROLES:
         raise HTTPException(401, "Sign in required.")
     if request.method not in ("GET", "HEAD", "OPTIONS"):
         sent = request.headers.get("x-csrf-token", "")
@@ -111,7 +111,7 @@ def admin_session(request: Request, ctx: AdminContext = Depends(get_ctx),
 
 
 def _set_cookie(request: Request, response: Response, ctx: AdminContext, user: dict) -> str:
-    token, csrf = ctx.signer.issue(user["email"], fingerprint(user["password_hash"]))
+    token, csrf = ctx.signer.issue(user["email"], session_fingerprint(user))
     response.set_cookie(COOKIE, token, max_age=ctx.signer.ttl, httponly=True, samesite="strict",
                         secure=is_https(request), path="/admin")
     return csrf

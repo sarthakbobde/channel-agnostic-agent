@@ -1,5 +1,5 @@
 """People: Admins and Editors (who sign in to the admin panel) and Viewers (people the assistant
-answers). Local password sign-in now; `provider` leaves room for Entra ID later."""
+answers). Password sign-in, plus Microsoft or Google single sign-on for people already in the list (sso.py)."""
 import hashlib
 import re
 import secrets
@@ -43,13 +43,24 @@ def validate_password(password: str) -> None:
 def _view(u: User) -> dict:
     return {"id": u.id, "email": u.email, "name": u.name, "role": u.role, "department_id": u.department_id,
             "status": u.status, "provider": u.provider, "created_at": u.created_at,
-            "last_sign_in": u.last_sign_in, "password_hash": u.password_hash}
+            "last_sign_in": u.last_sign_in, "password_hash": u.password_hash,
+            "sso_microsoft": u.sso_microsoft, "sso_google": u.sso_google, "session_version": u.session_version or 0}
+
+
+SSO_PROVIDERS = ("microsoft", "google")
+_PRIVATE = ("password_hash", "sso_microsoft", "sso_google", "session_version")
+
+
+def sign_in_methods(u: dict) -> list[str]:
+    """How a person can sign in: "local" (email and password), "microsoft", "google"."""
+    return ([m for m, key in (("local", "password_hash"), ("microsoft", "sso_microsoft"), ("google", "sso_google")) if u.get(key)])
 
 
 def public(u: dict) -> dict:
     """The user without anything sensitive (and whether a password has been chosen yet)."""
-    out = {k: v for k, v in u.items() if k != "password_hash"}
+    out = {k: v for k, v in u.items() if k not in _PRIVATE}
     out["credentials_set"] = bool(u.get("password_hash"))
+    out["sign_in"] = sign_in_methods(u)
     return out
 
 
@@ -201,6 +212,51 @@ def authenticate_chat(db: Database, email: str, password: str) -> dict | None:
         dummy_verify(password or "")
         return None
     return u if verify_password(password or "", u["password_hash"]) else None
+
+
+def sso_sign_in(db: Database, provider: str, subject: str, email: str) -> tuple[dict | None, str]:
+    """The panel user for a verified Microsoft or Google account, as (user, outcome).
+
+    Nobody is created here: the person must already be in the list. The first sign-in links the account
+    to the person with the same email; after that the link is used, so a later change of email in
+    Microsoft or Google cannot move the sign-in to someone else. Outcomes: "ok", "linked" (first sign-in),
+    "not_invited", "not_allowed" (deactivated or a Viewer) and "linked_elsewhere" (the email's person is
+    already linked to a different account).
+    """
+    column = {"microsoft": User.sso_microsoft, "google": User.sso_google}[provider]
+    attr = "sso_" + provider
+    with db.session() as s:
+        u = s.scalar(select(User).where(column == subject))
+        outcome = "ok"
+        if u is None:
+            u = s.scalar(select(User).where(User.email == normalize_email(email)))
+            if u is None:
+                return None, "not_invited"
+            if getattr(u, attr):
+                return None, "linked_elsewhere"
+            outcome = "linked"
+        if u.status != "Active" or u.role not in PANEL_ROLES:
+            return None, "not_allowed"
+        if outcome == "linked":
+            setattr(u, attr, subject)
+        s.flush()
+        return _view(u), outcome
+
+
+def unlink_sso(db: Database, uid: int, provider: str) -> dict:
+    """Remove a linked Microsoft or Google account and end the person's sessions."""
+    if provider not in SSO_PROVIDERS:
+        raise ValueError("Unknown sign-in provider.")
+    with db.session() as s:
+        u = s.get(User, uid)
+        if u is None:
+            raise ValueError("No such person.")
+        if not getattr(u, "sso_" + provider):
+            raise ValueError("That account is not linked.")
+        setattr(u, "sso_" + provider, None)
+        u.session_version = (u.session_version or 0) + 1
+        s.flush()
+        return _view(u)
 
 
 def touch_sign_in(db: Database, email: str) -> None:

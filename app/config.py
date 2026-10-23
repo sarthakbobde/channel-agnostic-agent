@@ -26,6 +26,7 @@ class Settings:
     admin_host: str = os.getenv("ADMIN_HOST", "127.0.0.1")               # where the separate admin listener binds
     admin_require_https: bool = os.getenv("ADMIN_REQUIRE_HTTPS", "true").lower() in ("1", "true", "yes")
     admin_allow_remote: bool = os.getenv("ADMIN_ALLOW_REMOTE", "false").lower() in ("1", "true", "yes")
+    admin_public_url: str = os.getenv("ADMIN_PUBLIC_URL", "")           # e.g. https://agent.example.com (sign-in return address)
     cors_origins: tuple = tuple(o.strip() for o in os.getenv("CORS_ORIGINS", "").split(",") if o.strip())
 
     top_k: int = int(os.getenv("TOP_K", "5"))

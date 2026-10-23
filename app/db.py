@@ -74,6 +74,10 @@ class User(Base):
     # Profile photo (PNG, JPEG or WebP, at most 512 KB). Deferred so listing users never loads the bytes.
     avatar: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True, deferred=True)
     avatar_type: Mapped[str] = mapped_column(String(32), default="")
+    # Single sign-on: the linked Microsoft ("<tenant>:<object id>") and Google (subject) accounts.
+    sso_microsoft: Mapped[str | None] = mapped_column(String(96), unique=True, nullable=True)
+    sso_google: Mapped[str | None] = mapped_column(String(64), unique=True, nullable=True)
+    session_version: Mapped[int] = mapped_column(Integer, default=0, server_default="0")   # raise to end every session
 
 
 class Department(Base):

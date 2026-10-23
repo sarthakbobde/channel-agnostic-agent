@@ -53,6 +53,13 @@ def fingerprint(password_hash: str | None) -> str:
     return hashlib.sha256((password_hash or "").encode()).hexdigest()[:12]
 
 
+def session_fingerprint(user: dict) -> str:
+    """What an admin session is bound to: the password (if any) and the session version. Version 0 gives the
+    same value as fingerprint(), so sessions issued before single sign-on existed stay valid."""
+    version = user.get("session_version") or 0
+    return fingerprint((user.get("password_hash") or "") + (f"#v{version}" if version else ""))
+
+
 # ---- sessions ----------------------------------------------------------------
 class SessionSigner:
     """Stateless signed sessions: base64(payload).hmac. Key is derived from the first master key."""
@@ -64,15 +71,25 @@ class SessionSigner:
         self._key = hashlib.sha256(purpose.encode() + b":" + first.encode()).digest()
         self.ttl = ttl
 
+    def child(self, purpose: str, ttl: int) -> "SessionSigner":
+        """A signer with its own key for another kind of token, so one kind can never be read as the other."""
+        c = object.__new__(SessionSigner)
+        c._key = hashlib.sha256(purpose.encode() + b":" + self._key).digest()
+        c.ttl = ttl
+        return c
+
     def _sig(self, body: str) -> str:
         return _b64(hmac.new(self._key, body.encode("ascii"), hashlib.sha256).digest())
+
+    def sign(self, payload: dict) -> str:
+        """A signed token for `payload`, which expires after the signer's ttl."""
+        body = _b64(json.dumps({**payload, "exp": int(time.time()) + self.ttl}, separators=(",", ":")).encode())
+        return f"{body}.{self._sig(body)}"
 
     def issue(self, email: str, pw_fp: str) -> tuple[str, str]:
         """Returns (cookie token, csrf token)."""
         csrf = secrets.token_urlsafe(24)
-        payload = {"sub": email, "exp": int(time.time()) + self.ttl, "csrf": csrf, "pw": pw_fp}
-        body = _b64(json.dumps(payload, separators=(",", ":")).encode())
-        return f"{body}.{self._sig(body)}", csrf
+        return self.sign({"sub": email, "csrf": csrf, "pw": pw_fp}), csrf
 
     def read(self, token: str | None) -> dict | None:
         if not token or "." not in token:

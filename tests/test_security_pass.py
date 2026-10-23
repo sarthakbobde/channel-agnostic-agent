@@ -132,9 +132,13 @@ def test_the_editor_and_viewer_route_lists_are_exactly_what_was_approved():
 
 def test_anonymous_is_refused_on_every_admin_route(world):
     anon = client()
+    # Public on purpose: password sign-in, and Microsoft/Google sign-in (which buttons to show, start, and the return
+    # address). Those three only list provider names or redirect; tests/test_sso.py covers what they accept.
+    public = ("/auth/login", "/auth/set-password", "/auth/logout", "/auth/sso", "/auth/sso/{provider}/start", "/auth/sso/{provider}/callback")
     bad = [(m, p, anon.request(m, fill(p), json={} if m in ("POST", "PUT") else None).status_code) for m, p in admin_routes()
-           if not p.endswith(("/auth/login", "/auth/set-password", "/auth/logout"))]
+           if not p.endswith(public)]
     assert [b for b in bad if b[2] not in (401, 403)] == [], [b for b in bad if b[2] not in (401, 403)]
+    assert anon.get("/admin/api/auth/sso").json() == {"providers": []}               # nothing else, signed in or not
 
 
 def test_editors_cannot_use_the_admin_only_parts_of_the_routes_they_do_have(world):

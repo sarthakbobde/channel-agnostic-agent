@@ -39,7 +39,7 @@ prompts, guardrails, people and retention. Changes apply within seconds, with no
 | **Guardrails** | Question length, prompt injection, toxic language, banned topics per department, personal-data masking on questions and redaction on answers, protection of the hidden instructions. |
 | **Conversations** | Stored in the database (personal data masked), long chats summarised in the background, retention per department, audited export. |
 | **Monitoring** | Home dashboard, usage and cost per provider/model/department/knowledge base, guardrail and knowledge-base reports, alerts (banner, webhook, email), a full audit log. |
-| **People** | Admin, Editor and Viewer roles; departments; groups; one-time set-password links; profile photos. |
+| **People** | Admin, Editor and Viewer roles; departments; groups; one-time set-password links; profile photos; sign in with Microsoft or Google (admin center). |
 
 ---
 
@@ -51,8 +51,8 @@ icons with the ☰ button.
 | Menu | Screens |
 |---|---|
 | **Home** | Greeting, a *Finish setting up* checklist checked against the real configuration, this week's numbers against last week's, channel status and *Needs your attention*. |
-| **Settings** | **Channels** (official platform logos, status, credentials, test, enable) · **LLM providers** (which model answers, connections, allowed providers) · **KB configuration** (create knowledge bases; splitting, search model, search storage, rebuilds, who can ask) · **RAG settings** (retrieval, retention, limits, alert notifications) · **Guardrails** |
-| **User management** | **Users** (search and filters, roles, departments, password links) · **Groups** · **Departments** (retention, banned topics, Editors) |
+| **Settings** | **Channels** (official platform logos, status, credentials, test, enable) · **LLM providers** (which model answers, connections, allowed providers) · **KB configuration** (create knowledge bases; splitting, search model, search storage, rebuilds, who can ask) · **RAG settings** (retrieval, retention, limits, alert notifications) · **Guardrails** · **Sign-in** (Sign in with Microsoft / Google) |
+| **User management** | **Users** (search and filters, roles, departments, how each person signs in, password links) · **Groups** · **Departments** (retention, banned topics, Editors) |
 | **Input** | **Prompts** (prompt list with Edit, Test and History tabs) · **KB documents** (drag-and-drop upload, file list with type icons, who can see each file) |
 | **Monitoring** | **Reports** · **Audit log** · **Conversations** · **Usage and cost** |
 | **Account** (your name, top right) | Profile photo, department and groups, light/dark theme, accent colour, password |
@@ -141,7 +141,7 @@ Most configuration lives in the admin center. `.env` holds what the server needs
 | `CHAT_API_TOKEN` | **yes** | Bearer token for `/chat` and `/conversations` (the Streamlit page sends it) |
 | `ADMIN_EMAIL_DOMAIN` | if not `sysfore.com` | Company domain people's emails must be on |
 | `DATABASE_URL` / `ADMIN_DB_PATH` | optional | PostgreSQL (`postgresql+psycopg://user:pass@host:5432/db`) instead of the SQLite file |
-| `ADMIN_PORT`, `ADMIN_HOST`, `ADMIN_ALLOW_REMOTE`, `ADMIN_REQUIRE_HTTPS` | optional | Run the admin center on its own port, and let Editors reach it over HTTPS ([DEPLOYMENT.md](DEPLOYMENT.md)) |
+| `ADMIN_PORT`, `ADMIN_HOST`, `ADMIN_ALLOW_REMOTE`, `ADMIN_REQUIRE_HTTPS`, `ADMIN_PUBLIC_URL` | optional | Run the admin center on its own port, and let Editors reach it over HTTPS ([DEPLOYMENT.md](DEPLOYMENT.md)) |
 | `CHROMA_PATH`, `DOCS_DIR`, `CHAT_DIR`, `MODELS_DIR` | optional | Where vectors, uploaded files, chats and downloaded models are kept |
 | `MAX_UPLOAD_MB`, `WEB_UI_URL`, `CORS_ORIGINS` | optional | Upload limit, where Viewers' password links point, allowed browser origins |
 | `NINEROUTER_*`, `LLM_MODEL`, `SLACK_*`, `TEAMS_*`, `GCHAT_*`, `TOP_K`, `CHUNK_*` … | first start only | Seeds imported once into the database; afterwards edit them in the admin center |
@@ -171,7 +171,8 @@ The answer comes back with its sources (file, page, score). Webhooks for the cha
   the API and UI, and scrubbed from logs and the audit log.
 - **Admin center**: local-only by default; signed HttpOnly session cookies, CSRF tokens on every change, sign-in lockout, role
   checks on every request (default-deny), strict CSP. It refuses requests that arrive through a tunnel or proxy unless
-  remote access over HTTPS is switched on.
+  remote access over HTTPS is switched on. Optional Microsoft / Google sign-in (OpenID Connect with PKCE, state and nonce;
+  one Entra tenant or one Workspace domain) only signs in people already under Users; email and password stay as a fallback.
 - **Chat API**: bearer token required; per-person rate limit; `/docs` only from the server itself.
 - **Document access** is applied inside the vector search, so restricted passages never reach the model.
 - **Personal data** is masked before it reaches the model, the conversation history or any log.

@@ -236,9 +236,11 @@ server {
 
 ## Known limits
 
-- Local password sign-in only; Microsoft Entra ID sign-in is planned and needs an app
-  registration.
-- Sessions cannot be revoked individually (they end on expiry, password change or key change).
+- Sign in with Microsoft (Entra ID, one organisation) or Google (one Workspace domain) is available for the admin
+  center (Settings → Sign-in; USER_MANUAL.md section 1.1) and needs an app registration / OAuth client. The Web UI
+  chat still uses email and password.
+- Sessions cannot be revoked one by one. They end on expiry, password change, key change, or when an Admin unlinks
+  the person's Microsoft or Google account (which ends all of that person's sessions).
 - In Docker the admin page is refused, because the container sees the Docker network and not localhost,
   unless `ADMIN_ALLOW_REMOTE=true`. The remote-admin design (HTTPS, separate port) is a later phase.
   The compose file carries `APP_SECRET_KEY`, the chat token and an `admin_data` volume.
