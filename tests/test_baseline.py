@@ -70,7 +70,7 @@ def test_retrieve_scored_asks_chroma_for_five_and_converts_distance(monkeypatch,
     monkeypatch.setattr(retriever, "get_collection", lambda: Col())
     got = retriever.retrieve_scored("leave policy")
     assert asked == {"n": 5, "q": ["leave policy"]}
-    assert got[0] == {"text": "doc1", "source": "a.pdf", "page": 3, "score": 0.75}   # score = 1 - distance
+    assert got[0] == {"text": "doc1", "source": "a.pdf", "page": 3, "score": 0.75, "via": "meaning"}   # score = 1 - distance
     assert got[1]["page"] is None and got[1]["score"] == 0.1                          # page 0 means "no page"
 
 
@@ -115,7 +115,7 @@ def test_page_zero_is_omitted_from_the_citation_label(monkeypatch):
 
 def test_format_sources_shape_and_snippet_limit():
     src = rag.format_sources([chunk("x" * 500, page=4, score=0.61)])
-    assert src == [{"n": 1, "source": "HR-Policy.pdf", "page": 4, "score": 0.61, "snippet": "x" * 300}]
+    assert src == [{"n": 1, "source": "HR-Policy.pdf", "page": 4, "score": 0.61, "snippet": "x" * 300, "via": "meaning"}]
 
 
 # ---- router: search or chat, standalone query ---------------------------------------

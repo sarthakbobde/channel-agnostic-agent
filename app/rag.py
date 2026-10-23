@@ -69,7 +69,7 @@ def search(query: str, kb_ids=None) -> list[dict]:
 def format_sources(chunks: list[dict]) -> list[dict]:
     return [
         {"n": i, "source": c["source"], "page": c["page"],
-         "score": c["score"], "snippet": c["text"][:300]}
+         "score": c["score"], "snippet": c["text"][:300], "via": c.get("via", "meaning")}
         for i, c in enumerate(chunks, 1)
     ]
 

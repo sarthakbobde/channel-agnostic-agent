@@ -32,10 +32,27 @@ class Snapshot:
     retention_job_enabled: bool
     export_enabled: bool
     chat_rate_per_minute: int
+    retrieval_strategy: str
+    hybrid_keyword_weight: float
+    diversity: float
+
+
+STRATEGIES = {
+    "similarity": "Similarity (meaning)",
+    "keyword": "Keyword (exact words)",
+    "hybrid": "Hybrid (meaning + keywords)",
+    "mmr": "Similarity with variety",
+}
 
 
 # What the admin screen shows and what is accepted. `integer` fields reject fractions.
 SPEC = (
+    {"name": "retrieval_strategy", "label": "How passages are found", "kind": "choice", "choices": list(STRATEGIES), "choice_labels": STRATEGIES,
+     "help": "Similarity finds passages with the same meaning (best for ordinary questions). Keyword finds the exact words (best for codes, names and numbers). Hybrid does both and merges the results. Similarity with variety avoids sending near-identical passages. Default similarity."},
+    {"name": "hybrid_keyword_weight", "label": "Hybrid: weight of keywords", "min": 0.0, "max": 1.0, "step": 0.05, "integer": False,
+     "help": "Only used by Hybrid. From 0 to 1: 0 follows meaning only, 1 follows keywords only, 0.5 weighs them equally. Default 0.5."},
+    {"name": "diversity", "label": "Variety between passages", "min": 0.0, "max": 1.0, "step": 0.05, "integer": False,
+     "help": "Only used by Similarity with variety. From 0 to 1: higher skips passages that repeat each other. Default 0.3."},
     {"name": "top_k", "label": "Passages used per question", "min": 1, "max": 50, "step": 1, "integer": True,
      "help": "How many of the best-matching passages from your documents are given to the AI model with each question. More gives it more to work with but costs more. Default 5."},
     {"name": "score_threshold", "label": "How closely a passage must match", "min": 0.0, "max": 1.0, "step": 0.01, "integer": False,
@@ -72,13 +89,13 @@ def defaults() -> Snapshot:
                     chunk_size=env.chunk_size, chunk_overlap=env.chunk_overlap,
                     max_retention_days=env.max_retention_days, prompt_max_chars=env.prompt_max_chars,
                     summarise_after_turns=env.summarise_after_turns, retention_job_enabled=True, export_enabled=False,
-                    chat_rate_per_minute=20)
+                    chat_rate_per_minute=20, retrieval_strategy="similarity", hybrid_keyword_weight=0.5, diversity=0.3)
 
 
 def _snapshot(row: GlobalSettings) -> Snapshot:
     return Snapshot(row.top_k, row.score_threshold, row.recent_turns, row.chunk_size, row.chunk_overlap,
                     row.max_retention_days, row.prompt_max_chars, row.summarise_after_turns, row.retention_job_enabled,
-                    row.export_enabled, row.chat_rate_per_minute)
+                    row.export_enabled, row.chat_rate_per_minute, row.retrieval_strategy, row.hybrid_keyword_weight, row.diversity)
 
 
 def _read(db: Database) -> tuple[Snapshot, GlobalSettings]:
@@ -129,6 +146,11 @@ def validate(values: dict, base: Snapshot) -> dict:
     clean = {}
     for name, raw in values.items():
         f = _BY_NAME[name]
+        if f.get("kind") == "choice":
+            if raw not in f["choices"]:
+                raise ValueError(f"{f['label']} must be one of: " + ", ".join(f["choices"]) + ".")
+            clean[name] = raw
+            continue
         if f.get("kind") == "bool":
             if not isinstance(raw, bool):
                 raise ValueError(f"{f['label']} must be on or off.")
@@ -156,7 +178,10 @@ def view(db: Database | None = None) -> dict:
     db = db or get_db()
     snap, row = _read(db)
     values = asdict(snap)
-    fields = [{"name": f["name"], "label": f["label"], "kind": "bool", "help": f["help"], "value": values[f["name"]]}
+    fields = [{"name": f["name"], "label": f["label"], "kind": "choice", "help": f["help"], "value": values[f["name"]],
+               "choices": f["choices"], "choice_labels": f["choice_labels"]}
+              if f.get("kind") == "choice" else
+              {"name": f["name"], "label": f["label"], "kind": "bool", "help": f["help"], "value": values[f["name"]]}
               if f.get("kind") == "bool" else
               {"name": f["name"], "label": f["label"], "kind": "number", "help": f["help"],
                "min": f["min"], "max": f["max"], "step": f["step"], "value": values[f["name"]]} for f in SPEC]

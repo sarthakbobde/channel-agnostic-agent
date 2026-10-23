@@ -223,6 +223,19 @@ class PgVectorStore(VectorStore):
             yield [r[0] for r in rows], [r[1] for r in rows]
             offset += len(rows)
 
+    def iter_texts(self, batch=500):
+        from psycopg import sql
+        offset = 0
+        while True:
+            with self._connect() as conn:
+                if not self._exists(conn):
+                    return
+                rows = conn.execute(sql.SQL("SELECT id, content, metadata FROM {} ORDER BY id LIMIT %s OFFSET %s").format(self._t()), (batch, offset)).fetchall()
+            if not rows:
+                return
+            yield [r[0] for r in rows], [r[1] for r in rows], [r[2] or {} for r in rows]
+            offset += len(rows)
+
 
 # ---- Azure AI Search -------------------------------------------------------------------------------------------------------------
 API_VERSION = "2024-07-01"
@@ -416,6 +429,17 @@ class AzureSearchStore(VectorStore):
         for i in range(0, len(rows), batch):
             part = rows[i:i + batch]
             yield [r["id"] for r in part], [json.loads(r.get("metadata") or "{}") for r in part]
+
+    def iter_texts(self, batch=500):
+        skip = 0
+        while True:
+            status, res = self._call("POST", f"/indexes/{self.index}/docs/search",
+                                     {"search": "*", "select": "id,content,metadata", "top": batch, "skip": skip, "orderby": "id"})
+            rows = (res or {}).get("value", []) if status != 404 else []
+            if not rows:
+                return
+            yield [r["id"] for r in rows], [r["content"] for r in rows], [json.loads(r.get("metadata") or "{}") for r in rows]
+            skip += len(rows)
 
 
 # ---- registry --------------------------------------------------------------------------------------------------------------------------

@@ -311,6 +311,9 @@ The injection and toxicity checks are rules, not an AI model: they catch known w
 
 | Setting | Default | Meaning |
 |---|---|---|
+| How passages are found | Similarity | Similarity (meaning), Keyword (exact words), Hybrid (both) or Similarity with variety (see below) |
+| Hybrid: weight of keywords | 0.5 | 0 follows meaning only, 1 follows keywords only (Hybrid only) |
+| Variety between passages | 0.3 | Higher skips passages that repeat each other (Similarity with variety only) |
 | Passages used per question | 5 | How many of the best-matching passages are given to the AI model |
 | How closely a passage must match | 0.35 | Passages that match less well are ignored; if none match well enough, the assistant says it could not find the answer |
 | Recent question-and-answer pairs the AI model remembers | 6 | How many of the latest question-and-answer pairs it sees |
@@ -321,6 +324,17 @@ The injection and toxicity checks are rules, not an AI model: they catch known w
 | Delete expired conversations every day | on | A daily job; each run is audited |
 | Allow exporting conversations | **off** | Turn on only after the privacy sign-off; exports need a reason and are audited |
 | Questions per person per minute | 20 | Slows anyone asking faster; the API answers 429, chat apps reply "too quickly". 0 = no limit |
+
+### How passages are found
+
+| Strategy | Use it when | How it works |
+|---|---|---|
+| **Similarity** (default) | People ask in their own words | Matches the meaning of the question to the meaning of each passage |
+| **Keyword** | Questions contain codes, names or numbers, such as "Form 16" or "VPN-7" | Matches exact words (BM25), ignoring filler words and simple plurals |
+| **Hybrid** | You want the safest all-round choice | Runs both and merges the two ranked lists; the weight setting says which to trust more |
+| **Similarity with variety** | Documents repeat themselves and answers feel redundant | Picks relevant passages but skips ones that say the same as an already chosen passage |
+
+Notes: the minimum match setting applies to all strategies (for keyword matches a strong match scores about 0.5 or more, a single common word under 0.3). Who may see which document is checked inside every strategy, so a restricted document is never found by keyword either. Each source shown in the chat says whether it was found by meaning, keywords or both. Keyword search is built in memory from the indexed passages, so it works with Chroma, pgvector and Azure AI Search.
 
 ---
 
