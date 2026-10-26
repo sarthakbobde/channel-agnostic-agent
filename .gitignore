@@ -28,3 +28,6 @@ chats.bak-*/
 
 # downloaded embedding models
 models/
+
+# Teams app package (built per Azure Bot App ID)
+deploy/teams/*.zip

@@ -52,7 +52,6 @@ admin_data/
 *.pdf
 .pytest_cache/
 .venv/
-streamlit_app.py
 start.ps1
 *.md
 !README.md

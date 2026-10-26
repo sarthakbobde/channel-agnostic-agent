@@ -16,6 +16,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY pyproject.toml .
 COPY app/ ./app/
 COPY channels.yaml .
+# The optional Streamlit web chat runs from the same image (a second container or Cloud Run service)
+COPY streamlit_app.py .
 RUN pip install -e .
 
 # Persistent data lives in volumes: admin database, chat history, vector store, documents
@@ -23,6 +25,9 @@ RUN mkdir -p /app/admin_data /app/chats /app/chroma_db /app/data/docs /app/data/
     && useradd --create-home --uid 10001 agent \
     && chown -R agent:agent /app
 USER agent
+
+# Bake the default embedding model (about 80 MB) into the image, so a fresh container never downloads it
+RUN python -c "from chromadb.utils.embedding_functions import DefaultEmbeddingFunction as F; F()(['warm up'])"
 
 EXPOSE 8000 8090
 
