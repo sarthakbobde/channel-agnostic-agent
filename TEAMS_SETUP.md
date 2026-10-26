@@ -42,9 +42,9 @@ admin page, so testers never see a password.
 
 **Admin page** (signed in as an Admin)
 8. Settings → **LLM providers**: add Azure OpenAI and press Test.
-9. Settings → **KB configuration** → new knowledge base. Vector store **PostgreSQL + pgvector** with
-   the connection string left empty (the default, Chroma, is lost each time Cloud Run scales to zero).
-   Upload the documents under Input → **KB documents**.
+9. Settings → **KB configuration** → new knowledge base. It starts on **PostgreSQL + pgvector** (the
+   admin database), which is what Cloud Run needs: check it says so, since Chroma would be lost each
+   time Cloud Run scales to zero. Upload the documents under Input → **KB documents**.
 10. User management → **Groups**: create a group for the testers.
 11. User management → **Users**: add each tester as a **Viewer**, with exactly the address they sign in
     to Microsoft with (`name@sysfore.com`), and put them in the group.

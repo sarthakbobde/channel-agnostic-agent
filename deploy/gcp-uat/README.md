@@ -19,8 +19,10 @@
 | Secret Manager | `caa-app-secret-key`, `caa-chat-api-token`, `caa-database-url`, `caa-db-password`, `caa-uat-admin-password` | Generated, never printed. **Back up `caa-app-secret-key`**: without it the stored credentials cannot be decrypted. |
 | Service accounts | `caa-uat-app`, `caa-uat-web`, `caa-uat-build` | Least privilege: the app reads its own secrets, the data bucket and Cloud SQL; the web UI has no roles. |
 
-Knowledge bases must use the **PostgreSQL + pgvector** vector store (connection string empty). The default,
-Chroma, lives on the container's temporary disk and is lost whenever the app scales to zero.
+Knowledge bases must use the **PostgreSQL + pgvector** vector store (connection string empty). New ones start on it
+automatically because the admin database is PostgreSQL. Chroma would live on the container's temporary disk and be
+lost whenever the app scales to zero; the default knowledge base created on the first deploy (before this became
+automatic) is on Chroma, so switch it to pgvector or leave it unused.
 
 ## Deploy a new version
 

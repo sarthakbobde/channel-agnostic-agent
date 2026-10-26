@@ -130,7 +130,10 @@ def check_strategy(strategy: str) -> None:
 
 def create_kb(db: Database, name: str, description: str, department_id: int, chunk_size: int | None = None,
               chunk_overlap: int | None = None, *, collection: str | None = None, is_default: bool = False,
-              chunk_strategy: str = "recursive") -> dict:
+              chunk_strategy: str = "recursive", store: str | None = None) -> dict:
+    """A new knowledge base. Its store is `store`, or for a new collection the preferred one (pgvector on PostgreSQL);
+    an existing `collection` is a Chroma collection unless `store` says otherwise."""
+    from app.knowledge import storeadapters
     name = (name or "").strip()
     if not name or len(name) > 80:
         raise ValueError("Give the knowledge base a name (up to 80 characters).")
@@ -138,6 +141,7 @@ def create_kb(db: Database, name: str, description: str, department_id: int, chu
         raise ValueError("The description can be up to 500 characters.")
     check_chunking(chunk_size, chunk_overlap, db)
     check_strategy(chunk_strategy)
+    store = store or (storeadapters.preferred_store() if collection is None else storeadapters.DEFAULT_STORE)
     with db.session() as s:
         if s.get(Department, department_id) is None:
             raise ValueError("That department does not exist.")
@@ -145,7 +149,7 @@ def create_kb(db: Database, name: str, description: str, department_id: int, chu
             raise ValueError("A knowledge base with that name already exists.")
         kb = KnowledgeBase(name=name, description=(description or "").strip(), department_id=department_id,
                            collection=collection or f"pending-{uuid.uuid4().hex[:12]}", chunk_size=chunk_size,
-                           chunk_overlap=chunk_overlap, chunk_strategy=chunk_strategy, is_default=is_default)
+                           chunk_overlap=chunk_overlap, chunk_strategy=chunk_strategy, is_default=is_default, store=store)
         s.add(kb)
         s.flush()
         if collection is None:
@@ -241,6 +245,22 @@ def delete_kb(db: Database, kb_id: int) -> dict:
 
 
 # ---- first-run set-up: the default knowledge base and complete metadata on existing chunks --------
+def _default_kb_store() -> str:
+    """The default knowledge base wraps the original Chroma collection, so it stays on Chroma while that collection
+    holds anything; an empty one (a fresh install) starts on the preferred store like any new knowledge base."""
+    from app import retriever
+    from app.knowledge import storeadapters
+    preferred = storeadapters.preferred_store()
+    if preferred == storeadapters.DEFAULT_STORE:
+        return preferred
+    try:
+        empty = retriever.get_collection().count() == 0
+    except Exception:
+        log.warning("could not count the original collection; the default knowledge base stays on Chroma", exc_info=True)
+        empty = False
+    return preferred if empty else storeadapters.DEFAULT_STORE
+
+
 def ensure_default(db: Database | None = None) -> dict:
     db = db or get_db()
     existing = default_kb(db)
@@ -251,8 +271,8 @@ def ensure_default(db: Database | None = None) -> dict:
     if dept is None:
         raise RuntimeError("no default department; run the database migrations first")
     kb = create_kb(db, DEFAULT_NAME, "Documents that were indexed before knowledge bases existed.", dept,
-                   collection=settings.collection, is_default=True)
-    log.info("created the default knowledge base for collection %r", settings.collection)
+                   collection=settings.collection, is_default=True, store=_default_kb_store())
+    log.info("created the default knowledge base for collection %r (%s)", settings.collection, kb["store"])
     return kb
 
 
