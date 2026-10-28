@@ -63,7 +63,7 @@ def knowledge_report(date_from: str = "", date_to: str = "", _: Session = Depend
         for (meta,) in s.execute(q).all():
             if not isinstance(meta, dict) or not meta.get("searched"):
                 continue
-            bucket = answered if meta.get("sources") else notfound
+            bucket = answered if meta.get("found", bool(meta.get("sources"))) else notfound
             for kid in meta.get("kb_ids") or []:
                 bucket[kid] = bucket.get(kid, 0) + 1
         tq = select(UsageRecord.kb_id, func.coalesce(func.sum(UsageRecord.input_tokens), 0)).where(UsageRecord.kind == "embedding").group_by(UsageRecord.kb_id)

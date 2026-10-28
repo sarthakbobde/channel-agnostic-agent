@@ -9,22 +9,27 @@ SLOW_DOWN = "You are asking too quickly. Please wait a moment and try again."
 ERROR_REPLY = "Sorry, something went wrong while answering. Please try again."
 
 
+def _reply(answer: str) -> dict:
+    """A reply that is not an answer from the assistant (refused, slowed down, failed): nothing to rate."""
+    return {"answer": answer, "answer_id": None, "found": False, "sources": [], "searched": False, "query": ""}
+
+
 def handle(env: Envelope) -> dict:
-    """Run one turn. Returns {answer, sources, searched, query}; never raises."""
+    """Run one turn. Returns {answer, answer_id, found, sources, searched, query}; never raises."""
     who = identity.resolve(env.email)
     if not who.active:
         log.info("refused deactivated sender %s", who.email)
-        return {"answer": identity.DENIED_REPLY, "sources": [], "searched": False, "query": ""}
+        return _reply(identity.DENIED_REPLY)
     ok, _ = ratelimit.allow("chat:" + (who.email.lower() if who.email else f"{env.channel}:{env.workspace}:{env.user}"),
                             global_settings.current().chat_rate_per_minute)
     if not ok:
-        return {"answer": SLOW_DOWN, "sources": [], "searched": False, "query": ""}
+        return _reply(SLOW_DOWN)
     token = identity.bind(who)
     try:
         return chat_service.chat(env.text, env.conv_id, **({"kb_ids": list(env.kb_ids)} if env.kb_ids else {}))
     except Exception:
         log.exception("chat failed for %s", env.conv_id)
-        return {"answer": ERROR_REPLY, "sources": [], "searched": False, "query": ""}
+        return _reply(ERROR_REPLY)
     finally:
         identity.unbind(token)
 

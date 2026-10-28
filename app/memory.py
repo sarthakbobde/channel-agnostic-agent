@@ -55,6 +55,8 @@ def _ensure(s, conv_id: str, who) -> Conversation:
 def _store(s, conv_id: str, who, role: str, content: str, meta: dict | None, complete: bool, ts=None) -> Message:
     conv = _ensure(s, conv_id, who)
     msg = Message(conversation_id=conv_id, role=role, content=content, meta=meta or {}, complete=complete, ts=ts or _now())
+    if role == "user":                                                    # who asked: a thread can have several askers
+        msg.author_user_id, msg.author_email = getattr(who, "user_id", None), getattr(who, "email", "") or ""
     s.add(msg)
     if role == "user" and not conv.title:
         conv.title = content.replace("\n", " ")[:50]
@@ -140,7 +142,7 @@ def get_messages(conv_id: str, db: Database | None = None) -> list[dict]:
     """Full history for display."""
     with (db or get_db()).session() as s:
         rows = list(s.scalars(select(Message).where(Message.conversation_id == conv_id).order_by(Message.id)))
-        return [{"role": m.role, "content": m.content if (m.complete or m.content) else INTERRUPTED,
+        return [{"id": m.id, "role": m.role, "content": m.content if (m.complete or m.content) else INTERRUPTED,
                  "meta": m.meta or {}, **({} if m.complete else {"incomplete": True})} for m in rows]
 
 

@@ -29,6 +29,8 @@ class MessageRequest(BaseModel):
 
 class ChatResponse(BaseModel):
     answer: str
+    answer_id: int | None = None      # the saved answer (for ratings); None when nothing was answered
+    found: bool = False               # False for "could not find this", a refusal or an error
     sources: list[dict]
     searched: bool
     query: str = ""
@@ -167,6 +169,8 @@ def chat(request: MessageRequest, caller: Caller = Depends(require_chat_caller))
 
         return ChatResponse(
             answer=answer,
+            answer_id=meta.get("answer_id"),
+            found=meta.get("found", False),
             sources=meta.get("sources", []),
             searched=meta.get("searched", False),
             query=meta.get("query", ""),

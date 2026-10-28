@@ -134,25 +134,30 @@ def can_query(db: Database, kb: dict, who) -> bool:
 def visible_doc_keys(db: Database, kb: dict, who) -> list[str]:
     """The `doc_id` values of the documents in this knowledge base that `who` may see, worked out from the database NOW
     (group membership and status are not remembered anywhere). Chunks that belong to no known document are never returned."""
+    return list(visible_docs(db, kb, who))
+
+
+def visible_docs(db: Database, kb: dict, who) -> dict[str, int]:
+    """Same as `visible_doc_keys`, as {doc_id stored on the chunks: Document id}."""
     if not who.active:
-        return []
+        return {}
     with db.session() as s:
         docs = list(s.execute(select(Document.id, Document.doc_key, Document.visibility).where(Document.kb_id == kb["id"])).all())
         rows = list(s.scalars(select(DocumentAccess).where(DocumentAccess.document_id.in_([d[0] for d in docs])))) if docs else []
     if manages(who, kb):
-        return [key for _, key, _ in docs]
+        return {key: doc_id for doc_id, key, _ in docs}
     shared: dict[int, set] = {}
     for r in rows:
         shared.setdefault(r.document_id, set()).add((r.kind, r.ref_id))
     mine = {("group", g) for g in who.group_ids} | ({("user", who.user_id)} if who.user_id is not None else set())
-    out = []
+    out = {}
     for doc_id, key, visibility in docs:
         if visibility == "everyone":
-            out.append(key)
+            out[key] = doc_id
         elif visibility in ("groups", "people"):
             wanted = {x for x in shared.get(doc_id, set()) if x[0] == ("group" if visibility == "groups" else "user")}
             if wanted & mine:
-                out.append(key)
+                out[key] = doc_id
         # any other value: hidden (fail closed)
     return out
 

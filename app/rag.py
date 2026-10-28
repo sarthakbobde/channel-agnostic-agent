@@ -69,13 +69,21 @@ def search(query: str, kb_ids=None) -> list[dict]:
 def format_sources(chunks: list[dict]) -> list[dict]:
     return [
         {"n": i, "source": c["source"], "page": c["page"],
-         "score": c["score"], "snippet": c["text"][:300], "via": c.get("via", "meaning")}
+         "score": c["score"], "snippet": c["text"][:300], "via": c.get("via", "meaning"),
+         **{k: c[k] for k in ("doc_id", "kb_id", "chunk_id", "title") if k in c}}
         for i, c in enumerate(chunks, 1)
     ]
 
 
-def stream_grounded(question: str, chunks: list[dict], purpose: str = "answer") -> Iterator[str]:
-    """Answer from retrieved chunks. No chunks -> fallback, no LLM call."""
+def not_found(answer: str) -> bool:
+    """Did the model say the context has no answer? The marker from the reply rules, or the sentence older prompts ask for."""
+    return prompts.NOT_FOUND_MARKER in answer or FALLBACK.lower().rstrip(".") in answer.lower()
+
+
+def stream_grounded(question: str, chunks: list[dict], purpose: str = "answer", standalone: str = "") -> Iterator[str]:
+    """Answer from retrieved chunks. No chunks -> fallback, no LLM call.
+    `question` is what the person wrote (masked). `standalone` is the router's self-contained version, added only when it
+    differs, so a follow-up such as "what about contractors?" still makes sense without the conversation."""
     if not chunks:
         yield FALLBACK
         return
@@ -83,6 +91,8 @@ def stream_grounded(question: str, chunks: list[dict], purpose: str = "answer") 
         f"[{i}] ({c['source']}{', p.' + str(c['page']) if c['page'] else ''})\n{c['text']}"
         for i, c in enumerate(chunks, 1)
     )
+    if standalone and " ".join(standalone.split()).lower() != " ".join(question.split()).lower():
+        question = f"{question}\n\n(In this conversation, the question means: {standalone})"
     msgs = [SystemMessage(content=prompts.assemble("answer", context)),
             HumanMessage(content=question)]
     for part in get_chat_model().stream(msgs, purpose=purpose):

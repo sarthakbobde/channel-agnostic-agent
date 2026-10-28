@@ -11,6 +11,7 @@ import math
 import re
 import threading
 import time
+import unicodedata
 from collections import Counter, defaultdict
 
 log = logging.getLogger(__name__)
@@ -21,7 +22,25 @@ SATURATION = 3.0                  # score = bm25 / (bm25 + SATURATION): a strong
 STOPWORDS = frozenset("a an the of to in on at for from by with and or is are was were be been it its this that these those as do does did "
                       "how what when where which who whom why can could should would will shall may might i me my we our you your they their "
                       "there here about into over under per any all".split())
-_WORD = re.compile(r"\w+", re.UNICODE)
+
+
+def _marks() -> str:
+    """Every combining mark in the Basic Multilingual Plane, as a character class body. Python's word class leaves them
+    out, which splits words in Indic and other scripts (Hindi vowel signs and viramas are marks) into single letters."""
+    out, start, prev = [], None, None
+    for cp in range(0x10000):
+        if unicodedata.category(chr(cp)).startswith("M") and not 0xD800 <= cp <= 0xDFFF:
+            if start is None:
+                start = cp
+            elif cp != prev + 1:
+                out.append((start, prev))
+                start = cp
+            prev = cp
+    out.append((start, prev))
+    return "".join(f"{re.escape(chr(a))}-{re.escape(chr(b))}" for a, b in out)
+
+
+_WORD = re.compile(r"(?:\w|[" + _marks() + "])+", re.UNICODE)
 
 
 def tokens(text: str) -> list[str]:

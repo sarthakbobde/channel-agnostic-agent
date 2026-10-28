@@ -281,6 +281,8 @@ class Message(Base):
     meta: Mapped[dict] = mapped_column(JSON, default=dict)
     complete: Mapped[bool] = mapped_column(Boolean, default=True)
     ts: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    author_user_id: Mapped[int | None] = mapped_column(Integer, nullable=True)   # who asked (user messages)
+    author_email: Mapped[str] = mapped_column(String(254), default="")
 
 
 class SetPasswordToken(Base):
@@ -388,7 +390,8 @@ class UsageRecord(Base):
     department: Mapped[str | None] = mapped_column(String(64), nullable=True)
     kb_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     kind: Mapped[str] = mapped_column(String(16), default="llm")       # llm | embedding (later)
-    purpose: Mapped[str] = mapped_column(String(16), default="answer") # router | answer | summarise
+    purpose: Mapped[str] = mapped_column(String(32), default="answer") # router | answer | summary | ...
+    message_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)  # the answer this call served
     input_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
     output_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
     cost: Mapped[float | None] = mapped_column(Float, nullable=True)   # null when the model has no price

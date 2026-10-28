@@ -26,6 +26,34 @@ this file.
 | D16 | Redaction of legitimate contact details | Output redaction has an Admin allow-list that is never redacted. | No allow-list. | Proposed |
 | D17 | Access precedence | A user needs both knowledge-base query permission and document visibility; group membership and user status are checked at query time; deleting or replacing a document removes its chunks immediately. | Document access only. | Proposed |
 
+## Release 2 decisions
+
+From `docs/development-plan-v4.1-release-2.md` (section A5), which has the full wording. They are all **Proposed** until confirmed. "Built" says which phase implemented the decision.
+
+| ID | Question | Default taken | Built | Status |
+|---|---|---|---|---|
+| D18 | Release 2 scope | As in plan section A1 | n/a | Proposed |
+| D19 | Answer language | The question's language. Per-KB Admin policy. Low-confidence detection falls back to the conversation's last language, then the KB default | Phase 3 | Proposed |
+| D20 | Embedding model | Per KB. Existing KBs stay on MiniLM until an Admin switches. The recommended model comes from the Phase 2 comparison | Phase 3 | Proposed |
+| D21 | Language detection and normalization | A local detector behind an adapter, chosen in the Phase 2 spike. Clean-up only, never translation | Phase 3 | Proposed |
+| D22 | Glossary | Query-time expansion of the search text by default, used by both vector and keyword search. Index-time is optional per KB | Phase 4 | Proposed |
+| D23 | Trace | References only, not the rendered prompt. Passage text is shown only to viewers allowed to see the document | Phase 1 | Proposed |
+| D24 | Feedback | Only the asker may rate. One rating per person per answer. Comments are always masked | Phase 1 (asker recorded in Phase 0) | Proposed |
+| D25 | Classification and review | The button reason sets the category first, then an LLM classifies the comment, and an Admin can overwrite | Phases 1 and 6 | Proposed |
+| D26 | Suggestions | Generated in the same call, then validated by a search under the asker's access. Off by default | Phase 5 | Proposed |
+| D27 | Alerts and quarantine | Rolling windows with minimum counts and distinct users. Quarantine is only suggested, never automatic by default | Phase 6 | Proposed |
+| D28 | Roll-ups | Counts only. Kept longer than raw feedback | Phase 6 | Proposed |
+| D29 | Message catalogue | English is byte-identical to today. Other languages need Admin approval | Phase 3 | Proposed |
+| D30 | Google Chat buttons | In the synchronous reply. Verified in the Phase 2 spike, with text only as the fallback | Phase 2 | Proposed |
+| D31 | Per-KB retrieval settings | The threshold applies per KB before the merge, and per-KB values come with scoped settings | Phase 0 (applied per KB); Phase 2 (settings) | Proposed |
+| D32 | Quarantine mechanism | Quarantined documents are removed from the document allow-list, so it works on every store | Phase 6 | Proposed |
+| D33 | Not found | A code-owned marker that the code replaces with the not-found text. Answers carry `found` | Phase 0 | Proposed |
+| D34 | Language through the router | The router keeps the user's language. The answer step receives the original question, plus its standalone meaning when that differs | Phase 0 | Proposed |
+| D35 | Keyword search and languages | Words keep their combining marks. Cross-language questions skip keyword search | Phase 0 (words); Phase 3 (cross-language) | Proposed |
+| D36 | Masking step | Masking is its own step after the input checks, and everything after it sees only masked text. **Changed in Phase 0:** it still follows the guardrails master switch (see Deviations) | Phase 0 | Proposed |
+| D37 | Interactive payloads | Signed, with an expiry. Every action is idempotent, so there is no nonce store | Phase 2 | Proposed |
+| D38 | Change events | Derived from the audit log and index versions. No table | Phase 6 | Proposed |
+
 ## Deviations from the plan, recorded as they happen
 
 | Phase | Plan said | What was done | Why |
@@ -104,3 +132,7 @@ this file.
 | 9c | Audit search | Action filter is a prefix; target column widened to 254. | Targets such as `Knowledge base / file name` exceeded 64. |
 | 9c | Answered vs not-found | Counted from answers saved after this change (they record `kb_ids`). | Older answers do not say which knowledge base was used. |
 | 8c | Store health cadence | Every 5 minutes. | Quick enough to catch an outage, light enough not to load the stores. |
+| R2-0 | D36: masking follows the masking switch, not the guardrails master switch | Masking is its own step (`guardrails.mask_input`), but it still runs only when the guardrails master switch **and** masking are on, as before. | Running it with the master switch off would change what "guardrails off" means for every Admin, and would load the personal-data model in setups that switched it off. Confirm whether "off" should still mask. |
+| R2-0 | Answers stream token by token when output checks are off | Every answer is now collected whole before it is handed over. | The not-found marker must never reach a person. Every caller (API, chat apps, preview) already joined the answer, so nothing visible changes. |
+| R2-0 | The editable base prompt says to reply "I couldn't find this…" | It is left unchanged. A code-owned reply rule after it asks for the marker, and both are recognised. | Admins may have published their own base prompt, and the code must not rewrite it. |
+| R2-0 | Sources gain `doc_language` | Not yet. `doc_id`, `kb_id`, `chunk_id` and `title` are added now. | Document languages are only known after Phase 3. |

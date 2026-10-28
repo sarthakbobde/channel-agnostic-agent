@@ -89,6 +89,11 @@ def token_for(user: User | None) -> str:
     return _tokens.get(user.identifier) or (user.metadata or {}).get("token", "")
 
 
+def step_id(message_id, fallback: str) -> str:
+    """The id Chainlit shows a message under. A saved answer keeps its API message id, so a rating can name it."""
+    return f"msg-{message_id}" if message_id else fallback
+
+
 def with_sources(answer: str, sources: list[dict]) -> str:
     if not sources:
         return answer
@@ -167,7 +172,7 @@ class BackendDataLayer(BaseDataLayer):
         for i, m in enumerate(messages):
             mine = m.get("role") == "user"
             ts = (start + timedelta(seconds=i)).isoformat()
-            steps.append({"id": f"{thread_id}:{i}", "threadId": thread_id, "parentId": None,
+            steps.append({"id": step_id(m.get("id"), f"{thread_id}:{i}"), "threadId": thread_id, "parentId": None,
                           "name": owner if mine else self.assistant_name,
                           "type": "user_message" if mine else "assistant_message",
                           "output": m.get("content", "") if mine else
@@ -193,9 +198,10 @@ class BackendDataLayer(BaseDataLayer):
             _owners[thread_id] = user_id
 
     async def upsert_feedback(self, feedback: Feedback) -> str:
-        # Kept in the service log for the UAT review; the API has no store for ratings yet.
-        log.info("feedback %s on thread %s, message %s: %s", feedback.value, feedback.threadId, feedback.forId,
-                 (feedback.comment or "")[:500])
+        # Kept in the service log for the UAT review until the API stores ratings. The comment itself is never logged:
+        # it is free text that may hold personal data.
+        log.info("feedback %s on thread %s, message %s, %s", feedback.value, feedback.threadId, feedback.forId,
+                 "with a comment" if feedback.comment else "no comment")
         return feedback.id or str(uuid.uuid4())
 
     async def delete_feedback(self, feedback_id: str) -> bool:

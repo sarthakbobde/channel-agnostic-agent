@@ -523,6 +523,44 @@ PyTorch, transformers and LLM Guard are NOT installed yet (part 6b); their memor
   router, answer, summariser or preview model call, forged and missing CSRF tokens on every state-changing route, upload names
   and types and sizes, one-time links, and login not revealing which accounts exist. It found no vulnerability.
 
+## 20. Release 2, Phase 0: release and groundwork (2026-10-28)
+
+This follows `docs/development-plan-v4.1-release-2.md`, on branch `r2/phase-0-groundwork`. The decisions are D18 to D38 and the deviations are marked R2-0 in `DECISIONS.md`.
+
+- **Web chat on Chainlit.** It is built and tested, and released after review. Rating comments are no longer written to the service log, only whether a comment was given.
+- **Answer identity.**
+  - Every saved answer returns its `answer_id`, the assistant message id. It comes back from `chat_service`, `channels.core.handle()`, `POST /chat` (which also gains `found`), and the history API, which now gives every message its `id`.
+  - The web chat shows live and past answers under `msg-<id>`, so a rating can name the answer.
+  - Previews and replies that are not answers have no id.
+- **Who asked.** Questions record their author (`messages.author_user_id`, `author_email`). Several people can ask in one Slack or Teams thread.
+- **Sources carry ids.** Each source has `doc_id` (the Document), `kb_id`, `chunk_id` (the store's passage id) and `title`. How channels present sources is unchanged.
+- **The person's own question reaches the answer step (D34).**
+  - The answer model now gets the masked question as written. The router's standalone version is added only when it differs.
+  - The router is told to keep the user's language and never translate.
+- **Masking is its own step (D36).** The input checks (`guardrails.check_input`) are followed by masking (`guardrails.mask_input`). If masking breaks, the question is refused and nothing is stored. It still follows the master switch (deviation R2-0).
+- **Not found, whatever the wording (D33).**
+  - A code-owned reply rule asks for a marker. The code replaces the marker with the usual sentence and sets `found=false`.
+  - The old sentence is still recognised, since Admin-edited prompts keep it.
+  - Answers are now always collected whole before they are handed over, so the marker never reaches anyone.
+  - The answered/not-found report uses `found` when it is present.
+- **Threshold per knowledge base, before merging (D31).** Each KB's passages are filtered by its own threshold (`retriever.threshold_for`, still the global value) and then merged. Scores from different embedding models no longer meet a single bar after merging.
+- **Keyword words in every script (D35).** Combining marks stay inside words. Hindi was split into single letters before and now forms whole words. English results are unchanged.
+- **Usage linked to its answer.**
+  - Model and embedding calls made during a turn record `usage_records.message_id`.
+  - `purpose` is widened to 32 characters.
+- **Migration 0026.**
+- **Tests.**
+  - `tests/test_release2_groundwork.py` has 22 new tests.
+  - These existing tests were updated deliberately:
+    - baseline: the threshold now applies inside each KB's search, and results carry ids;
+    - check_5: the prompt parity check now expects the reply rule;
+    - retrieval strategies: they fake the new `visible_docs`;
+    - web chat: real ids, and no comment in the log.
+- **Results:**
+  - **SQLite:** 395 passed, 12 skipped.
+  - **PostgreSQL:** still to run. Docker Desktop was not running.
+  - **Flaky check:** `check_3b` failed once in one full run, then passed alone, in its group, and in the next full run. It looks like an existing timing wait.
+
 ## How to run
 
 ```powershell

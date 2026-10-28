@@ -66,14 +66,22 @@ def _diverse(hits: list[dict], k: int, diversity: float) -> list[dict]:
     return chosen
 
 
-def _search_kb(kb: dict, query: str, k: int, who) -> list[dict]:
-    """One knowledge base, with the asker's access applied INSIDE the search, for every strategy."""
+def threshold_for(kb: dict) -> float:
+    """The lowest similarity a passage from this knowledge base may have. Scores from different embedding models are not
+    comparable, so it is applied per knowledge base, before several are merged. (Per-KB values come with scoped settings.)"""
+    return global_settings.current().score_threshold
+
+
+def _search_kb(kb: dict, query: str, k: int, who, min_score: float | None = None) -> list[dict]:
+    """One knowledge base, with the asker's access applied INSIDE the search, for every strategy.
+    Each hit carries the Document id of its passage (`doc_pk`)."""
     from app.db import get_db
     from app.knowledge import access, kbs
     db = get_db()
     if not access.can_query(db, kb, who):
         return []
-    keys = access.visible_doc_keys(db, kb, who)
+    docs = access.visible_docs(db, kb, who)
+    keys = list(docs)
     if not keys:
         return []
     snap = global_settings.current()
@@ -96,16 +104,19 @@ def _search_kb(kb: dict, query: str, k: int, who) -> list[dict]:
     safe = [h for h in hits if access.permits(h["metadata"], who, kb)]
     if len(safe) != len(hits):
         log.error("access filter let through %d passage(s) the chunk metadata does not permit; dropped", len(hits) - len(safe))
-    return safe
+    if min_score is not None:
+        safe = [h for h in safe if h["score"] >= min_score]
+    return [{**h, "kb_id": kb.get("id"), "doc_pk": docs.get(h["metadata"].get("doc_id"))} for h in safe]
 
 
-def retrieve_scored(query: str, top_k: int | None = None, kb_ids=None) -> list[dict]:
-    """Top-k passages the CURRENT asker may see, with similarity scores, NO threshold applied.
+def retrieve_scored(query: str, top_k: int | None = None, kb_ids=None, apply_threshold: bool = False) -> list[dict]:
+    """Top-k passages the CURRENT asker may see, with similarity scores. With `apply_threshold`, each knowledge base's
+    threshold is applied to its own passages first; otherwise none is applied.
     Several knowledge bases are searched separately and merged by reciprocal rank fusion (D5)."""
     from app import identity
     who = identity.current()
     k = top_k or global_settings.current().top_k
-    lists = [_search_kb(kb, query, k, who) for kb in _targets(kb_ids)]
+    lists = [_search_kb(kb, query, k, who, threshold_for(kb) if apply_threshold else None) for kb in _targets(kb_ids)]
     lists = [l for l in lists if l]
     if len(lists) > 1:
         fused: dict[tuple, list] = {}
@@ -117,10 +128,11 @@ def retrieve_scored(query: str, top_k: int | None = None, kb_ids=None) -> list[d
     else:
         merged = lists[0] if lists else []
     return [{"text": h["text"], "source": h["metadata"].get("source"),
-             "page": h["metadata"].get("page") or None, "score": h["score"], "via": h.get("via", "meaning")} for h in merged]
+             "page": h["metadata"].get("page") or None, "score": h["score"], "via": h.get("via", "meaning"),
+             "doc_id": h.get("doc_pk"), "kb_id": h.get("kb_id"), "chunk_id": h.get("id"),
+             "title": h["metadata"].get("source")} for h in merged]
 
 
 def retrieve(query: str, kb_ids=None) -> list[dict]:
-    """Top-k passages that pass the score threshold."""
-    scored = retrieve_scored(query, kb_ids=kb_ids) if kb_ids else retrieve_scored(query)
-    return [c for c in scored if c["score"] >= global_settings.current().score_threshold]
+    """Top-k passages that pass their knowledge base's score threshold."""
+    return retrieve_scored(query, kb_ids=kb_ids, apply_threshold=True) if kb_ids else retrieve_scored(query, apply_threshold=True)

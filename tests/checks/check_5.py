@@ -71,7 +71,7 @@ prompts.seed(db)
 ok(prompts.published(db, prompts.BASE_ANSWER)["version"] == 1 and prompts.published(db, prompts.BASE_CHAT)["text"] == rag.DIRECT_PROMPT, "built-in prompts seeded as version 1 (Published)")
 prompts.seed(db)
 ok(len(prompts.list_versions(db, prompts.BASE_ANSWER)) == 1, "seeding twice changes nothing")
-ok(prompts.assemble("answer", "[1] ctx") == f"{rag.SYSTEM_PROMPT}\n\nCONTEXT:\n[1] ctx", "with no department prompt the assembled prompt is exactly what it was before")
+ok(prompts.assemble("answer", "[1] ctx") == f"{rag.SYSTEM_PROMPT}\n\n{prompts.REPLY_RULES}\n\nCONTEXT:\n[1] ctx", "with no department prompt the assembled prompt is the base prompt, the code's reply rules and the context")
 
 
 def ask(email, text="How many days of annual leave?"):

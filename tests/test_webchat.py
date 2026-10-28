@@ -54,8 +54,8 @@ def api(monkeypatch):
             if req.method == "DELETE":
                 return httpx.Response(200, json={})
             return httpx.Response(200, json={"id": cid, "messages": [
-                {"role": "user", "content": "how many leaves?", "meta": {}},
-                {"role": "assistant", "content": "18 [1]", "meta": {"sources": [{"n": 1, "source": "HR.pdf", "page": None}]}}]})
+                {"id": 41, "role": "user", "content": "how many leaves?", "meta": {}},
+                {"id": 42, "role": "assistant", "content": "18 [1]", "meta": {"sources": [{"n": 1, "source": "HR.pdf", "page": None}]}}]})
         return httpx.Response(404)
 
     monkeypatch.setattr(backend, "transport", httpx.MockTransport(handle))
@@ -119,6 +119,7 @@ def test_an_opened_conversation_shows_both_sides_with_sources(api):
     assert [(s["type"], s["name"]) for s in thread["steps"]] == [("user_message", "amy@sysfore.com"),
                                                                  ("assistant_message", "Sysfore Assistant")]
     assert thread["steps"][1]["output"] == "18 [1]\n\n**Sources**\n- [1] HR.pdf"
+    assert [s["id"] for s in thread["steps"]] == ["msg-41", "msg-42"]          # the API's ids, so a rating can name the answer
     assert run(dl.get_thread("never-listed")) is None
 
 
@@ -141,11 +142,12 @@ def test_a_new_chat_belongs_to_its_author_and_can_be_deleted(api):
     assert api.calls[-1][:3] == ("DELETE", "/conversations/t1", "amy-token") and run(dl.get_thread_author("t1")) == ""
 
 
-def test_feedback_is_logged(api, caplog):
+def test_feedback_is_logged_without_the_comment(api, caplog):
     dl = backend.BackendDataLayer()
     with caplog.at_level("INFO", logger="webchat"):
-        run(dl.upsert_feedback(Feedback(forId="t1:1", value=0, threadId="t1", comment="wrong policy year")))
-    assert "wrong policy year" in caplog.text
+        run(dl.upsert_feedback(Feedback(forId="msg-42", value=0, threadId="t1", comment="call me on 98450 12345")))
+    assert "msg-42" in caplog.text and "with a comment" in caplog.text
+    assert "98450" not in caplog.text                              # free text can hold personal data
 
 
 @pytest.fixture

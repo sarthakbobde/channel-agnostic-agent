@@ -375,7 +375,9 @@ class Decision:
     reply: str = ""           # what to send back when blocked or failed
 
 
-def guard_input(message: str, db: Database | None = None) -> Decision:
+def check_input(message: str, db: Database | None = None) -> Decision:
+    """The blocking checks on a question (length, injection, toxicity, banned topics). The text is returned unchanged:
+    masking is the separate next step (`mask_input`), so later steps such as language detection only see its output."""
     db = db or get_db()
     try:
         s = current(db)
@@ -394,15 +396,33 @@ def guard_input(message: str, db: Database | None = None) -> Decision:
         if s.banned_topics_enabled and topic_hit(message, banned_topics_for(db, who.department_id)):
             record(db, "banned_topic", "input", "blocked")
             return Decision("", True, s.blocked_reply)
-        if s.mask_enabled:
-            masked, counts = mask(message, s.masked_types, s.mask_names)
-            if counts:
-                record(db, "personal_data", "input", "masked", sum(counts.values()))
-            return Decision(masked)
         return Decision(message)
     except Exception as e:
         _fail(db, e, "question")
         return Decision("", True, FRIENDLY_ERROR)
+
+
+def mask_input(message: str, db: Database | None = None) -> Decision:
+    """Personal-data masking of a question. Everything after this step (detection, storage, logs, models) sees only its
+    output. Fails closed: if masking breaks, the question is refused rather than passed on unmasked."""
+    db = db or get_db()
+    try:
+        s = current(db)
+        if not (s.enabled and s.mask_enabled):
+            return Decision(message)
+        masked, counts = mask(message, s.masked_types, s.mask_names)
+        if counts:
+            record(db, "personal_data", "input", "masked", sum(counts.values()))
+        return Decision(masked)
+    except Exception as e:
+        _fail(db, e, "question")
+        return Decision("", True, FRIENDLY_ERROR)
+
+
+def guard_input(message: str, db: Database | None = None) -> Decision:
+    """Both input steps: the checks, then masking."""
+    gate = check_input(message, db)
+    return gate if gate.blocked else mask_input(gate.text, db)
 
 
 def output_active(db: Database | None = None) -> bool:

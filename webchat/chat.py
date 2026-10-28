@@ -44,7 +44,8 @@ async def answer(message: cl.Message):
     token = backend.token_for(cl.user_session.get("user"))
     status, body = await backend.ask(token, cl.context.session.thread_id, message.content)
     if status == 200:
-        await cl.Message(content=backend.with_sources(body.get("answer", ""), body.get("sources", []))).send()
+        await cl.Message(content=backend.with_sources(body.get("answer", ""), body.get("sources", [])),
+                         **({"id": backend.step_id(body["answer_id"], "")} if body.get("answer_id") else {})).send()
     elif status in (401, 503):
         await cl.ErrorMessage(content="Your session has ended. Sign out (top right) and sign in again.").send()
     elif status in (0, 429):
