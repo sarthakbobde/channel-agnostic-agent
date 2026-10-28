@@ -31,7 +31,7 @@ def _link(ctx: AdminContext, uid: int, actor: str) -> dict:
     if person["role"] in users.PANEL_ROLES:
         return {"token": token, "expires_at": expires.isoformat(), "target": "admin", "path": "/admin#setpw=" + token}
     return {"token": token, "expires_at": expires.isoformat(), "target": "web",
-            "url": settings.web_ui_url.rstrip("/") + "/?setpw=" + token}
+            "url": settings.web_ui_url.rstrip("/") + "/set-password?token=" + token}
 
 
 @router.get("/users")

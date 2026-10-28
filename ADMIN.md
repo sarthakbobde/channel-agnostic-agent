@@ -134,7 +134,7 @@ never the message.
 | `ADMIN_EMAIL_DOMAIN` | Only this domain can be admins (empty = any) | `sysfore.com` |
 | `ADMIN_ALLOW_REMOTE` | Allow non-local admin access (see above) | `false` |
 | `CORS_ORIGINS` | Browser origins allowed to call the API | none |
-| `CHAT_API_TOKEN` | Service token for the chat API (required; the Streamlit page sends it) | none (API locked) |
+| `CHAT_API_TOKEN` | Service token for the chat API (required; for service callers) | none (API locked) |
 | `DATABASE_URL` | PostgreSQL URL instead of the SQLite file, e.g. `postgresql+psycopg://user:pass@host/db` | none |
 
 Without `APP_SECRET_KEY` the admin API answers 503 and the server runs channels from

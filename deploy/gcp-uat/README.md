@@ -11,12 +11,12 @@
 | Resource | Name | Notes |
 |---|---|---|
 | Cloud Run | `caa-uat-app` | API, Teams, Google Chat, admin center. 1 vCPU / 2 GiB, CPU on while running (Teams replies and indexing finish after the request), scales 0 to 1. |
-| Cloud Run | `caa-uat-web` | Streamlit web chat, same image. 512 MiB, request-based billing, scales 0 to 1. |
+| Cloud Run | `caa-uat-web` | Web chat (Chainlit), same image. 512 MiB, request-based billing, scales 0 to 1. |
 | Cloud SQL | `caa-uat-db` | PostgreSQL 16, `db-f1-micro`, database `caa`, user `caa_app`. Admin data and the search index (pgvector). Deletion protection on. |
 | Cloud Storage | `sysfore-nexus-caa-uat-data` | Mounted at `/mnt/data`: uploaded documents (`kb_files/`) and chat history (`chats/`). |
 | Cloud Storage | `sysfore-nexus-caa-uat-builds` | Build uploads, deleted after 7 days. |
 | Artifact Registry | `caa-uat` | The image (`app:<commit>`); the 5 newest are kept. |
-| Secret Manager | `caa-app-secret-key`, `caa-chat-api-token`, `caa-database-url`, `caa-db-password`, `caa-uat-admin-password` | Generated, never printed. **Back up `caa-app-secret-key`**: without it the stored credentials cannot be decrypted. |
+| Secret Manager | `caa-app-secret-key`, `caa-chat-api-token`, `caa-database-url`, `caa-db-password`, `caa-uat-admin-password`, `caa-chainlit-auth-secret` | Generated, never printed. **Back up `caa-app-secret-key`**: without it the stored credentials cannot be decrypted. |
 | Service accounts | `caa-uat-app`, `caa-uat-web`, `caa-uat-build` | Least privilege: the app reads its own secrets, the data bucket and Cloud SQL; the web UI has no roles. |
 
 Knowledge bases must use the **PostgreSQL + pgvector** vector store (connection string empty). New ones start on it

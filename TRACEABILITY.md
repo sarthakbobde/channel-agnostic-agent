@@ -26,7 +26,7 @@ Before the build (sheet 'Summary' in the workbook): 17 built, 21 partial, 44 not
 | 1 | Slack connector, live | Built | app/channels/slack.py | Channels tab | tests/test_channels.py; verified live in the Sysfore workspace | Reading senders' email needs the Slack scopes users:read and users:read.email (owner action). |
 | 2 | Microsoft Teams connector live | Partial | app/channels/teams.py | POST /channels/teams/messages | tests/test_platforms.py | Needs a real Azure Bot, HTTPS address and sideloading (PLATFORM_RUNBOOK.md). |
 | 3 | Google Chat connector live | Partial | app/channels/gchat.py | POST /channels/gchat/events | tests/test_platforms.py | Needs a real Google Workspace app and HTTPS address (PLATFORM_RUNBOOK.md). |
-| 4 | Web UI connector | Built | streamlit_app.py, app/channels/web.py, app/chat_auth.py | POST /chat, /chat-auth/*; Channels tab (Web UI) | tests/test_streamlit_client.py, tests/test_api_security.py, tests/test_exposure.py |  |
+| 4 | Web UI connector | Built | webchat/chat.py, webchat/backend.py, app/channels/web.py, app/chat_auth.py | POST /chat, /chat-auth/*; Channels tab (Web UI) | tests/test_webchat.py, tests/test_api_security.py, tests/test_exposure.py |  |
 | 5 | One answering core for every channel | Built | app/channels/core.py (handle), app/chat_service.py | - | tests/test_hardening.py, tests/test_platforms.py |  |
 | 6 | Channel type, credentials (write-only), enabled, status fields | Built | app/channels/store.py, app/channels/base.py (Field SPEC), app/secretstore.py | GET/PUT/DELETE /admin/api/channels/{typ}; Channels tab | tests/test_store.py, tests/test_admin.py |  |
 | 7 | Display Name field | Not built | - | - | - | Gap: channels have no separate Display Name field (the channel type is the label). Small; not planned in any phase. |
@@ -127,7 +127,7 @@ Before the build (sheet 'Summary' in the workbook): 17 built, 21 partial, 44 not
 | 72 | Adapter pattern for channels, providers, embeddings, stores | Built | channels/base.py, providers/base.py, knowledge/embeddings.py, knowledge/stores.py | - | tests/test_store_contract.py, tests/test_providers.py, tests/test_channels.py |  |
 | 73 | Every config, prompt, document, export and deletion audited | Built | record() calls across the admin APIs | Audit log tab | tests/checks/scenario_admin.py (every configuration step), tests/checks/scenario_resilience_governance.py |  |
 | 74 | Admin panel on desktop and mobile browsers | Built | app/admin/ui/admin.css (responsive) | Admin page | checked by hand on desktop and phone widths | No automated browser test. |
-| 75 | FastAPI, Pydantic, Streamlit, slack-bolt, botbuilder-core, google-auth, Fernet, SQLAlchemy + SQLite, plain-JS admin page | Built | pyproject.toml (pinned) | - | whole suite |  |
+| 75 | FastAPI, Pydantic, Chainlit, slack-bolt, botbuilder-core, google-auth, Fernet, SQLAlchemy + SQLite, plain-JS admin page | Built | pyproject.toml (pinned) | - | whole suite |  |
 | 76 | Provider libraries (langchain-anthropic, langchain-google-genai) | Built | pyproject.toml (langchain-anthropic, langchain-google-genai, langchain-openai) | - | tests/test_providers.py |  |
 | 77 | LLM Guard and Presidio | Partial | app/guardrails.py (Presidio) | - | tests/checks/check_6a.py, tests/checks/scenario_editor_viewer.py | Presidio is used. LLM Guard was rejected (unmaintained, forces older cryptography); rules replace it, see DECISIONS.md. |
 | 78 | python-docx, python-pptx | Built | pyproject.toml, app/knowledge/parsers.py | - | tests/checks/check_3b.py (Word and PowerPoint) |  |

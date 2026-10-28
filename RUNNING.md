@@ -104,7 +104,7 @@ The admin page is on <http://127.0.0.1:8090/admin> in Docker (see section 4).
 
 Check it: <http://127.0.0.1:8000/health> should answer `{"status":"ok", ...}`.
 
-Web chat page (optional, a separate process): `streamlit run streamlit_app.py` then open <http://localhost:8501>.
+Web chat page (optional, a separate process): add `CHAINLIT_AUTH_SECRET` to `.env` (generate one with `chainlit create-secret`), then `cd webchat; chainlit run chat.py --port 8501` and open <http://localhost:8501>.
 
 ## 3. First use, on the admin page (<http://127.0.0.1:8000/admin>)
 

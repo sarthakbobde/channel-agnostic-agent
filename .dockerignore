@@ -55,3 +55,6 @@ admin_data/
 start.ps1
 *.md
 !README.md
+!webchat/chainlit.md
+webchat/.files/
+webchat/.chainlit/translations/

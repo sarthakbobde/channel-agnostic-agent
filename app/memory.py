@@ -150,7 +150,8 @@ def list_conversations(prefix: str = "", db: Database | None = None) -> list[dic
         q = select(Conversation).order_by(Conversation.updated_at.desc())
         if prefix:
             q = q.where(Conversation.id.like(prefix.replace("%", "").replace("_", "\\_") + "%", escape="\\"))
-        return [{"id": c.id, "title": c.title or "New chat"} for c in s.scalars(q)]
+        return [{"id": c.id, "title": c.title or "New chat", "updated_at": c.updated_at.isoformat() if c.updated_at else None}
+                for c in s.scalars(q)]
 
 
 def delete(conv_id: str, db: Database | None = None) -> bool:

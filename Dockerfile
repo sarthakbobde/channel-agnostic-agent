@@ -16,8 +16,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY pyproject.toml .
 COPY app/ ./app/
 COPY channels.yaml .
-# The optional Streamlit web chat runs from the same image (a second container or Cloud Run service)
-COPY streamlit_app.py .
+# The optional web chat (Chainlit) runs from the same image (a second container or Cloud Run service)
+COPY webchat/ ./webchat/
 RUN pip install -e .
 
 # Persistent data lives in volumes: admin database, chat history, vector store, documents

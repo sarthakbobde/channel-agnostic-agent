@@ -92,7 +92,7 @@ app = FastAPI(
     docs_url=None, redoc_url=None, openapi_url=None,      # built-in docs are public; replaced by local-only routes below
 )
 
-# CORS: no browser origin is trusted unless listed in CORS_ORIGINS. (Streamlit and the chat
+# CORS: no browser origin is trusted unless listed in CORS_ORIGINS. (The web chat server and the chat
 # platforms call this server directly, not from a browser page, so they are unaffected.)
 app.add_middleware(
     CORSMiddleware,

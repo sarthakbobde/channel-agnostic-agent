@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="1200" viewBox="0 0 900 1200" preserveAspectRatio="xMidYMid slice">
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#4F46E5"/>
+      <stop offset="1" stop-color="#7C3AED"/>
+    </linearGradient>
+  </defs>
+  <rect width="900" height="1200" fill="url(#g)"/>
+  <g fill="#fff" opacity="0.08">
+    <rect x="520" y="140" width="300" height="220" rx="60"/><path d="M590 355 L590 430 L670 355 Z"/>
+    <rect x="80" y="820" width="260" height="190" rx="52"/><path d="M270 1005 L270 1070 L200 1005 Z"/>
+  </g>
+  <g transform="translate(110 470)" fill="#fff">
+    <rect x="0" y="0" width="88" height="68" rx="20"/><path d="M22 66 L22 92 L48 66 Z"/>
+    <circle cx="26" cy="34" r="7" fill="#4F46E5"/><circle cx="44" cy="34" r="7" fill="#4F46E5"/><circle cx="62" cy="34" r="7" fill="#4F46E5"/>
+    <text x="0" y="170" font-family="system-ui,-apple-system,Segoe UI,sans-serif" font-size="54" font-weight="700">Sysfore Assistant</text>
+    <text x="0" y="226" font-family="system-ui,-apple-system,Segoe UI,sans-serif" font-size="28" opacity="0.85">Answers from Sysfore's policies and documents,</text>
+    <text x="0" y="266" font-family="system-ui,-apple-system,Segoe UI,sans-serif" font-size="28" opacity="0.85">with the source for every answer.</text>
+  </g>
+</svg>

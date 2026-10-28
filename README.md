@@ -31,7 +31,7 @@ prompts, guardrails, people and retention. Changes apply within seconds, with no
 
 | Area | Capabilities |
 |---|---|
-| **Channels** | Slack (Socket Mode, no public URL), Microsoft Teams and Google Chat (HTTPS webhooks), a Streamlit Web UI. Added, tested and switched on in the admin center; a bad credential never stops a working channel. |
+| **Channels** | Slack (Socket Mode, no public URL), Microsoft Teams and Google Chat (HTTPS webhooks), a Web UI (Chainlit). Added, tested and switched on in the admin center; a bad credential never stops a working channel. |
 | **AI providers** | Anthropic, Google Gemini, OpenAI, Azure OpenAI, Grok (xAI), DeepSeek and any OpenAI-compatible endpoint. A preferred model plus a fallback on another provider that takes over on credit, rate-limit, server or timeout errors. |
 | **Knowledge bases** | Several per organisation, each owned by a department and bound to channels. Chunking strategies (fixed size, per page, by heading, semantic) with a preview; embedding models (local MiniLM, local multilingual, OpenAI, Azure OpenAI, Cohere); vector stores (Chroma, pgvector, Azure AI Search). Changes rebuild into a new versioned index with one-click rollback. |
 | **Document access** | Each document is visible to everyone, selected groups or selected people. Enforced inside the search, so blocked content never reaches the model. |
@@ -92,7 +92,7 @@ Copy-Item .env.example .env
 
 - `.\start.ps1 -Tunnel` also opens a public HTTPS address for testing Teams and Google Chat (needs `cloudflared`); the admin
   page then moves to its own local port (`http://127.0.0.1:8001/admin`) so it is never tunnelled.
-- Optional Web UI: `streamlit run streamlit_app.py`, then `http://localhost:8501`.
+- Optional Web UI: add `CHAINLIT_AUTH_SECRET` to `.env` (`chainlit create-secret`), then `cd webchat; chainlit run chat.py --port 8501` and open `http://localhost:8501`.
 - **Back up `APP_SECRET_KEY`.** Without it the stored credentials cannot be decrypted and must be entered again.
 - The database schema is managed by Alembic and upgrades itself when the server starts.
 
@@ -138,7 +138,7 @@ Most configuration lives in the admin center. `.env` holds what the server needs
 | Name | Needed | Meaning |
 |---|---|---|
 | `APP_SECRET_KEY` | **yes** | Master key that encrypts every stored secret. Back it up. Rotation: [ADMIN.md](ADMIN.md) |
-| `CHAT_API_TOKEN` | **yes** | Bearer token for `/chat` and `/conversations` (the Streamlit page sends it) |
+| `CHAT_API_TOKEN` | **yes** | Bearer token for `/chat` and `/conversations` (service callers; people sign in instead) |
 | `ADMIN_EMAIL_DOMAIN` | if not `sysfore.com` | Company domain people's emails must be on |
 | `DATABASE_URL` / `ADMIN_DB_PATH` | optional | PostgreSQL (`postgresql+psycopg://user:pass@host:5432/db`) instead of the SQLite file |
 | `ADMIN_PORT`, `ADMIN_HOST`, `ADMIN_ALLOW_REMOTE`, `ADMIN_REQUIRE_HTTPS`, `ADMIN_PUBLIC_URL` | optional | Run the admin center on its own port, and let Editors reach it over HTTPS ([DEPLOYMENT.md](DEPLOYMENT.md)) |
@@ -212,7 +212,7 @@ app/
   admin/ui/           The admin center (index.html, admin.js, admin.css; no build step, no framework)
   jobs/               Scheduled jobs (retention, store health)
   migrations/         Alembic migrations (upgrade automatically on start)
-streamlit_app.py      Optional Web UI
+webchat/             Optional Web UI (Chainlit): chat.py, backend.py, theme and logos
 tests/                Unit, API, security, migration and end-to-end scenario tests
 docs/                 Architecture, one-pager, BRD-vs-build
 ```

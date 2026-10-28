@@ -388,7 +388,7 @@ Edited on the server, then restart. Never commit this file.
 | Name | Needed | Meaning |
 |---|---|---|
 | `APP_SECRET_KEY` | **yes** | Master key that encrypts every stored secret. Generate: `python -m app.secretstore generate`. Back it up elsewhere; lose it and every credential must be re-entered |
-| `CHAT_API_TOKEN` | **yes** | Token for the chat API and the Streamlit page. Generate: `python -c "import secrets; print(secrets.token_urlsafe(32))"` |
+| `CHAT_API_TOKEN` | **yes** | Token for service callers of the chat API. Generate: `python -c "import secrets; print(secrets.token_urlsafe(32))"` |
 | `NINEROUTER_BASE_URL`, `NINEROUTER_API_KEY`, `LLM_MODEL` | first start only | Seeds the first provider; afterwards use the LLM providers screen |
 | `SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN`, `TEAMS_*`, `GCHAT_*` | first start only | Seed the channels once; afterwards use the Channels screen |
 | `ADMIN_EMAIL_DOMAIN` | if not `sysfore.com` | Domain people's emails must be on |
@@ -396,7 +396,7 @@ Edited on the server, then restart. Never commit this file.
 | `CHROMA_PATH`, `DOCS_DIR`, `CHAT_DIR`, `MODELS_DIR` | optional | Where the vector files, uploaded documents and downloaded models live |
 | `ADMIN_PORT`, `ADMIN_HOST` | optional | Run the admin page on its own port (recommended before exposing the app) |
 | `ADMIN_ALLOW_REMOTE`, `ADMIN_REQUIRE_HTTPS` | optional | Let Editors reach the admin page from other machines, over HTTPS only (see `DEPLOYMENT.md`) |
-| `WEB_UI_URL` | optional | Where Viewers' one-time links point (the Streamlit address) |
+| `WEB_UI_URL` | optional | Where Viewers' one-time links point (the web chat address) |
 | `CORS_ORIGINS` | optional | Browser origins allowed to call the API; empty = none |
 | `MAX_UPLOAD_MB`, `GUARDRAILS_ENABLED`, `HOST_PORT` | optional | Upload limit, the guardrail master switch at start-up, Docker's published port |
 

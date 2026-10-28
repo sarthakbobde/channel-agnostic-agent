@@ -1055,6 +1055,10 @@
       return panel("Which model answers", hintText, null, h("div", { class: "empty" }, "Add a connection first, then choose its model here."));
     }
     var cur = data.model_settings || { preferred: null, fallback: null, request_timeout: 60 };
+    // The selects below fill themselves in, which looks configured; nothing answers until a choice is saved.
+    if (!cur.preferred || !cur.preferred.provider_id) {
+      result.appendChild(msg("warn", "Not saved yet: questions get an error until you choose a model and press Save."));
+    }
 
     function slot(id, title, current, optional, roleIcon, roleText) {
       var mark = h("span", { class: "slot-prov" });

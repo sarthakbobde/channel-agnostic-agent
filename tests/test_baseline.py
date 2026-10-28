@@ -225,4 +225,5 @@ def test_odd_conversation_ids_are_just_data(chat_dir):
 def test_conversation_title_is_the_first_user_message(chat_dir):
     memory.add("c5", "assistant", "welcome")
     memory.add("c5", "user", "what about diwali leave?")
-    assert memory.list_conversations() == [{"id": "c5", "title": "what about diwali leave?"}]
+    assert [{k: c[k] for k in ("id", "title")} for c in memory.list_conversations()] == [{"id": "c5", "title": "what about diwali leave?"}]
+    assert memory.list_conversations()[0]["updated_at"]                   # the web chat groups its history by date
