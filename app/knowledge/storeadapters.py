@@ -461,6 +461,22 @@ class ChromaInfo:
 
 STORE_TYPES = {"chroma": ChromaInfo, "pgvector": PgVectorStore, "azure-search": AzureSearchStore}
 DEFAULT_STORE = "chroma"
+_preferred: str | None = None
+
+
+def preferred_store() -> str:
+    """The store new knowledge bases start with. pgvector when the admin database is PostgreSQL with the pgvector
+    extension available, so the index lives with the rest of the data (and survives a container whose disk is
+    temporary, such as Cloud Run); otherwise Chroma. Checked once per process."""
+    global _preferred
+    if _preferred is None:
+        from app.config import settings
+        ok = False
+        if settings.database_url.startswith("postgres"):
+            ok, message = PgVectorStore.test({}, {})
+            log.info("new knowledge bases use %s (%s)", "pgvector" if ok else "chroma", message)
+        _preferred = "pgvector" if ok else DEFAULT_STORE
+    return _preferred
 
 
 def build_remote(store_type: str, collection: str, config: dict, secrets: dict, embedder, drop=None) -> VectorStore:

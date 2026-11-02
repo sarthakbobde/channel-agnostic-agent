@@ -208,8 +208,8 @@ Set per knowledge base next to the search model, with a **Test** button. Like th
 
 | Store | When to use | Fields |
 |---|---|---|
-| **ChromaDB** | The default. Files in the local `chroma_db` folder. Nothing to configure | none |
-| **PostgreSQL + pgvector** | You already run PostgreSQL and want vectors in it | **Connection string** `postgresql://user:password@host:5432/database` (leave empty to use the admin database when that is PostgreSQL); **Schema** (default `public`). The database needs the pgvector extension: the user may be allowed to `CREATE EXTENSION vector`, or an administrator runs it once |
+| **ChromaDB** | The default when the admin database is SQLite. Files in the local `chroma_db` folder. Nothing to configure | none |
+| **PostgreSQL + pgvector** | The default for new knowledge bases when the admin database is PostgreSQL with pgvector available (as on Cloud SQL), so the index is kept with the rest of the data. Also for any PostgreSQL you already run | **Connection string** `postgresql://user:password@host:5432/database` (leave empty to use the admin database when that is PostgreSQL); **Schema** (default `public`). The database needs the pgvector extension: the user may be allowed to `CREATE EXTENSION vector`, or an administrator runs it once |
 | **Azure AI Search** | You want Azure's search service | **Endpoint** `https://<service>.search.windows.net` (Azure portal → your Search service → Overview → *Url*); **Index name** (a base name: lower-case letters, digits, dashes; each index version gets its own index with this prefix); **Admin key** (Search service → **Keys** → *Primary admin key*) |
 
 Chroma and pgvector are verified working. Azure AI Search is built to Azure's documented interface but has not been tried against a live service here: use **Test** first.

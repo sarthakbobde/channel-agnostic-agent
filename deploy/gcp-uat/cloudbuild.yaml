@@ -1,0 +1,17 @@
+# Builds the image and pushes it to Artifact Registry. Run from the repository root:
+#   gcloud builds submit --config deploy/gcp-uat/cloudbuild.yaml --substitutions=_TAG=$(git rev-parse --short HEAD) .
+substitutions:
+  _REGION: asia-south1
+  _REPO: caa-uat
+  _TAG: latest
+
+steps:
+  - name: gcr.io/cloud-builders/docker
+    args: ["build", "-t", "${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/app:${_TAG}", "."]
+
+images:
+  - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/app:${_TAG}
+
+timeout: 1200s
+options:
+  logging: CLOUD_LOGGING_ONLY

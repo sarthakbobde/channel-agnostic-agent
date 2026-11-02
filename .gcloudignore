@@ -1,0 +1,33 @@
+# What `gcloud builds submit` leaves out of the upload. Secrets and local data must never leave this machine.
+.gcloudignore
+.git/
+.gitignore
+
+# secrets / local config
+.env
+.env.local
+
+# runtime data and the local admin database (holds encrypted secrets)
+admin_data/
+chats/
+chroma_db/
+chroma_db.bak-*/
+chats.bak-*/
+data/
+models/
+*.db
+*.db-wal
+*.db-shm
+*.log
+
+# not needed in the image
+tests/
+docs/
+*.xlsx
+*.pdf
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/

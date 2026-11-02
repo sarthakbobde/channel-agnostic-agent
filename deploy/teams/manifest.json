@@ -1,0 +1,35 @@
+{
+  "$schema": "https://developer.microsoft.com/en-us/json-schemas/teams/v1.17/MicrosoftTeams.schema.json",
+  "manifestVersion": "1.17",
+  "version": "1.0.0",
+  "id": "a2f050ac-ec4a-47f9-a0e4-6c83641ac674",
+  "developer": {
+    "name": "Sysfore",
+    "websiteUrl": "https://www.sysfore.com",
+    "privacyUrl": "https://www.sysfore.com",
+    "termsOfUseUrl": "https://www.sysfore.com"
+  },
+  "name": {
+    "short": "Sysfore Assistant",
+    "full": "Sysfore Assistant (UAT)"
+  },
+  "description": {
+    "short": "Ask questions about company policies and get answers with sources.",
+    "full": "Ask questions in plain language about company policies and documents, such as leave, travel and expenses. Answers come only from the documents the HR team has published, with the source shown under each answer. This is a test (UAT) version."
+  },
+  "icons": {
+    "color": "color.png",
+    "outline": "outline.png"
+  },
+  "accentColor": "#4F46E5",
+  "bots": [
+    {
+      "botId": "{{TEAMS_APP_ID}}",
+      "scopes": ["personal"],
+      "supportsFiles": false,
+      "isNotificationOnly": false
+    }
+  ],
+  "permissions": ["identity", "messageTeamMembers"],
+  "validDomains": ["{{APP_HOST}}"]
+}
