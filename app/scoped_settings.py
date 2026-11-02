@@ -39,6 +39,7 @@ REGISTRY = {k.name: k for k in (
     Key("language_confidence", (KB, DEPARTMENT)),
     Key("summary_enabled", (KB,)),                    # D46
     Key("glossary_mode", (KB, DEPARTMENT)),           # D22
+    Key("suggestions_enabled", (CHANNEL, KB, DEPARTMENT)),   # D26: on only when the channel and the knowledge base are both on
 )}
 RETRIEVAL_KEYS = ("retrieval_strategy", "hybrid_keyword_weight", "diversity", "top_k")
 
@@ -56,8 +57,10 @@ def _spec(key: str) -> dict:
     return next(f for f in global_settings.SPEC if f["name"] == key)
 
 
-def _clean(key: str, value, db: Database | None = None):
-    clean = global_settings.validate({key: value}, global_settings.current(db))[key]
+def _clean(key: str, value, db: Database | None = None, check_catalog: bool = True):
+    """Validated value. Stored values are re-read without the catalogue check: a message added in a later release must not
+    quietly turn an accepted language list back into "every language"."""
+    clean = global_settings.validate({key: value}, global_settings.current(db), check_catalog)[key]
     return list(clean) if isinstance(clean, tuple) else clean
 
 
@@ -77,7 +80,7 @@ def _overrides(db: Database | None = None) -> dict:
         for scope_type, scope_id, key, value in rows:
             try:
                 if key in REGISTRY:
-                    out[(scope_type, scope_id, key)] = _clean(key, value, db)
+                    out[(scope_type, scope_id, key)] = _clean(key, value, db, check_catalog=False)
             except ValueError:
                 log.warning("ignoring an invalid %s override on %s %s", key, scope_type, scope_id)
         with _lock:

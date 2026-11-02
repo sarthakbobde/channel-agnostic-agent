@@ -112,6 +112,15 @@ The glossary is **off** until **Glossary** is set in Scoped settings (per knowle
 the "also add stable terms" mode, terms marked **Stable** are added to passages when they are indexed. The screen says how
 many documents to re-index after a change.
 
+## Suggested follow-up questions
+
+After an answer from the documents, up to two follow-up questions can be shown as buttons. Each is checked first: it must not repeat
+an earlier question, the person asking must be able to get it answered from documents they may see, and it must pass the
+guardrails. It is **off** until **Suggest follow-up questions** is on for the channel *and* the knowledge base (Scoped settings;
+Web UI is the channel "web"). Counts and the click rate are under **Reports → Suggested questions**. A button works only for the
+person who asked, once, for 14 days (RAG settings). Slack needs **Interactivity** switched on in the Slack app (Socket Mode, no URL).
+In Google Chat, switch **Suggestions as buttons** off on the channel to show them as text.
+
 ## LLM providers screen
 
 **LLM providers** (earlier called AI models, and before that Providers) controls which AI models answer questions.

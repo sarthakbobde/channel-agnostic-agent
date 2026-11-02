@@ -19,7 +19,7 @@ from sqlalchemy.exc import IntegrityError
 
 from app import global_settings
 from app.config import settings
-from app.db import AnswerTrace, Conversation, Database, Message, get_db
+from app.db import AnswerTrace, Conversation, Database, Message, Suggestion, get_db
 
 log = logging.getLogger(__name__)
 INTERRUPTED = "[The answer was interrupted before it finished.]"
@@ -152,8 +152,14 @@ def get_messages(conv_id: str, db: Database | None = None) -> list[dict]:
     """Full history for display."""
     with (db or get_db()).session() as s:
         rows = list(s.scalars(select(Message).where(Message.conversation_id == conv_id).order_by(Message.id)))
-        return [{"id": m.id, "role": m.role, "content": m.content if (m.complete or m.content) else INTERRUPTED,
-                 "meta": m.meta or {}, **({} if m.complete else {"incomplete": True})} for m in rows]
+        out = [{"id": m.id, "role": m.role, "content": m.content if (m.complete or m.content) else INTERRUPTED,
+                "meta": m.meta or {}, **({} if m.complete else {"incomplete": True})} for m in rows]
+    from app import suggestions                    # the same buttons when a conversation is reopened, until they expire
+    shown = suggestions.for_history(conv_id, db)
+    for m in out:
+        if m["role"] == "assistant" and m["id"] in shown:
+            m["suggestions"] = shown[m["id"]]
+    return out
 
 
 def list_conversations(prefix: str = "", db: Database | None = None) -> list[dict]:
@@ -169,6 +175,7 @@ def list_conversations(prefix: str = "", db: Database | None = None) -> list[dic
 def delete(conv_id: str, db: Database | None = None) -> bool:
     with (db or get_db()).session() as s:
         s.execute(sql_delete(AnswerTrace).where(AnswerTrace.conversation_id == conv_id))
+        s.execute(sql_delete(Suggestion).where(Suggestion.conversation_id == conv_id))
         n = s.execute(sql_delete(Message).where(Message.conversation_id == conv_id)).rowcount
         c = s.get(Conversation, conv_id)
         if c is not None:

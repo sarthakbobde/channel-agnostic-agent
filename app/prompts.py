@@ -148,6 +148,9 @@ def assemble(mode: str, context: str = "") -> str:
     turn = language.current()
     if turn is not None and turn.resolved:
         parts.append(language_rules(turn.resolved, turn.retried))
+    from app import suggestions
+    if mode == "answer" and suggestions.requested():
+        parts.append(suggestions.format_rules(suggestions.requested(), turn.resolved if turn is not None else ""))
     if context:
         parts.append("CONTEXT:\n" + context)
     from app import guardrails

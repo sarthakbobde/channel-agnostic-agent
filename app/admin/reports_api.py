@@ -94,3 +94,28 @@ def channel_report(_: Session = Depends(admin_session), ctx: AdminContext = Depe
         rows.append({"type": typ, "title": ctx.manager.adapter_class(typ).title, "enabled": bool(enabled.get(typ, False)),
                      "running": adapter is not None, "conversations": n, "last_activity": last})
     return {"rows": rows}
+
+
+@router.get("/suggestions")
+def suggestion_report(date_from: str = "", date_to: str = "", _: Session = Depends(admin_session), ctx: AdminContext = Depends(get_ctx)):
+    """Suggested follow-ups, from the stored rows: shown, clicked and click-through by channel and knowledge base, why
+    candidates were dropped, and how often the model's reply had no usable suggestion block."""
+    from app.db import Suggestion
+    lo, hi = _day(date_from), _day(date_to, True)
+
+    def window(q, col):
+        if lo:
+            q = q.where(col >= lo)
+        if hi:
+            q = q.where(col < hi)
+        return q
+    with ctx.db.session() as s:
+        names = dict(s.execute(select(KnowledgeBase.id, KnowledgeBase.name)).all())
+        rows = s.execute(window(select(Suggestion.channel, Suggestion.kb_id, func.count(), func.count(Suggestion.clicked_at))
+                                .where(Suggestion.outcome == "Shown").group_by(Suggestion.channel, Suggestion.kb_id), Suggestion.created_at)).all()
+        outcomes = s.execute(window(select(Suggestion.outcome, func.count()).group_by(Suggestion.outcome), Suggestion.created_at)).all()
+        no_block = s.scalar(window(select(func.coalesce(func.sum(GuardrailEvent.count), 0))
+                                   .where(GuardrailEvent.check == "suggestions", GuardrailEvent.action == "no_block"), GuardrailEvent.ts))
+    return {"rows": [{"channel": ch, "kb": names.get(kb, "–"), "shown": shown, "clicked": clicked,
+                      "click_rate": round(clicked / shown, 3) if shown else 0.0} for ch, kb, shown, clicked in rows],
+            "outcomes": [{"name": o, "count": n} for o, n in outcomes], "no_block": int(no_block or 0)}

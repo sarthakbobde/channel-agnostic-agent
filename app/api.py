@@ -8,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-from app import catalog, channels, chat_auth, chat_service, global_settings, guardrails, identity, language, memory, prompts, ratelimit, retention, summaries
+from app import catalog, suggestions, channels, chat_auth, chat_service, global_settings, guardrails, identity, language, memory, prompts, ratelimit, retention, summaries
 from app.knowledge import storehealth
 from app.channels import health as channel_health
 from app.jobs import scheduler
@@ -36,6 +36,12 @@ class ChatResponse(BaseModel):
     query: str = ""
     language: str = ""                # the language the answer is written in (D19)
     rejected: str | None = None       # "language" when the question's language is not accepted (D39)
+    suggestions: list[dict] = []      # [{text, suggestion_id, payload}]; payload None = show as plain text (D26, D37)
+
+
+class ActionRequest(BaseModel):
+    conv_id: str
+    payload: str
 
 
 class ConversationSummary(BaseModel):
@@ -161,9 +167,17 @@ def _conv(caller: Caller, conv_id: str) -> str:
     return caller.prefix + conv_id
 
 
+def _asker(caller: Caller) -> str:
+    return "web:" + (caller.email.lower() or caller.prefix or "service")
+
+
 @app.post("/chat", response_model=ChatResponse)
 def chat(request: MessageRequest, caller: Caller = Depends(require_chat_caller)):
     """Chat endpoint - returns answer with sources."""
+    return _answer(request, caller)
+
+
+def _answer(request: MessageRequest, caller: Caller, suggestion: dict | None = None) -> ChatResponse:
     ok, wait = ratelimit.allow("chat:" + (caller.email.lower() or "service"), global_settings.current().chat_rate_per_minute)
     if not ok:
         lang = chat_service.reply_language(request.message, _conv(caller, request.conv_id))
@@ -172,9 +186,11 @@ def chat(request: MessageRequest, caller: Caller = Depends(require_chat_caller))
     token = identity.bind(who)
     try:
         kb_ids = chat_auth.web_kb_ids()
-        answer_iter, meta = chat_service.chat_stream(request.message, _conv(caller, request.conv_id),
+        answer_iter, meta = chat_service.chat_stream(request.message, _conv(caller, request.conv_id), asker=_asker(caller),
                                                      **({"kb_ids": kb_ids} if kb_ids else {}))
         answer = "".join(answer_iter)
+        if suggestion:
+            suggestions.link_question(suggestion.get("s"), meta.get("question_id"))
 
         return ChatResponse(
             answer=answer,
@@ -185,6 +201,7 @@ def chat(request: MessageRequest, caller: Caller = Depends(require_chat_caller))
             query=meta.get("query", ""),
             language=meta.get("language", ""),
             rejected=meta.get("rejected"),
+            suggestions=meta.get("suggestions") or [],
         )
     except Exception as e:
         if _refused_by_provider(e):
@@ -195,6 +212,21 @@ def chat(request: MessageRequest, caller: Caller = Depends(require_chat_caller))
         raise HTTPException(status_code=500, detail="Internal error")
     finally:
         identity.unbind(token)
+
+
+@app.post("/chat/action", response_model=ChatResponse)
+def chat_action(request: ActionRequest, caller: Caller = Depends(require_chat_caller)):
+    """A click on a suggestion: the signed payload is checked (only the asker, not expired, once), then it is asked as an
+    ordinary question in the same conversation."""
+    try:
+        data = suggestions.verify(request.payload, suggestions.asker_key(_asker(caller)))
+    except suggestions.PayloadError as e:
+        lang = memory.last_language(_conv(caller, request.conv_id))
+        raise HTTPException(403 if e.key == "suggestion_not_yours" else 410 if e.key == "suggestion_expired" else 400,
+                            catalog.t(e.key, lang))
+    if not suggestions.record_click(data):
+        raise HTTPException(409, "Already asked.")
+    return _answer(MessageRequest(message=data["t"], conv_id=request.conv_id), caller, data)
 
 
 @app.get("/catalog/{lang}")

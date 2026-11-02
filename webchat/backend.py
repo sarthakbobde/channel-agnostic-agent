@@ -84,6 +84,34 @@ async def ask(token: str, conv_id: str, message: str) -> tuple[int, dict]:
     return r.status_code, body if isinstance(body, dict) else {}
 
 
+async def act(token: str, conv_id: str, payload: str) -> tuple[int, dict]:
+    """A click on a suggestion button: the API checks the signed payload and asks it in the same conversation."""
+    try:
+        async with _client(ASK_TIMEOUT) as c:
+            r = await c.post("/chat/action", json={"conv_id": conv_id, "payload": payload}, headers={"Authorization": f"Bearer {token}"})
+    except httpx.TimeoutException:
+        return 0, {"detail": "The answer took too long. Please try again."}
+    except httpx.HTTPError:
+        return 0, {"detail": "Cannot reach the service. Try again in a minute."}
+    try:
+        body = r.json()
+    except ValueError:
+        body = {}
+    return r.status_code, body if isinstance(body, dict) else {}
+
+
+def suggestions_text(items: list[dict], label: str = "Suggested questions") -> str:
+    """Suggestions that cannot be buttons (expired, or an older answer) as plain text."""
+    return f"\n\n**{label}**\n" + "\n".join(f"- {s['text']}" for s in items) if items else ""
+
+
+_resume: dict[str, list[dict]] = {}          # thread id -> the last answer's suggestions, shown again as buttons on reopen
+
+
+def resume_suggestions(thread_id: str) -> list[dict]:
+    return _resume.pop(thread_id, [])
+
+
 def token_for(user: User | None) -> str:
     if user is None:
         return ""
@@ -96,7 +124,7 @@ def step_id(message_id, fallback: str) -> str:
 
 
 # The Web UI's own texts in English; the API's message catalogue gives them in other languages.
-TEXTS = {"sources": "Sources", "web_session_ended": "Your session has ended. Sign out (top right) and sign in again.",
+TEXTS = {"sources": "Sources", "suggested": "Suggested questions", "web_session_ended": "Your session has ended. Sign out (top right) and sign in again.",
          "web_try_again": "Please try again.", "web_error": "Something went wrong on our side (error {status}). Please try again."}
 TEXTS_SECONDS = 300
 _texts: dict[str, tuple[float, dict]] = {}
@@ -196,6 +224,10 @@ class BackendDataLayer(BaseDataLayer):
         if r is None or r.status_code != 200:
             return None
         messages = r.json().get("messages", [])
+        last = max((i for i, m in enumerate(messages) if m.get("role") == "assistant"), default=-1)
+        live = [s for s in (messages[last].get("suggestions") or []) if s.get("payload")] if last >= 0 else []
+        if live:
+            _resume[thread_id] = live
         start = datetime.now(timezone.utc) - timedelta(seconds=len(messages))
         steps = []
         for i, m in enumerate(messages):
@@ -205,7 +237,8 @@ class BackendDataLayer(BaseDataLayer):
                           "name": owner if mine else self.assistant_name,
                           "type": "user_message" if mine else "assistant_message",
                           "output": m.get("content", "") if mine else
-                          with_sources(m.get("content", ""), (m.get("meta") or {}).get("sources", []), (m.get("meta") or {}).get("language", "")),
+                          with_sources(m.get("content", ""), (m.get("meta") or {}).get("sources", []), (m.get("meta") or {}).get("language", ""))
+                          + suggestions_text([s for s in m.get("suggestions") or [] if i != last or not s.get("payload")]),
                           "input": "", "createdAt": ts, "start": ts, "end": ts, "streaming": False,
                           "isError": False, "waitForAnswer": False, "metadata": {}, "showInput": False})
         first = next((m.get("content", "") for m in messages if m.get("role") == "user"), "")

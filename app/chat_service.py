@@ -3,7 +3,8 @@ import logging
 import re
 from typing import Iterator
 from langchain_core.messages import HumanMessage, SystemMessage
-from app import catalog, guardrails, identity, language, memory, rag, scoped_settings, summaries, trace, usage
+from app import (catalog, global_settings, guardrails, identity, language, memory, rag, scoped_settings, suggestions, summaries,
+                 trace, usage)
 from app.llm import get_chat_model
 
 log = logging.getLogger(__name__)
@@ -90,7 +91,7 @@ def _accepting(targets: list[dict], ctx: language.LanguageContext) -> list[dict]
     return [kb for kb in targets if not ctx.accepted[str(kb.get("id"))] or ctx.resolved in ctx.accepted[str(kb.get("id"))]]
 
 
-def chat_stream(message: str, conv_id: str | None, kb_ids=None, preview: bool = False) -> tuple[Iterator[str], dict]:
+def chat_stream(message: str, conv_id: str | None, kb_ids=None, preview: bool = False, asker: str = "") -> tuple[Iterator[str], dict]:
     """Routing + retrieval happen now; the answer comes from the returned iterator.
     The question is saved before any model runs; the answer is saved as soon as it is complete (or kept, marked
     incomplete, if it never finishes). A blocked question, or one in a language that is not accepted, is not stored.
@@ -124,6 +125,11 @@ def chat_stream(message: str, conv_id: str | None, kb_ids=None, preview: bool = 
                             rejected="language")
         if len(kept) != len(targets):                          # a knowledge base that does not accept it is not searched
             kb_ids = [kb["id"] for kb in kept]
+    offer = not preview and suggestions.enabled(conv_id, kept)        # D26: off unless the channel and a KB are on
+    g = global_settings.current()
+    wanted = g.suggestions_requested if offer else 0
+    inline = wanted if g.suggestions_mode == "same_call" else 0
+    asker_key = suggestions.asker_key(asker or identity.current().email or (conv_id or ""))
     summary, history = ("", []) if preview else memory.get_context(conv_id)   # a preview starts from nothing and leaves nothing behind
     turn = None if preview else memory.begin_turn(conv_id, message, identity.current(), language=ctx.resolved)   # saved BEFORE any model runs
     answer_id = turn.answer_id if turn else None
@@ -141,6 +147,7 @@ def chat_stream(message: str, conv_id: str | None, kb_ids=None, preview: bool = 
                 def make():
                     return rag.stream_grounded(message, chunks, **purpose, standalone=decision["query"])
             else:
+                chunks = []
                 sources = []
 
                 def make():
@@ -152,7 +159,10 @@ def chat_stream(message: str, conv_id: str | None, kb_ids=None, preview: bool = 
             trace.save(rec, turn, complete=False, found=False, searched=False)
         raise
 
-    meta = {"searched": decision["search"], "query": decision["query"], "sources": sources, "language": ctx.resolved}
+    meta = {"searched": decision["search"], "query": decision["query"], "sources": sources, "language": ctx.resolved, "suggestions": []}
+    if turn:
+        meta["question_id"] = turn.question_id
+    asking = inline if decision["search"] else 0
     if decision["search"]:
         meta["kb_ids"] = [k["id"] for k in kept] if targets else []
     checked = guardrails.output_active()
@@ -167,12 +177,24 @@ def chat_stream(message: str, conv_id: str | None, kb_ids=None, preview: bool = 
         # output checks need the complete text. Every caller joins the answer anyway.
         collected: list[str] = []
 
+        candidates: list[str] = []
+
         def collect(parts) -> str:
+            """The whole reply, with any suggestion block split off (it never reaches anyone)."""
             collected.clear()
-            with usage.for_answer(answer_id), trace.recording(rec), language.using(ctx), rec.stage("generation"):
+            candidates.clear()
+            with usage.for_answer(answer_id), trace.recording(rec), language.using(ctx), suggestions.requesting(asking), rec.stage("generation"):
                 for tok in parts:
                     collected.append(tok)
-            return "".join(collected)
+            reply = "".join(collected)
+            if not asking:
+                return reply
+            answer, found_now, ok = suggestions.parse(reply, asking)
+            candidates.extend(found_now)
+            if not ok and not rag.not_found(answer):
+                from app.db import get_db
+                guardrails.record(get_db(), "suggestions", "output", "no_block", language=ctx.resolved)
+            return answer
 
         try:
             final = collect(tokens)
@@ -185,16 +207,37 @@ def chat_stream(message: str, conv_id: str | None, kb_ids=None, preview: bool = 
                 found = not (decision["search"] and rag.not_found(final))
                 if found and wrong_language(final):
                     guardrails.record(get_db(), "answer_language", "output", "wrong", language=ctx.resolved)
+            if found and wanted and decision["search"] and not inline:      # second-call mode
+                try:
+                    with usage.for_answer(answer_id), trace.recording(rec), rec.stage("suggestions"):
+                        raw = suggestions.second_call(message, final, rag.context_of(chunks), wanted, ctx.resolved)
+                    _, found_now, ok = suggestions.parse(raw, wanted)
+                    candidates.extend(found_now)
+                    if not ok:
+                        from app.db import get_db
+                        guardrails.record(get_db(), "suggestions", "output", "no_block", language=ctx.resolved)
+                except Exception as e:
+                    log.warning("the suggestion call failed (%s); the answer is shown alone", type(e).__name__)
             if not found:
                 final = catalog.t("not_found", ctx.resolved, default)
+                candidates.clear()
             if checked:
                 with rec.stage("output_checks"):
                     final = guardrails.guard_output(final, len(sources), decision["search"], lang=ctx.resolved)
             trim_sources(final, sources, found)
             meta["found"] = found
+            rows = []
+            if candidates and found and turn:
+                try:
+                    with language.using(ctx), rec.stage("suggestions"):
+                        rows = suggestions.select_shown(candidates, conv_id, [kb["id"] for kb in kept], kept, ctx.resolved)
+                except Exception as e:
+                    log.warning("suggestion checks failed (%s); the answer is shown alone", type(e).__name__)
             if turn:
-                memory.finish_turn(turn, final, {k: v for k, v in meta.items() if k != "answer_id"})   # saved before it is handed over
+                memory.finish_turn(turn, final, {k: v for k, v in meta.items() if k not in ("answer_id", "suggestions", "question_id")})   # saved before it is handed over
                 trace.save(rec, turn, complete=True, found=found, searched=decision["search"])
+                if rows:
+                    meta["suggestions"] = suggestions.controls(answer_id, rows, suggestions.store(turn, rows, asker_key), asker_key)
                 summaries.schedule(conv_id, identity.current().department)
         except BaseException:
             if turn:                       # the model failed or the caller went away: keep what arrived, marked incomplete
@@ -207,9 +250,9 @@ def chat_stream(message: str, conv_id: str | None, kb_ids=None, preview: bool = 
     return gen(), meta
 
 
-def chat(message: str, conv_id: str, kb_ids=None) -> dict:
-    """Non-streaming wrapper: {answer, answer_id, found, searched, query, sources, language}."""
-    tokens, meta = chat_stream(message, conv_id, kb_ids)
+def chat(message: str, conv_id: str, kb_ids=None, asker: str = "") -> dict:
+    """Non-streaming wrapper: {answer, answer_id, found, searched, query, sources, language, suggestions}."""
+    tokens, meta = chat_stream(message, conv_id, kb_ids, asker=asker) if asker else chat_stream(message, conv_id, kb_ids)
     return {"answer": "".join(tokens), **meta}
 
 

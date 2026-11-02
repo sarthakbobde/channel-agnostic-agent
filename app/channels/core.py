@@ -1,7 +1,7 @@
 """The single entry point every adapter uses."""
 import logging
 import re
-from app import catalog, chat_service, global_settings, identity, ratelimit
+from app import catalog, chat_service, global_settings, identity, ratelimit, suggestions
 from app.channels.base import Envelope
 
 log = logging.getLogger(__name__)
@@ -14,11 +14,16 @@ def _reply(key: str, env: Envelope) -> dict:
     language the person wrote in, when that language has approved messages."""
     lang = chat_service.reply_language(env.text, env.conv_id)
     return {"answer": catalog.t(key, lang), "answer_id": None, "found": False, "sources": [], "searched": False, "query": "",
-            "language": lang}
+            "language": lang, "suggestions": []}
 
 
-def handle(env: Envelope) -> dict:
-    """Run one turn. Returns {answer, answer_id, found, sources, searched, query, language}; never raises."""
+def asker_of(env: Envelope) -> str:
+    """Who is asking, as the chat app knows them: only this person may click their suggestions."""
+    return f"{env.channel}:{env.workspace}:{env.user}"
+
+
+def handle(env: Envelope, suggestion: dict | None = None) -> dict:
+    """Run one turn. Returns {answer, answer_id, found, sources, searched, query, language, suggestions}; never raises."""
     who = identity.resolve(env.email)
     if not who.active:
         log.info("refused deactivated sender %s", who.email)
@@ -29,7 +34,11 @@ def handle(env: Envelope) -> dict:
         return _reply("slow_down", env)
     token = identity.bind(who)
     try:
-        return chat_service.chat(env.text, env.conv_id, **({"kb_ids": list(env.kb_ids)} if env.kb_ids else {}))
+        text = suggestion["t"] if suggestion else env.text
+        result = chat_service.chat(text, env.conv_id, asker=asker_of(env), **({"kb_ids": list(env.kb_ids)} if env.kb_ids else {}))
+        if suggestion:
+            suggestions.link_question(suggestion.get("s"), result.get("question_id"))
+        return result
     except Exception:
         log.exception("chat failed for %s", env.conv_id)
         return _reply("error", env)
@@ -37,10 +46,35 @@ def handle(env: Envelope) -> dict:
         identity.unbind(token)
 
 
+def handle_action(env: Envelope, payload: str) -> dict:
+    """A click on a suggestion button: verify the signed payload (D37), then ask it as an ordinary question in the same
+    conversation. A replay is ignored (`ignored: True`, nothing to send)."""
+    try:
+        data = suggestions.verify(payload, suggestions.asker_key(asker_of(env)))
+    except suggestions.PayloadError as e:
+        return _reply(e.key, env)
+    if not suggestions.record_click(data):
+        return {**_reply("error", env), "answer": "", "ignored": True}
+    return handle(Envelope(env.channel, env.workspace, env.room, env.thread, env.user, data["t"], env.kb_ids, env.email), data)
+
+
 def sources_footer(result: dict) -> str:
     """The italic sources line the chat apps add under an answer, in the answer's language."""
     lang = result.get("language", "")
     return f"\n\n_{catalog.t('sources', lang)}: {sources_line(result['sources'], lang)}_"
+
+
+def suggestion_controls(result: dict) -> list[dict]:
+    """The presenters' controls: [{type: suggestion_chip, text, payload}] (payload None = show as plain text)."""
+    return [{"type": "suggestion_chip", "text": s["text"], "payload": s.get("payload")} for s in result.get("suggestions") or []]
+
+
+def suggestions_text(result: dict) -> str:
+    """Suggestions as plain text, for a chat app that cannot show buttons."""
+    items = result.get("suggestions") or []
+    if not items:
+        return ""
+    return f"\n\n_{catalog.t('suggested', result.get('language', ''))}:_\n" + "\n".join(f"• {s['text']}" for s in items)
 
 
 def sources_line(sources: list[dict], lang: str = "") -> str:

@@ -40,6 +40,10 @@ TEXTS = {
     "web_session_ended": ("Your session has ended. Sign out (top right) and sign in again.", "Web UI: the sign-in expired."),
     "web_try_again": ("Please try again.", "Web UI: a request was refused without a reason."),
     "web_error": ("Something went wrong on our side (error {status}). Please try again.", "Web UI: the server failed."),
+    "suggested": ("Suggested questions", "The heading above suggested follow-up questions."),
+    "suggestion_invalid": ("This button is not valid.", "A suggestion button whose signature does not check out."),
+    "suggestion_expired": ("This suggestion has expired. Type the question instead.", "A suggestion button older than its expiry."),
+    "suggestion_not_yours": ("Only the person who asked can use these suggestions.", "Someone else clicked a suggestion button."),
 }
 KEYS = tuple(TEXTS)
 

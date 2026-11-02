@@ -3,12 +3,34 @@ import logging
 import re
 from slack_bolt import App
 from slack_bolt.adapter.socket_mode import SocketModeHandler
-from app.channels.base import Adapter, Envelope, Field
-from app.channels.core import handle, sources_footer, to_mrkdwn
+from app.channels.base import Adapter, ChannelPresenter, Envelope, Field
+from app.channels.core import handle, handle_action, sources_footer, suggestion_controls, suggestions_text, to_mrkdwn
 from app.identity import TTLCache, lookup_ok, lookup_problem
 
 log = logging.getLogger(__name__)
 _MENTION = re.compile(r"<@[A-Z0-9]+>")
+ACTION_ID = re.compile(r"^caa_suggest_\d+$")
+
+
+class SlackPresenter(ChannelPresenter):
+    """Text plus Block Kit buttons (Interactivity must be on in the Slack app; Socket Mode needs no URL)."""
+
+    def render(self, result: dict, show_sources: bool) -> dict:
+        out = to_mrkdwn(result["answer"])
+        if show_sources and result["sources"]:
+            out += sources_footer(result)
+        chips = suggestion_controls(result)
+        buttons = [c for c in chips if c["payload"]]
+        plain = [c for c in chips if not c["payload"]]
+        if plain:
+            out += suggestions_text({**result, "suggestions": plain})
+        if not buttons:
+            return {"text": out}
+        return {"text": out, "blocks": [
+            {"type": "section", "text": {"type": "mrkdwn", "text": out[:3000]}},
+            {"type": "actions", "elements": [{"type": "button", "action_id": f"caa_suggest_{i}", "value": c["payload"],
+                                              "text": {"type": "plain_text", "text": c["text"][:75], "emoji": False}}
+                                             for i, c in enumerate(buttons)]}]}
 
 
 class SlackAdapter(Adapter):
@@ -42,6 +64,8 @@ class SlackAdapter(Adapter):
         self._emails = TTLCache()
         self.app.event("app_mention")(self._on_event)
         self.app.event("message")(self._on_event)
+        self.app.action(ACTION_ID)(self._on_action)
+        self.presenter = SlackPresenter()
 
     def _email_for(self, user_id: str) -> str:
         """The sender's email (users.info). Needs the users:read and users:read.email scopes; without
@@ -92,10 +116,23 @@ class SlackAdapter(Adapter):
         env = Envelope("slack", context.get("team_id") or "t", channel, thread_ts,
                        event.get("user", ""), text, tuple(self.cfg.get("kb_ids") or ()), self._email_for(event.get("user", "")))
         result = handle(env)
-        out = to_mrkdwn(result["answer"])
-        if self.show_sources and result["sources"]:
-            out += sources_footer(result)
-        say(text=out, thread_ts=thread_ts)
+        say(**self.presenter.render(result, self.show_sources), thread_ts=thread_ts)
+
+    def _on_action(self, ack, body, say):
+        """A suggestion button: the reply goes to the same thread, as an ordinary question there."""
+        ack()
+        action = (body.get("actions") or [{}])[0]
+        user = (body.get("user") or {}).get("id", "")
+        channel = (body.get("channel") or {}).get("id", "")
+        message = body.get("message") or {}
+        thread_ts = message.get("thread_ts") or message.get("ts", "")
+        team = (body.get("team") or {}).get("id") or (body.get("user") or {}).get("team_id") or "t"
+        if not channel or not self._permitted(channel, channel.startswith("D")):
+            return
+        env = Envelope("slack", team, channel, thread_ts, user, "", tuple(self.cfg.get("kb_ids") or ()), self._email_for(user))
+        result = handle_action(env, action.get("value", ""))
+        if not result.get("ignored"):
+            say(**self.presenter.render(result, self.show_sources), thread_ts=thread_ts)
 
     def start(self) -> None:
         self.handler.connect()                       # non-blocking, own thread

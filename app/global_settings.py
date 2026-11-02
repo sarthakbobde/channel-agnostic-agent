@@ -45,8 +45,16 @@ class Snapshot:
     glossary_mode: str = "off"
     glossary_max_terms: int = 5
     glossary_max_aliases: int = 3
+    suggestions_enabled: bool = False
+    suggestions_requested: int = 3
+    suggestions_shown: int = 2
+    suggestions_dedup_threshold: float = 0.9
+    suggestions_mode: str = "same_call"
+    suggestions_max_searches: int = 3
+    suggestions_payload_days: int = 14
 
 
+SUGGESTION_MODES = {"same_call": "In the same AI call as the answer", "second_call": "In a second AI call (for models that cannot follow the format)"}
 GLOSSARY_MODES = {"off": "Off", "query": "Expand questions (recommended)", "index": "Also add stable terms to passages when indexing"}
 LIST_FIELDS = ("accepted_languages", "document_languages", "catalog_languages")
 
@@ -106,6 +114,20 @@ SPEC = (
      "help": "How many glossary terms one question can be expanded with. Default 5."},
     {"name": "glossary_max_aliases", "label": "Glossary: most forms added per term", "min": 1, "max": 10, "step": 1, "integer": True,
      "help": "How many other forms of one term are added. Default 3."},
+    {"name": "suggestions_enabled", "label": "Suggest follow-up questions", "kind": "bool",
+     "help": "Off by default. After an answer from the documents, up to two follow-up questions are shown as buttons, each checked to be new, answerable for the person asking and within the guardrails. Switch it on per channel and per knowledge base in Scoped settings: both must be on."},
+    {"name": "suggestions_requested", "label": "Suggestions: how many the AI model writes", "min": 1, "max": 5, "step": 1, "integer": True,
+     "help": "Candidates asked for with each answer. Default 3."},
+    {"name": "suggestions_shown", "label": "Suggestions: most shown", "min": 1, "max": 3, "step": 1, "integer": True,
+     "help": "The best-supported candidates that pass every check are shown, up to this many. Default 2."},
+    {"name": "suggestions_dedup_threshold", "label": "Suggestions: how alike counts as a repeat", "min": 0.5, "max": 1.0, "step": 0.01, "integer": False,
+     "help": "From 0 to 1. A candidate at least this similar in meaning to an earlier question or suggestion is dropped. Default 0.9."},
+    {"name": "suggestions_mode", "label": "Suggestions: how they are written", "kind": "choice", "choices": list(SUGGESTION_MODES), "choice_labels": SUGGESTION_MODES,
+     "help": "The same call adds a short block to the answer (cheaper). A second call asks for them separately, for models that do not follow the block format."},
+    {"name": "suggestions_max_searches", "label": "Suggestions: most checking searches per answer", "min": 1, "max": 10, "step": 1, "integer": True,
+     "help": "Each candidate is checked with one search under the asker's permissions. Candidates beyond this are not checked or shown. Default 3."},
+    {"name": "suggestions_payload_days", "label": "Suggestions: buttons work for (days)", "min": 1, "max": 90, "step": 1, "integer": True,
+     "help": "After this, a suggestion in an old conversation shows as plain text instead of a button. Default 14."},
     {"name": "summary_max_input_tokens", "label": "Longest text read for a summary (tokens)", "min": 500, "max": 50000, "step": 500, "integer": True,
      "help": "A longer document is summarised section by section, and only this much of it is read. A token is about four characters. Default 6000."},
 )
@@ -124,7 +146,9 @@ def defaults() -> Snapshot:
                     summarise_after_turns=env.summarise_after_turns, retention_job_enabled=True, export_enabled=False,
                     chat_rate_per_minute=20, retrieval_strategy="similarity", hybrid_keyword_weight=0.5, diversity=0.3,
                     accepted_languages=(), document_languages=(), default_language="en", language_confidence=0.5, catalog_languages=(),
-                    summary_enabled=True, summary_max_input_tokens=6000, glossary_mode="off", glossary_max_terms=5, glossary_max_aliases=3)
+                    summary_enabled=True, summary_max_input_tokens=6000, glossary_mode="off", glossary_max_terms=5, glossary_max_aliases=3,
+                    suggestions_enabled=False, suggestions_requested=3, suggestions_shown=2, suggestions_dedup_threshold=0.9,
+                    suggestions_mode="same_call", suggestions_max_searches=3, suggestions_payload_days=14)
 
 
 def _snapshot(row: GlobalSettings) -> Snapshot:
@@ -134,7 +158,10 @@ def _snapshot(row: GlobalSettings) -> Snapshot:
                     tuple(row.accepted_languages or ()), tuple(row.document_languages or ()), row.default_language or "en",
                     row.language_confidence if row.language_confidence is not None else 0.5, tuple(row.catalog_languages or ()),
                     row.summary_enabled if row.summary_enabled is not None else True, row.summary_max_input_tokens or 6000,
-                    row.glossary_mode or "off", row.glossary_max_terms or 5, row.glossary_max_aliases or 3)
+                    row.glossary_mode or "off", row.glossary_max_terms or 5, row.glossary_max_aliases or 3,
+                    bool(row.suggestions_enabled), row.suggestions_requested or 3, row.suggestions_shown or 2,
+                    row.suggestions_dedup_threshold or 0.9, row.suggestions_mode or "same_call", row.suggestions_max_searches or 3,
+                    row.suggestions_payload_days or 14)
 
 
 def _read(db: Database) -> tuple[Snapshot, GlobalSettings]:
@@ -156,7 +183,7 @@ def _columns(values: dict) -> dict:
     return {k: list(v) if k in LIST_FIELDS else v for k, v in values.items()}
 
 
-def _languages(f: dict, raw) -> list[str]:
+def _languages(f: dict, raw, check_catalog: bool = True) -> list[str]:
     from app import language
     if not isinstance(raw, (list, tuple)) or not all(isinstance(x, str) for x in raw):
         raise ValueError(f"{f['label']} must be a list of two-letter language codes.")
@@ -164,7 +191,7 @@ def _languages(f: dict, raw) -> list[str]:
     bad = [c for c in codes if not language.valid(c)]
     if bad:
         raise ValueError(f"{f['label']}: not a language code: " + ", ".join(bad) + ". Use two-letter codes such as en or hi.")
-    if f["name"] == "accepted_languages":
+    if f["name"] == "accepted_languages" and check_catalog:
         from app import catalog
         missing = [c for c in codes if not catalog.complete(c)]
         if missing:
@@ -198,7 +225,7 @@ def current(db: Database | None = None) -> Snapshot:
         return defaults()
 
 
-def validate(values: dict, base: Snapshot) -> dict:
+def validate(values: dict, base: Snapshot, check_catalog: bool = True) -> dict:
     """Clean and check submitted values; returns only the fields to change. Raises ValueError
     with a message an admin can act on."""
     unknown = sorted(set(values) - set(_BY_NAME))
@@ -218,7 +245,7 @@ def validate(values: dict, base: Snapshot) -> dict:
             clean[name] = raw
             continue
         if f.get("kind") == "list":
-            clean[name] = tuple(_languages(f, raw))
+            clean[name] = tuple(_languages(f, raw, check_catalog))
             continue
         if f.get("kind") == "text":
             from app import language

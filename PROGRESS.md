@@ -677,6 +677,48 @@ This follows `docs/development-plan-v4_3-release-2 1.md`, on branch `r2/phase-3-
   - **Browser:** the admin page script passes a syntax check, and its API calls are tested, but the Glossary screen has not been opened in a browser.
 - **Still needed from people:** a seed glossary per department, and a named owner who approves changes (plan, section 0).
 
+## 24. Release 2, Phase 4: suggested follow-up questions (2026-11-02)
+
+This follows `docs/development-plan-v4_3-release-2 1.md`, on branch `r2/phase-4-suggestions`, which is built on Phase 3. Deviations are marked R2-4 in `DECISIONS.md`.
+
+- **Settings.** Off by default.
+  - `suggestions_enabled` is scoped per channel, KB and department, and the channel and a KB must both be on. The Web UI counts as the channel `web`.
+  - Global Settings: how many candidates are written (3) and shown (2), how alike counts as a repeat (0.9), same call or second call, the most checking searches per answer (3), and how many days buttons work (14).
+- **Prompt and parser** (`app/suggestions.py`).
+  - When suggestions are on, a code-owned block asks for up to N follow-up questions between fixed markers, in the question's language.
+  - The parser splits the block off, so it never reaches the answer, the memory or the trace. A missing or broken block means the answer alone, and a counter goes up.
+  - Second-call mode asks for the block separately.
+- **Three checks (D40),** cheapest first:
+  - not a repeat, exactly (after normalization) or in meaning, of the asker's earlier questions, the suggestions already shown, or the other candidates;
+  - answerable by this asker, through a search under their allow-list above the KB threshold. This is the support score, cached per KBs, text and allow-list, with a ceiling on searches;
+  - passes the guardrails and carries no personal data.
+  - The best 2 by support are shown.
+- **Storage (D47).** Every candidate is stored, masked, with its outcome, support score, knowledge base, channel, and when it was shown and clicked (migration 0030). Each conversation's history returns the shown suggestions with their buttons until they expire, then as text. Suggestions are deleted with their conversation, by hand or by retention. A failed write never hides the suggestions.
+- **Signed buttons (D37).** HMAC with a key derived from the master key (rotation-safe), carrying a hash of who asked and an expiry. Only the asker can click, and a replay is ignored. `core.handle_action()` asks the suggestion as a normal question in the same conversation and links the click to the question it created.
+- **Channels.** Each has a `ChannelPresenter` and the `suggestion_chip` control:
+  - **Web UI:** Chainlit action buttons, and `POST /chat/action`. A reopened conversation shows the last answer's buttons again.
+  - **Slack:** Block Kit buttons, with an `app.action` handler in Socket Mode. This needs Interactivity switched on.
+  - **Teams:** an Adaptive Card with `Action.Submit`. `_on_turn` accepts a value without text.
+  - **Google Chat:** cardsV2 buttons in the synchronous reply, with clicks in both event formats on the same endpoint. A per-channel switch gives text only.
+- **Report.** Reports → Suggested questions: shown, clicked and click rate by channel and KB, the outcome of every candidate, and replies without a usable block. Admin only; Editors toggle their own KBs and departments in Scoped settings, while channels are Admin only.
+- **Tests.**
+  - `tests/test_release2_suggestions.py` has 20 tests. They cover parsing, the three checks, the restricted-document case, the ceiling, a failed write, toggles, second-call mode, history and expiry, clicks (replay, other person, forged, expired), key rotation, the Web API, deletion, each presenter, and the report and roles.
+  - Pinned lists updated on purpose: the Global Settings fields, and the migration head and tables.
+- **Results:**
+  - **SQLite:** 497 passed, 12 skipped and 1 failed in the full run. The failure was a test's stand-in for `chat_stream` that did not accept the new `asker` argument. After that test-only fix its file passes (14), so the expected total is 498 passed; the suite was not re-run in full.
+  - **PostgreSQL and pgvector:** not run, because Docker Desktop is not running.
+  - **Browser and chat apps:** nothing was tried live. The Web UI and admin screens were not opened, and Slack, Teams and Google Chat were checked only on the payloads they would receive.
+- **Spikes not run (R2-4):**
+  - The format spike on your preferred and fallback models needs live calls to your AI providers.
+  - The Google Chat card-click spike needs a Workspace.
+  - Teams needs the test tenant.
+  - The prompt block costs about 91 input and 30 output tokens per answer (measured offline).
+- **Still needed from people:**
+  - Slack: switch on Interactivity and reinstall.
+  - Teams: the Azure approval and the tenant.
+  - Google Chat: card clicks switched on for the app.
+  - The privacy sign-off for storing suggestions.
+
 ## How to run
 
 ```powershell

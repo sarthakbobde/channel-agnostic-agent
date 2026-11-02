@@ -351,6 +351,13 @@ class GlobalSettings(Base):
     glossary_mode: Mapped[str] = mapped_column(String(8), default="off")        # off | query | index (Phase 3)
     glossary_max_terms: Mapped[int] = mapped_column(Integer, default=5)
     glossary_max_aliases: Mapped[int] = mapped_column(Integer, default=3)
+    suggestions_enabled: Mapped[bool] = mapped_column(Boolean, default=False)      # Phase 4: off by default
+    suggestions_requested: Mapped[int] = mapped_column(Integer, default=3)
+    suggestions_shown: Mapped[int] = mapped_column(Integer, default=2)
+    suggestions_dedup_threshold: Mapped[float] = mapped_column(Float, default=0.9)
+    suggestions_mode: Mapped[str] = mapped_column(String(12), default="same_call")  # same_call | second_call
+    suggestions_max_searches: Mapped[int] = mapped_column(Integer, default=3)
+    suggestions_payload_days: Mapped[int] = mapped_column(Integer, default=14)
 
 
 class JobLock(Base):
@@ -494,6 +501,25 @@ class GlossaryTerm(Base):
     case_sensitive: Mapped[bool] = mapped_column(Boolean, default=False)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     stable: Mapped[bool] = mapped_column(Boolean, default=False)          # may be added to passages at index time
+
+
+class Suggestion(Base):
+    """A suggested follow-up question (D47): every candidate, masked, with its outcome. Deleted with its conversation."""
+    __tablename__ = "suggestions"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    answer_id: Mapped[int] = mapped_column(Integer, index=True)
+    conversation_id: Mapped[str] = mapped_column(String(200), index=True)
+    channel: Mapped[str] = mapped_column(String(16), default="other")
+    kb_id: Mapped[int | None] = mapped_column(Integer, nullable=True)        # the knowledge base that supports it
+    text: Mapped[str] = mapped_column(Text)
+    position: Mapped[int] = mapped_column(Integer)                          # order the model wrote them in, from 1
+    outcome: Mapped[str] = mapped_column(String(16))                        # Shown | Not selected | Duplicate | Not answerable | Failed checks
+    support: Mapped[float | None] = mapped_column(Float, nullable=True)
+    asker: Mapped[str] = mapped_column(String(32), default="")              # hash of who asked: only they may click
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    shown_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    clicked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    clicked_question_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
 
 class MessageCatalogEntry(Base):

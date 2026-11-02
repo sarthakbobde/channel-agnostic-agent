@@ -382,6 +382,12 @@ it (for example "paid time off": PTO, earned leave), **Save draft**, check it wi
 Switch it on with **Glossary** in Scoped settings. **Roll back** undoes a publish. **Import CSV** and **Export CSV** move terms in
 and out (columns: canonical, aliases separated by |, kind, language, case_sensitive, enabled, stable).
 
+### Suggested follow-up questions
+
+When switched on (Scoped settings: **Suggest follow-up questions**, on for both the channel and the knowledge base), answers can
+end with up to two suggested questions. Click one to ask it; only the person who asked sees them work. Old suggestions turn into
+plain text after 14 days. **Reports → Suggested questions** shows how often they are shown and clicked.
+
 ### Languages
 
 People can ask in any language (unless **Languages questions may be asked in** is set) and get the answer in that language.

@@ -86,6 +86,14 @@ def _lang_label(chunk: dict) -> str:
     return f"; language: {language.name(code)}" if code and language.current() is not None else ""
 
 
+def context_of(chunks: list[dict]) -> str:
+    """The numbered context given to the model."""
+    return "\n\n".join(
+        f"[{i}] ({c['source']}{', p.' + str(c['page']) if c['page'] else ''}{_lang_label(c)})\n{c['text']}"
+        for i, c in enumerate(chunks, 1)
+    )
+
+
 def stream_grounded(question: str, chunks: list[dict], purpose: str = "answer", standalone: str = "") -> Iterator[str]:
     """Answer from retrieved chunks. No chunks -> fallback, no LLM call.
     `question` is what the person wrote (masked). `standalone` is the router's self-contained version, added only when it
@@ -93,10 +101,7 @@ def stream_grounded(question: str, chunks: list[dict], purpose: str = "answer", 
     if not chunks:
         yield FALLBACK
         return
-    context = "\n\n".join(
-        f"[{i}] ({c['source']}{', p.' + str(c['page']) if c['page'] else ''}{_lang_label(c)})\n{c['text']}"
-        for i, c in enumerate(chunks, 1)
-    )
+    context = context_of(chunks)
     if standalone and " ".join(standalone.split()).lower() != " ".join(question.split()).lower():
         question = f"{question}\n\n(In this conversation, the question means: {standalone})"
     msgs = [SystemMessage(content=prompts.assemble("answer", context)),

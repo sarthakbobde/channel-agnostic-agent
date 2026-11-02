@@ -1525,6 +1525,7 @@
         var g = await api("GET", "/reports/guardrails" + q);
         var k = await api("GET", "/reports/knowledge" + q);
         var c = await api("GET", "/reports/channels");
+        var sg = await api("GET", "/reports/suggestions" + q);
         function counts(list, plain) { return table(["What", "Times"], list.map(function (x) { return [plain ? reportLabel(x.name) : x.name, n(x.count)]; })); }
         holder.replaceChildren(
           panel("Guardrails", null, h("span", { class: "pill " + (g.total ? "warn" : "off") }, n(g.total) + " caught"),
@@ -1543,7 +1544,13 @@
                 return [channelName(x.type, x.title), h("span", { class: "pill " + (x.enabled ? "ok" : "off") }, x.enabled ? "Yes" : "No"),
                   h("span", { class: "pill " + (x.running ? "ok" : x.enabled ? "bad" : "off") }, x.running ? "Running" : "Not running"),
                   n(x.conversations), x.last_activity ? when(x.last_activity) : "Never"];
-              }))));
+              }))),
+          panel("Suggested questions", "Follow-up questions shown after answers, and how often people clicked them. Candidates that fail a check are never shown.",
+            h("span", { class: "pill " + (sg.no_block ? "warn" : "off") }, n(sg.no_block) + " replies without a usable suggestion block"),
+            h("div", { class: "quad" },
+              h("div", {}, h("h4", {}, "Shown and clicked"), table(["Channel", "Knowledge base", "Shown", "Clicked", "Click rate"],
+                sg.rows.map(function (x) { return [channelName(x.channel), x.kb, n(x.shown), n(x.clicked), Math.round(x.click_rate * 100) + "%"]; }))),
+              h("div", {}, h("h4", {}, "What happened to each candidate"), table(["Outcome", "Candidates"], sg.outcomes.map(function (x) { return [x.name, n(x.count)]; }))))));
       } catch (err) { if (me) holder.replaceChildren(msg("bad", err.message)); }
     }
     load();

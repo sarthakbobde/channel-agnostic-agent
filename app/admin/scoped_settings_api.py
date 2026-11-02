@@ -39,7 +39,7 @@ def _owner(ctx: AdminContext, sess: Session, scope_type: str, scope_id: str) -> 
         if mine is not None:
             raise HTTPException(403, "Only Admins can change settings for a channel.")
         with ctx.db.session() as s:
-            if s.scalar(select(Channel.id).where(Channel.type == scope_id)) is None:
+            if scope_id != "web" and s.scalar(select(Channel.id).where(Channel.type == scope_id)) is None:
                 raise HTTPException(404, "No such channel.")
     else:
         raise HTTPException(422, "Choose a channel, knowledge base or department.")
@@ -62,7 +62,7 @@ def scopes(sess: Session = Depends(admin_session), ctx: AdminContext = Depends(g
     has_channel_keys = any(scoped_settings.CHANNEL in k.scopes for k in scoped_settings.REGISTRY.values())
     return {"departments": departments,
             "kbs": [{"id": k["id"], "name": k["name"]} for k in kbs.list_kbs(ctx.db) if mine is None or k["department_id"] in mine],
-            "channels": ctx.store.types() if mine is None and has_channel_keys else []}
+            "channels": ["web"] + [t for t in ctx.store.types() if t != "web"] if mine is None and has_channel_keys else []}
 
 
 @router.get("/scoped-settings/{scope_type}/{scope_id}")
