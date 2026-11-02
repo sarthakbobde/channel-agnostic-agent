@@ -6,14 +6,14 @@
 - `documents.glossary_indexed`: the glossary a document was indexed with (index-time expansion), so a change can flag a re-index.
 - Global Settings gain the glossary mode (off by default) and the expansion caps.
 
-Revision ID: 0029
-Revises: 0028
+Revision ID: 0032
+Revises: 0031
 """
 import sqlalchemy as sa
 from alembic import op
 
-revision = "0029"
-down_revision = "0028"
+revision = "0032"
+down_revision = "0031"
 branch_labels = None
 depends_on = None
 

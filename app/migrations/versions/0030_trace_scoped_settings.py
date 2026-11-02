@@ -3,14 +3,14 @@
 `scoped_settings` holds overrides only; the Global Settings row stays the global layer. `answer_traces` explains one answer
 with references (ids, scores, versions, timings), never the rendered prompt or passage text.
 
-Revision ID: 0027
-Revises: 0026
+Revision ID: 0030
+Revises: 0029
 """
 import sqlalchemy as sa
 from alembic import op
 
-revision = "0027"
-down_revision = "0026"
+revision = "0030"
+down_revision = "0029"
 branch_labels = None
 depends_on = None
 

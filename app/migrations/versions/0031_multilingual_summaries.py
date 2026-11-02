@@ -7,14 +7,14 @@
 - `answer_traces.language_detail`: detection, fallback, accepted list and any wrong-language retry.
 - Global Settings and Guardrail Settings gain the language and summary settings (defaults change nothing).
 
-Revision ID: 0028
-Revises: 0027
+Revision ID: 0031
+Revises: 0030
 """
 import sqlalchemy as sa
 from alembic import op
 
-revision = "0028"
-down_revision = "0027"
+revision = "0031"
+down_revision = "0030"
 branch_labels = None
 depends_on = None
 
