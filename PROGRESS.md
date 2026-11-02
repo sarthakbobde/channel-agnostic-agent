@@ -525,8 +525,8 @@ PyTorch, transformers and LLM Guard are NOT installed yet (part 6b); their memor
 
 ## 20. Phase 12: file storage and personal data in documents
 
-Plan: `docs/phase-12-plan.md`. Parts 12a and 12b are built; 12c (masking at indexing), 12c+ (filter at search time),
-12d (reveal), 12f (Excel and images) and 12g (PII protection switch) are next.
+Plan: `docs/phase-12-plan.md`. Parts 12a, 12b, 12c and 12c+ are built; 12d (reveal), 12f (Excel and images) and 12g
+(PII protection switch) are next.
 
 ### Phase 12, part 12a: every stored file encrypted
 - `app/knowledge/filestore.py`: one `FileStore` in front of a backend. Every file is encrypted with the master key
@@ -564,6 +564,34 @@ Plan: `docs/phase-12-plan.md`. Parts 12a and 12b are built; 12c (masking at inde
   *Your own personal-data types* (add, edit, delete, *Try pattern*, and a *Try it* box that shows what the saved
   settings mask; nothing typed there is stored or logged). Audited as `pii_type.create|update|delete`.
 - Tests: `tests/test_storage_pii.py` (51).
+
+### Phase 12, part 12c: personal data masked in documents at indexing
+- Migration 0027: `knowledge_bases.pii_mask` (on for new knowledge bases, off for existing ones), the same on each index
+  version (so a change marks the index out of date and is applied by a rebuild, with rollback), and `documents.pii_counts`
+  and `documents.pii_flagged`.
+- `documents.prepare(..., pii_mask=True)`: after chunking and before embedding, each chunk's personal data (the types,
+  names, keywords, confidence and allow-list on the Guardrails screen) is replaced by its vault token. The vector store,
+  the keyword index and the source snippets never hold the values. Re-indexing a document releases its old tokens
+  first; a rebuild only adds, so the active index keeps working until the switch. Masking runs while the guardrails are on.
+- **Scan report**: indexing records how many of each type the whole document held (from one pass over the full text,
+  not the overlapping chunks). *KB documents* shows "N personal data items masked" (types and counts on hover, never values).
+- **Redacted copy**: the parsed text with plain labels, one section per page, stored encrypted as `<kb>/<doc>/.redacted.txt`.
+  ⋯ menu: *Download redacted copy* (anyone who manages the document) and *Download original* (Admins only). Both are audited
+  (`document.download_redacted`, `document.download_original`).
+- *KB configuration* has a **Personal data** tab with the switch. Only an Admin can change it.
+- Until 12d, people see tokens as plain labels (`<EMAIL_ADDRESS>`): in answers (also when streamed), source snippets and
+  reopened conversations. Stored answers keep the tokens so values can be revealed later.
+
+### Phase 12, part 12c+: search results checked before they are used
+- `app/knowledge/pii_filter.py`, run by `retriever.retrieve()` on every search, for every strategy and store: each passage
+  is checked again before the AI model, the source snippets or the stored conversation see it. Labels and tokens already
+  in the text are never masked again.
+- A find is tokenised into the same vault, recorded as a guardrail event (`personal_data / search / masked`, a count
+  only) and, when the document's index was built with masking, flags the document **Needs re-index**, so a detection gap
+  is reported. Re-indexing clears the flag.
+- Fails closed: if the check fails, no passage is used and the guardrail alert is raised. Results are cached for 10 minutes
+  per passage and settings, so popular passages are not checked again at every question.
+- Tests: 17 more in `tests/test_storage_pii.py`; downloads and the Admin-only switch in `tests/test_security_pass.py`.
 
 ## How to run
 

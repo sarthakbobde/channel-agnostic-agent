@@ -1,8 +1,9 @@
 """Admin API for documents inside knowledge bases (upload, replace, re-index, move, delete).
 Same access rule as knowledge bases: Admins everywhere, Editors in the departments they edit."""
 import logging
+from pathlib import Path
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Response, UploadFile
 from pydantic import BaseModel
 from sqlalchemy import select
 
@@ -193,3 +194,33 @@ def set_access(doc_id: int, body: AccessBody, sess: Session = Depends(admin_sess
         raise HTTPException(422, str(e))
     ctx.store.record(sess.email, "document.access", d["name"], f"{before} -> {access.describe(ctx.db, doc_id)}")
     return result
+
+
+# ---- downloads: the redacted copy for anyone who manages the document, the original for Admins only ----------
+def _attachment(data: bytes, name: str, media: str) -> Response:
+    return Response(data, media_type=media, headers={"Content-Disposition": f'attachment; filename="{name}"',
+                                                     "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"})
+
+
+@router.get("/documents/{doc_id}/redacted")
+def download_redacted(doc_id: int, sess: Session = Depends(admin_session), ctx: AdminContext = Depends(get_ctx)):
+    """The document's text with personal data replaced by labels (kept when its knowledge base masks documents)."""
+    d = _doc_or_404(ctx, sess, doc_id)
+    key = documents.redacted_key(d)
+    if not documents.files().exists(key):
+        raise HTTPException(404, "There is no redacted copy: personal-data masking is off for this knowledge base, "
+                                 "or the document has not been indexed since it was switched on.")
+    ctx.store.record(sess.email, "document.download_redacted", d["name"], "")
+    return _attachment(documents.files().get(key), f"{Path(d['name']).stem}-redacted.txt", "text/plain; charset=utf-8")
+
+
+@router.get("/documents/{doc_id}/original")
+def download_original(doc_id: int, sess: Session = Depends(admin_session), ctx: AdminContext = Depends(get_ctx)):
+    """The uploaded file itself, decrypted. Admins only, and every download is audited."""
+    d = _doc_or_404(ctx, sess, doc_id)
+    if sess.role != "admin":
+        raise HTTPException(403, "Only an Admin can download the original. Download the redacted copy instead.")
+    if not documents.stored(d):
+        raise HTTPException(404, "The original file is missing; upload it again with Replace.")
+    ctx.store.record(sess.email, "document.download_original", d["name"], f"{d['size']} bytes")
+    return _attachment(documents.files().get(documents.file_key(d)), d["name"], "application/octet-stream")

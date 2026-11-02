@@ -344,3 +344,29 @@ def test_login_does_not_reveal_whether_an_account_exists(world):
     a = client().post(P + "/auth/login", json={"email": "nobody-here@sysfore.com", "password": "whatever password"})
     b = client().post(P + "/auth/login", json={"email": "sec-ed-hr@sysfore.com", "password": "wrong password!!"})
     assert a.status_code == b.status_code == 401 and a.json() == b.json()
+
+
+def test_only_an_admin_downloads_an_original_and_it_is_audited(world):
+    d = world.doc_hr
+    assert world.edhr.get(f"{P}/documents/{d['id']}/original").status_code == 403
+    assert world.edit.get(f"{P}/documents/{d['id']}/original").status_code == 404          # another department's file
+    r = world.admin.get(f"{P}/documents/{d['id']}/original")
+    assert r.status_code == 200 and RESTRICTED.encode() in r.content
+    assert "attachment" in r.headers["content-disposition"] and r.headers["cache-control"] == "no-store"
+    from app.db import AuditLog
+    with world.db.session() as s:
+        assert s.scalar(select(AuditLog.id).where(AuditLog.action == "document.download_original", AuditLog.target == d["name"]))
+
+
+def test_there_is_no_redacted_copy_while_masking_is_off(world):
+    r = world.edhr.get(f"{P}/documents/{world.doc_hr['id']}/redacted")
+    assert r.status_code == 404 and "masking is off" in r.json()["detail"]
+
+
+def test_only_an_admin_changes_document_masking(world):
+    kb = world.kb_hr
+    assert world.edhr.put(f"{P}/kbs/{kb['id']}", headers=world.eh, json={"pii_mask": not kb["pii_mask"]}).status_code == 403
+    assert world.edhr.put(f"{P}/kbs/{kb['id']}", headers=world.eh, json={"pii_mask": kb["pii_mask"]}).status_code == 200   # unchanged is fine
+    r = world.admin.put(f"{P}/kbs/{kb['id']}", headers=world.ah, json={"pii_mask": not kb["pii_mask"]})
+    assert r.status_code == 200 and r.json()["pii_mask"] is (not kb["pii_mask"]) and "rebuild" in r.json()["note"]
+    world.admin.put(f"{P}/kbs/{kb['id']}", headers=world.ah, json={"pii_mask": kb["pii_mask"]})

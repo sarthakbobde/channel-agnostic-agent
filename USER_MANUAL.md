@@ -327,6 +327,10 @@ Below it, two columns, one row per check with its own switch; a check's settings
 - **Question checks** (left; they run first, so a blocked question never reaches the AI model): *Question length*; *Prompt injection* (strictness Low, Medium, High, plus phrases to always block); *Toxic language* (strictness, extra words, words that are fine); *Banned topics* (the topics are set per department); *Mask personal data* (tick which kinds: emails, phones, card numbers, your own types and so on; optionally names; *Detection confidence*; and *Sensitive keywords*: the value after a listed keyword such as `Salary: 12,40,000` is masked as `<SENSITIVE_VALUE>`). Toxic language and banned topics are marked *Also checks answers*.
 - **Answer checks** (right; they run before anyone sees the answer): *Check answers*; *Redact personal data* (with values that may stay, for example `hr@company.com`); *Protect instructions* (stops an answer that repeats the hidden instructions).
 - **Blocked reply** (right, below): the message people see, with a live preview.
+- Personal data in **documents** is masked per knowledge base: *KB configuration → Personal data* (Admins switch it; it
+  applies after a rebuild). *KB documents* then shows how many items each file had masked, and the ⋯ menu offers
+  *Download redacted copy* (and, for Admins, *Download original*; every download is recorded). A file marked
+  **Needs re-index** had personal data found at search time that indexing missed; choose *Re-index* in its ⋯ menu.
 - **Your own personal-data types** (left, below): numbers or codes only your organisation uses, such as `EMP-12345`. Give a
   name (`EMPLOYEE_ID`), a regular expression (`\bEMP-\d{5}\b`), optional context words and a confidence; **Try pattern**
   shows what it matches in the *Try it* text. A new type is masked straight away. **Try it** shows what the saved settings

@@ -355,6 +355,9 @@ def detect(text: str, types, mask_names: bool = False, allow=(), keywords=(), th
     found += [Hit(a, b, KEYWORD_TYPE, pii.KEYWORD_SCORE) for a, b in pii.keyword_spans(text, keywords)]
     allowed = {a.strip().lower() for a in allow}
     found = [r for r in found if text[r.start:r.end].strip().lower() not in allowed]
+    masked = [m.span() for m in pii.PLACEHOLDER_RE.finditer(text)]      # already masked: never mask a label or token again
+    if masked:
+        found = [r for r in found if not any(r.start < b and a < r.end for a, b in masked)]
     kept, end = [], -1
     for r in sorted(found, key=lambda r: (r.start, -r.score)):         # overlapping hits: keep the first / strongest
         if r.start >= end:

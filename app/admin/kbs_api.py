@@ -29,6 +29,7 @@ class KBIn(BaseModel):
     store: str | None = None
     store_config: dict | None = None
     store_secrets: dict | None = None
+    pii_mask: bool | None = None
 
 
 def _last_indexed(ctx: AdminContext, kb_id: int):
@@ -269,6 +270,8 @@ def update(kb_id: int, body: KBIn, sess: Session = Depends(admin_session), ctx: 
     if current is None or not _can(ctx, sess, current["department_id"]):
         raise HTTPException(404, "No such knowledge base.")
     sent = body.model_fields_set
+    if "pii_mask" in sent and body.pii_mask is not None and body.pii_mask != current["pii_mask"] and sess.role != "admin":
+        raise HTTPException(403, "Only an Admin can change personal-data masking for a knowledge base.")
     if body.department_id is not None and not _can(ctx, sess, body.department_id):
         raise HTTPException(403, "You can only move a knowledge base to a department you edit.")
     emb_name = emb_config = None
@@ -284,16 +287,17 @@ def update(kb_id: int, body: KBIn, sess: Session = Depends(admin_session), ctx: 
             chunk_size=body.chunk_size if "chunk_size" in sent else "keep",
             chunk_overlap=body.chunk_overlap if "chunk_overlap" in sent else "keep",
             chunk_strategy=body.chunk_strategy if "chunk_strategy" in sent else None,
-            embedding=emb_name, embedding_config=emb_config, store=store_name, store_config=store_config)
+            embedding=emb_name, embedding_config=emb_config, store=store_name, store_config=store_config,
+            pii_mask=body.pii_mask if "pii_mask" in sent else None)
     except ValueError as e:
         raise HTTPException(422, str(e))
-    changes = [f"{k}: {before[k]} -> {after[k]}" for k in ("name", "description", "department_id", "chunk_size", "chunk_overlap", "chunk_strategy", "embedding", "store")
+    changes = [f"{k}: {before[k]} -> {after[k]}" for k in ("name", "description", "department_id", "chunk_size", "chunk_overlap", "chunk_strategy", "embedding", "store", "pii_mask")
                if before[k] != after[k]]
     ctx.store.record(sess.email, "kb.update", after["name"], "; ".join(changes) or "no changes")
     with ctx.db.session() as s:
         names = dict(s.execute(select(Department.id, Department.name)).all())
     out = _present(ctx, after, names)
-    if any(before[k] != after[k] for k in ("chunk_size", "chunk_overlap", "chunk_strategy", "embedding", "embedding_config", "store", "store_config")):
+    if any(before[k] != after[k] for k in ("chunk_size", "chunk_overlap", "chunk_strategy", "embedding", "embedding_config", "store", "store_config", "pii_mask")):
         out["note"] = "The index keeps its current settings until you rebuild it."
     return out
 

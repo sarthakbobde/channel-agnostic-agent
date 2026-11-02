@@ -1,7 +1,7 @@
 from typing import Iterator
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from app.llm import get_chat_model
-from app import prompts
+from app import pii, prompts
 from app.retriever import retrieve
 
 FALLBACK = "I couldn't find this in the knowledge base."
@@ -69,7 +69,7 @@ def search(query: str, kb_ids=None) -> list[dict]:
 def format_sources(chunks: list[dict]) -> list[dict]:
     return [
         {"n": i, "source": c["source"], "page": c["page"],
-         "score": c["score"], "snippet": c["text"][:300], "via": c.get("via", "meaning")}
+         "score": c["score"], "snippet": pii.label(c["text"])[:300], "via": c.get("via", "meaning")}
         for i, c in enumerate(chunks, 1)
     ]
 

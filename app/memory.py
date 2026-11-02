@@ -137,10 +137,11 @@ def get_context(conv_id: str, db: Database | None = None) -> tuple[str, list[tup
 
 
 def get_messages(conv_id: str, db: Database | None = None) -> list[dict]:
-    """Full history for display."""
+    """Full history for display (vault tokens shown as plain labels)."""
+    from app import pii
     with (db or get_db()).session() as s:
         rows = list(s.scalars(select(Message).where(Message.conversation_id == conv_id).order_by(Message.id)))
-        return [{"role": m.role, "content": m.content if (m.complete or m.content) else INTERRUPTED,
+        return [{"role": m.role, "content": pii.label(m.content) if (m.complete or m.content) else INTERRUPTED,
                  "meta": m.meta or {}, **({} if m.complete else {"incomplete": True})} for m in rows]
 
 

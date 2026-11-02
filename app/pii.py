@@ -29,7 +29,8 @@ KEYWORD_SCORE = 0.85
 CACHE_SECONDS = 2.0
 NAME_RE = re.compile(r"^[A-Z][A-Z0-9_]{1,39}$")
 RESERVED = {"PERSON", "SENSITIVE_VALUE", "LOCATION", "DATE_TIME", "NRP", "ORGANIZATION"}
-TOKEN_RE = re.compile(r"<([A-Z][A-Z0-9_]*?_[0-9a-f]{8,16})>")
+TOKEN_RE = re.compile(r"<(([A-Z][A-Z0-9_]*?)_[0-9a-f]{8,64})>")            # group 1: the token, group 2: its type
+PLACEHOLDER_RE = re.compile(r"<[A-Z][A-Z0-9_]*(?:_[0-9a-f]{8,64})?>")    # a token or a plain label such as <EMAIL_ADDRESS>
 MAX_VALUE = 120                       # a keyword's value never runs on for more than this many characters
 _lock = threading.Lock()
 _custom_cache: tuple[float, int, list] | None = None
@@ -282,7 +283,7 @@ def tokenise(text: str, kb_id: int, doc_id: int | None, hits, db: Database | Non
 def reveal(text: str, kb_ids, db: Database | None = None) -> tuple[str, int]:
     """Put the real values back for tokens of the given knowledge bases. Unknown tokens are left as they are.
     Callers decide who may see the values; this function does not."""
-    found = set(TOKEN_RE.findall(text or ""))
+    found = {m.group(1) for m in TOKEN_RE.finditer(text or "")}
     if not found or not kb_ids:
         return text, 0
     db = db or get_db()
@@ -300,6 +301,27 @@ def reveal(text: str, kb_ids, db: Database | None = None) -> tuple[str, int]:
             return values[m.group(1)]
         return m.group(0)
     return TOKEN_RE.sub(put, text), n
+
+
+def label(text: str) -> str:
+    """Tokens shown as plain labels (<EMAIL_ADDRESS_7f3a9c21> -> <EMAIL_ADDRESS>), for people who may not see the values."""
+    return TOKEN_RE.sub(lambda m: f"<{m.group(2)}>", text or "")
+
+
+def label_stream(parts):
+    """`label` for an answer that arrives in pieces: a token split across pieces is held back until it is complete."""
+    held = ""
+    for part in parts:
+        held += part
+        cut = held.rfind("<")
+        if cut >= 0 and ">" not in held[cut:] and len(held) - cut <= 90:
+            ready, held = held[:cut], held[cut:]
+        else:
+            ready, held = held, ""
+        if ready:
+            yield label(ready)
+    if held:
+        yield label(held)
 
 
 def release_document(db: Database, doc_id: int) -> int:

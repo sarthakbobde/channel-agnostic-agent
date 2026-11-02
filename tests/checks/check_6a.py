@@ -70,7 +70,7 @@ users.create_user(db, "hr@sysfore.com", "Hana", "viewer", hr)
 users.create_user(db, "it@sysfore.com", "Ivan", "viewer", itd)
 users.create_user(db, "boss@sysfore.com", "Boss", "admin", None)
 u = users.get_user(db, "boss@sysfore.com"); t, _ = users.issue_set_password_link(db, u["id"], "t"); users.redeem_set_password_link(db, t, "password number 1")
-kb = kbs.create_kb(db, "Docs", "", hr)
+kb = kbs.create_kb(db, "Docs", "", hr, pii_mask=False)       # documents indexed before the guardrails first started, as on an upgrade
 d = documents.add(db, kb["id"], "faq.txt", b"Annual leave is 18 days for every employee. Contact hr-desk@sysfore.com for questions.", "boss@sysfore.com")
 end = time.time() + 60
 while documents.get(db, d["id"])["status"] != "Indexed" and time.time() < end:

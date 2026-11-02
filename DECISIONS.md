@@ -110,4 +110,10 @@ this file.
 | 12b | Token form | `<TYPE_` + first 8 hex characters of an HMAC-SHA256 keyed per KB `>`; longer on a clash. | Shorter tokens clash; a plain counter would differ between chunks indexed in a different order. |
 | 12b | Keyword values | After `:`, `=`, `|` or ` - `, any value to the end of the sentence or cell; otherwise only a value starting with a number. | Masking after `is`/`of` without a number would hide ordinary sentences. |
 | 12b | Custom types | Admin only; a new type is switched on at once. | Editors per department: open point in the plan. |
+| 12c | Existing knowledge bases | Document masking off until an Admin switches it on (one rebuild each); new knowledge bases start with it on. | Switch it on for all at once: a rebuild of every KB at upgrade. |
+| 12c | Who switches it | Admins only. | Editors of the department: turning masking off is a privacy decision. |
+| 12c | Which types | The Guardrails screen's types, names, keywords, confidence and allow-list, for every knowledge base. | A list per knowledge base: more settings to keep consistent. |
+| 12c | Guardrails off | No masking at indexing or search. | Mask anyway: the master switch is meant to turn every check off (12g formalises this). |
+| 12c | Until reveal exists | Tokens are shown as plain labels; stored text keeps tokens. | Store labels: the values could then never be revealed. |
+| 12c+ | Failure | No passage is used and an alert is raised. | Use the passages unchecked: could send personal data to an external model. |
 | 8c | Store health cadence | Every 5 minutes. | Quick enough to catch an outage, light enough not to load the stores. |

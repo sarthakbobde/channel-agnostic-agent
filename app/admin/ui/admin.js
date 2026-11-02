@@ -370,6 +370,7 @@
     more: "M5 12a1 1 0 1 0 2 0 1 1 0 1 0-2 0zM11 12a1 1 0 1 0 2 0 1 1 0 1 0-2 0zM17 12a1 1 0 1 0 2 0 1 1 0 1 0-2 0z",
     refresh: "M20 11a8 8 0 0 0-14.9-3.9L3 9M3 4v5h5M4 13a8 8 0 0 0 14.9 3.9L21 15M21 20v-5h-5",
     upload: "M12 16V4M7 9l5-5 5 5M4 20h16",
+    download: "M12 4v12M7 11l5 5 5-5M4 20h16",
     folder: "M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z",
     star: "M12 3l2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.4 2.9 1-6.1-4.4-4.3 6.1-.9z",
     backup: "M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6zM9 12.5l2 2 4-4.5",
@@ -1157,7 +1158,7 @@
     "guardrails.update": "Changed guardrails", "pii_type.create": "Added a personal-data type", "pii_type.update": "Changed a personal-data type", "pii_type.delete": "Deleted a personal-data type", "prompt.save": "Saved a prompt draft", "prompt.publish": "Published a prompt", "prompt.rollback": "Rolled a prompt back", "prompt.preview": "Tried a prompt",
     "kb.create": "Created a knowledge base", "kb.update": "Changed a knowledge base", "kb.delete": "Deleted a knowledge base", "kb.access": "Changed who can ask a knowledge base",
     "kb.reindex": "Reprocessed a knowledge base", "kb.rollback": "Rolled back a knowledge base", "kb.rebuild.start": "Started a rebuild", "kb.rebuild.finish": "Finished a rebuild",
-    "kb.rebuild.fail": "A rebuild failed", "kb.rebuild.cancel": "Cancelled a rebuild", "document.upload": "Uploaded a document", "document.replace": "Replaced a document",
+    "kb.rebuild.fail": "A rebuild failed", "kb.rebuild.cancel": "Cancelled a rebuild", "document.upload": "Uploaded a document", "document.download_redacted": "Downloaded a redacted copy", "document.download_original": "Downloaded an original", "document.replace": "Replaced a document",
     "document.delete": "Deleted a document", "document.move": "Moved a document", "document.reindex": "Reprocessed a document", "document.access": "Changed who can read a document",
     "embedding.download": "Downloaded a search model", "conversation.view": "Opened a conversation", "conversation.delete": "Deleted a conversation",
     "conversation.export": "Started an export", "conversation.export.done": "Finished an export", "retention.run": "Ran automatic deletion", "alert.resolve": "Dismissed an alert",
@@ -1722,6 +1723,21 @@
     var kind = d.status === "Indexed" ? "ok" : d.status === "Failed" ? "bad" : "warn";
     return h("span", { class: "pill " + kind }, d.status === "Pending" || d.status === "Indexing" ? d.status + "…" : d.status);
   }
+  function piiBadge(d) {                                 // what indexing masked, and whether search found something it missed
+    var out = [];
+    var types = Object.keys(d.pii_counts || {});
+    if (types.length) {
+      var n = types.reduce(function (t, k) { return t + d.pii_counts[k]; }, 0);
+      out.push(h("span", { class: "pill off", title: types.map(function (k) { return k + ": " + d.pii_counts[k]; }).join(", ") },
+        n + " personal data item" + (n === 1 ? "" : "s") + " masked"));
+    }
+    if (d.pii_flagged) out.push(h("span", { class: "pill warn", title: "A search found personal data that indexing missed. Re-index this file." }, "Needs re-index"));
+    return out.length ? h("div", { class: "chips-static" }, out) : null;
+  }
+  function download(path) {                                // a same-origin link: the session cookie goes with it
+    var a = h("a", { href: API + path, download: "" });
+    document.body.appendChild(a); a.click(); a.remove();
+  }
   function visibleTo(d) {
     if (d.visibility === "everyone") return h("span", { class: "pill off" }, "Everyone");
     var names = d.access_names || [];
@@ -1879,6 +1895,10 @@
         menuItem("refresh", d.status === "Failed" ? "Retry indexing" : "Re-index", function () { act(api("POST", "/documents/" + d.id + "/reindex", {}), "Re-indexing " + d.name + "."); },
           "Split and index this file again"),
         menuItem("upload", "Replace with a new version", function () { replaceInput.click(); }, "Keeps its access settings"),
+        k.pii_mask && d.status === "Indexed" ? menuItem("download", "Download redacted copy", function () { download("/documents/" + d.id + "/redacted"); },
+          "Text with personal data replaced") : null,
+        state.perm && state.perm.can_manage_all ? menuItem("download", "Download original", function () { download("/documents/" + d.id + "/original"); },
+          "Admins only; recorded in the audit log") : null,
         others.length ? h("div", { class: "menu-sep", role: "separator" }) : null,
         others.length ? h("div", { class: "menu-head" }, "Move to") : null,
         others.map(function (x) {
@@ -1890,6 +1910,7 @@
         h("td", { class: "wrap", "data-label": "File" }, h("div", { class: "file" }, fileIcon(d.name),
           h("div", { class: "row-text" }, h("b", { class: "fname", title: d.name }, d.name),
             h("span", { class: "meta" }, d.uploaded_by ? "Uploaded by " + d.uploaded_by : ""),
+            piiBadge(d),
             d.error ? h("span", { class: "meta bad" }, d.error) : null))),
         h("td", { "data-label": "Visible to" }, visibleTo(d)),
         h("td", { "data-label": "Status" }, docStatus(d)),
@@ -2269,6 +2290,16 @@
       }, !k.is_default);
       // one tab per job, so the card stays short however much each part grows
       var saveSplit = h("button", { type: "button", class: "btn primary", onclick: function () { save.click(); } }, "Save");
+      var canMask = state.perm && state.perm.can_manage_all;
+      var maskBox = h("input", { type: "checkbox", id: "kpii" + k.id, checked: !!k.pii_mask, disabled: !canMask, "aria-label": "Mask personal data in documents" });
+      var maskOut = h("div", { "aria-live": "polite" });
+      var maskSave = h("button", { type: "button", class: "btn primary", hidden: !canMask, onclick: async function () {
+        maskOut.replaceChildren(msg("wait", "Saving…"));
+        try {
+          var r = await api("PUT", "/kbs/" + k.id, { pii_mask: maskBox.checked });
+          await load(msg("ok", "Saved " + r.name + "." + (r.note ? " " + r.note : "")));
+        } catch (err) { if (me) maskOut.replaceChildren(msg("bad", err.message)); }
+      } }, "Save");
       var parts = { preview: foldToPane(previewPanel(k, data, strat, size, overlap)), search: foldToPane(embeddingPanel(k, data)),
                     storage: foldToPane(storePanel(k, data)), rebuild: foldToPane(indexPanel(k)), access: foldToPane(askPanel(k)) };
       var panes = {
@@ -2286,13 +2317,20 @@
             overlapField),
           h("div", { class: "actions" }, saveSplit),
           h("div", { class: "subpanel" }, parts.preview.pane)),
-        search: parts.search.pane, storage: parts.storage.pane, rebuild: parts.rebuild.pane, access: parts.access.pane
+        search: parts.search.pane, storage: parts.storage.pane,
+        personal: h("div", { class: "pane" },
+          h("p", { class: "help" }, "Personal data in this knowledge base's documents is replaced before anything is stored in the search index or sent to an AI model. "
+            + "The types and keywords are the ones on the Guardrails screen. Each file keeps a redacted copy to download. Changes apply after a rebuild."),
+          h("div", { class: "opt" }, h("label", { class: "switch" }, maskBox), h("b", {}, "Mask personal data in documents")),
+          canMask ? null : hint("Only an Admin can change this."),
+          h("div", { class: "actions" }, maskSave), maskOut),
+        rebuild: parts.rebuild.pane, access: parts.access.pane       // keys in tab order: the remembered tab is found by position
       };
       var tabs = tabBar([["general", "General"], ["splitting", "Splitting"], ["search", "Search model"], ["storage", "Search storage"],
-        ["rebuild", ["Rebuild", parts.rebuild.flag]], ["access", "Who can ask"]], panes, state.kbTab || "general");
+        ["personal", "Personal data"], ["rebuild", ["Rebuild", parts.rebuild.flag]], ["access", "Who can ask"]], panes, state.kbTab || "general");
       tabs.el.addEventListener("click", function (e) { var b = e.target.closest("button[role=tab]"); if (b) state.kbTab = Object.keys(panes)[Array.prototype.indexOf.call(tabs.el.children, b)]; });
       return h("section", { class: "panel kb-card" }, kbHead(k), out, tabs.el,
-        panes.general, panes.splitting, panes.search, panes.storage, panes.rebuild, panes.access);
+        panes.general, panes.splitting, panes.search, panes.storage, panes.personal, panes.rebuild, panes.access);
     }
 
     // The sub-sections were built as collapsible <details>; inside a tab they become a plain pane with a heading.

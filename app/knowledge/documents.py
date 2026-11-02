@@ -36,7 +36,8 @@ def _now() -> datetime:
 def _view(d: Document) -> dict:
     return {"id": d.id, "kb_id": d.kb_id, "name": d.name, "size": d.size, "visibility": d.visibility, "status": d.status, "error": d.error,
             "chunks": d.chunks, "uploaded_by": d.uploaded_by, "created_at": d.created_at,
-            "updated_at": d.updated_at, "indexed_at": d.indexed_at, "doc_key": d.doc_key}
+            "updated_at": d.updated_at, "indexed_at": d.indexed_at, "doc_key": d.doc_key,
+            "pii_counts": d.pii_counts or {}, "pii_flagged": bool(d.pii_flagged)}
 
 
 def _not_rebuilding(db: Database, kb_id: int) -> None:
@@ -59,6 +60,11 @@ def files() -> filestore.FileStore:
 
 def doc_prefix(kb_id: int, doc_id: int) -> str:
     return f"{kb_id}/{doc_id}/"
+
+
+def id_for_key(doc_key: str) -> int | None:
+    """The document id behind a chunk's doc_id ("doc-41"), or None for chunks indexed before documents had records."""
+    return int(doc_key[4:]) if (doc_key or "").startswith("doc-") and doc_key[4:].isdigit() else None
 
 
 def file_key(d: dict) -> str:
@@ -276,21 +282,66 @@ def add_in_batches(store, ids, texts, metas, size: int = BATCH) -> None:
         _add_with_retry(store, ids[i:i + size], texts[i:i + size], metas[i:i + size])
 
 
-def prepare(d: dict, kb: dict, chunker, department: str, access=((), ())) -> tuple[list, list, list]:
-    """Parse and chunk one document -> (ids, texts, metadatas). Raises ValueError with a message an admin can act on."""
+def masking_settings(db: Database | None = None):
+    """The guardrail settings to mask documents with, or None while the guardrails are off."""
+    from app import guardrails
+    snap = guardrails.current(db or get_db())
+    return snap if snap.enabled and (snap.masked_types or snap.keywords or snap.mask_names) else None
+
+
+def prepare(d: dict, kb: dict, chunker, department: str, access=((), ()), pii_mask: bool = False,
+            report: dict | None = None, db: Database | None = None) -> tuple[list, list, list]:
+    """Parse and chunk one document -> (ids, texts, metadatas). Raises ValueError with a message an admin can act on.
+    With `pii_mask`, personal data in every chunk is replaced by its vault token before anything is embedded or stored,
+    and `report` receives {"pii_counts": {type: how many in the document}, "redacted": the text with plain labels}."""
     if not stored(d):
         raise ValueError(f"The original of '{d['name']}' is missing; upload it again with Replace.")
+    snap = masking_settings(db) if pii_mask else None
     with files().plain_copy(file_key(d)) as path:              # decrypted only while it is parsed
         chunks = chunker.chunk(path)
+        if snap is not None and report is not None:
+            report.update(_redacted(path, snap))
     if not chunks:
         raise ValueError("No readable text was found in this file (is it a scanned image?).")
     ids, texts, metas = [], [], []
     for n, ch in enumerate(chunks):
         ids.append(f"{d['doc_key']}::{n}")
-        texts.append(ch.text)
+        text = ch.text
+        if snap is not None:
+            from app import guardrails
+            hits = guardrails.detect(text, snap.masked_types, snap.mask_names, snap.allow_list, snap.keywords, snap.threshold)
+            text, _ = pii.tokenise(text, kb["id"], d["id"], hits, db)
+        texts.append(text)
         metas.append(metadata.build(source=d["name"], doc_id=d["doc_key"], page=ch.page, chunk=n, kb_id=kb["id"], department=department,
                                     heading_path=ch.heading_path, allowed_groups=access[0], allowed_people=access[1]))
     return ids, texts, metas
+
+
+def _redacted(path: Path, snap) -> dict:
+    """The whole document as text with personal data replaced by labels, and how much of each type it holds."""
+    from app import guardrails
+    parts, total = [], {}
+    for page, text in parsers.load_pages(path):
+        masked, counts = guardrails.mask_with(text, snap, snap.allow_list)
+        parts.append((f"--- Page {page} ---\n" if page else "") + masked)
+        for k, v in counts.items():
+            total[k] = total.get(k, 0) + v
+    return {"pii_counts": total, "redacted": "\n\n".join(parts)}
+
+
+REDACTED = ".redacted.txt"                 # file names never start with a dot (clean_name), so this cannot clash
+
+
+def redacted_key(d: dict) -> str:
+    return doc_prefix(d["kb_id"], d["id"]) + REDACTED
+
+
+def save_redacted(d: dict, report: dict) -> None:
+    """Keep the redacted copy (encrypted like every file), or drop a stale one when the document is not masked."""
+    if report.get("redacted") is not None:
+        files().put(redacted_key(d), report["redacted"].encode("utf-8"))
+    else:
+        files().delete(redacted_key(d))
 
 
 def index_document(db: Database, doc_id: int) -> None:
@@ -307,13 +358,19 @@ def index_document(db: Database, doc_id: int) -> None:
         chunker = versions.active_chunker(db, kb)          # the ACTIVE index's settings: strategies are never mixed in one index
         department = kbs.department_name(db, kb["department_id"])
         from app.knowledge import access
-        ids, texts, metas = prepare(d, kb, chunker, department, access.ids_for(db, doc_id))
+        active = versions.active(db, kb["id"])
+        mask = bool(active["pii_mask"]) if active else bool(kb.get("pii_mask"))   # as the active index was built
+        pii.release_document(db, doc_id)                   # the old chunks go below; their tokens are made again
+        report: dict = {}
+        ids, texts, metas = prepare(d, kb, chunker, department, access.ids_for(db, doc_id), pii_mask=mask, report=report, db=db)
         n = len(ids)
         store = kbs.store_for(kb)
         store.delete_by_document(d["doc_key"])
         add_in_batches(store, ids, texts, metas)
         access.sync_chunks(db, d)
-        _set(db, doc_id, status="Indexed", error="", chunks=n, indexed_at=_now())
+        save_redacted(d, report)
+        _set(db, doc_id, status="Indexed", error="", chunks=n, indexed_at=_now(), pii_counts=report.get("pii_counts", {}),
+             pii_flagged=False)
         _clear_failed(db, doc_id)
         log.info("indexed document %s (%s): %d chunks", doc_id, d["name"], n)
     except Exception as e:

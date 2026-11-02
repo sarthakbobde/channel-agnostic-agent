@@ -112,6 +112,7 @@ class KnowledgeBase(Base):
     embedding_config: Mapped[dict] = mapped_column(JSON, default=dict)     # non-secret settings; secrets are stored encrypted
     store: Mapped[str] = mapped_column(String(20), default="chroma")
     store_config: Mapped[dict] = mapped_column(JSON, default=dict)
+    pii_mask: Mapped[bool] = mapped_column(Boolean, default=True)          # mask personal data in documents at indexing
     is_default: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)
@@ -134,6 +135,8 @@ class Document(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)
     indexed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    pii_counts: Mapped[dict] = mapped_column(JSON, default=dict)           # {type: how many} masked at the last indexing
+    pii_flagged: Mapped[bool] = mapped_column(Boolean, default=False)      # search found personal data indexing missed
     __table_args__ = (UniqueConstraint("kb_id", "name", name="uq_documents_kb_name"),)
 
 
@@ -152,6 +155,7 @@ class KBIndexVersion(Base):
     embedding_config: Mapped[dict] = mapped_column(JSON, default=dict)
     store: Mapped[str] = mapped_column(String(20), default="chroma")
     store_config: Mapped[dict] = mapped_column(JSON, default=dict)
+    pii_mask: Mapped[bool] = mapped_column(Boolean, default=False)
     status: Mapped[str] = mapped_column(String(12), default="Building")       # Building | Ready | Failed | Cancelled
     is_active: Mapped[bool] = mapped_column(Boolean, default=False)
     chunks: Mapped[int] = mapped_column(Integer, default=0)

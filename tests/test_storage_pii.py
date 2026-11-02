@@ -380,3 +380,154 @@ def test_start_up_encrypts_the_store_and_flags_plain_legacy_folders(docs, tmp_pa
     filestore.secure_folder(str(chats), documents.settings.secret_key)
     documents.secure_at_start(db)
     assert open_alerts() == []
+
+
+# ---- 12c: masking documents at indexing ---------------------------------------------------------------------------
+def test_tokens_are_shown_as_plain_labels():
+    assert pii.label("Mail <EMAIL_ADDRESS_7f3a9c21> or <SENSITIVE_VALUE_0011aabbccdd>.") == "Mail <EMAIL_ADDRESS> or <SENSITIVE_VALUE>."
+    assert pii.label("a <b> and <EMAIL_ADDRESS> stay") == "a <b> and <EMAIL_ADDRESS> stay"
+
+
+def test_a_token_split_across_streamed_pieces_is_still_labelled():
+    pieces = ["Mail <EMAIL_", "ADDRESS_7f3a", "9c21> today, ", "1 < 2 is true"]
+    assert "".join(pii.label_stream(iter(pieces))) == "Mail <EMAIL_ADDRESS> today, 1 < 2 is true"
+
+
+def test_labels_and_tokens_are_never_masked_again():
+    text = "Salary: <SENSITIVE_VALUE_7f3a9c21>. Salary: <SENSITIVE_VALUE>. Salary: 9,00,000."
+    hits = guardrails.detect(text, (), keywords=("Salary",))
+    assert [text[h.start:h.end] for h in hits] == ["9,00,000"]
+
+
+def _keywords_only(db):
+    """Guardrails on, masking by keywords only (no language model needed)."""
+    guardrails.update({"enabled": True, "masked_types": []}, "admin@x.com", db)
+    pii._token_key = None
+
+
+def test_indexing_replaces_personal_data_before_anything_is_stored(docs, new_db):
+    db = new_db("mask_index")
+    _keywords_only(db)
+    d = {"id": 9, "kb_id": 4, "name": "pay.md", "doc_key": "doc-9"}
+    documents._write(d, b"# Pay\n\nSalary: 12,40,000.\n\nThe canteen opens at 9.\n\nCTC of 18,00,000 offered.")
+    report: dict = {}
+    ids, texts, _ = documents.prepare(d, {"id": 4}, chunkers.build("recursive", 900, 150), "HR", pii_mask=True, report=report, db=db)
+    joined = " ".join(texts)
+    assert "12,40,000" not in joined and "18,00,000" not in joined and "canteen opens at 9" in joined
+    assert len(set(pii.TOKEN_RE.findall(joined))) == 2
+    assert report["pii_counts"] == {"SENSITIVE_VALUE": 2}
+    assert "Salary: <SENSITIVE_VALUE>" in report["redacted"] and "12,40,000" not in report["redacted"]
+    assert pii.reveal(joined, [4], db)[0].count("12,40,000") == 1
+    documents.save_redacted(d, report)
+    assert documents.files().get(documents.redacted_key(d)).decode() == report["redacted"]
+    assert b"12,40,000" not in _all_bytes(docs)
+    documents.save_redacted(d, {})
+    assert not documents.files().exists(documents.redacted_key(d))
+
+
+def test_without_masking_nothing_changes(docs, new_db):
+    db = new_db("mask_off")
+    _keywords_only(db)
+    d = {"id": 10, "kb_id": 4, "name": "pay.txt", "doc_key": "doc-10"}
+    documents._write(d, b"Salary: 12,40,000.")
+    report: dict = {}
+    _, texts, _ = documents.prepare(d, {"id": 4}, chunkers.build("recursive", 900, 150), "HR", pii_mask=False, report=report, db=db)
+    assert texts == ["Salary: 12,40,000."] and report == {}
+
+
+def test_new_knowledge_bases_mask_and_a_change_needs_a_rebuild(new_db):
+    from sqlalchemy import select
+    from app.db import Department
+    from app.knowledge import kbs, versions
+    db = new_db("mask_kb")
+    with db.session() as s:
+        s.add(Department(name="HR", retention_days=30, banned_topics="", is_default=False))
+    with db.session() as s:
+        dept = s.scalar(select(Department.id))
+    kb = kbs.create_kb(db, "Pay", "", dept)
+    assert kb["pii_mask"] and versions.active(db, kb["id"])["pii_mask"] and not versions.out_of_date(db, kb)
+    _, after = kbs.update_kb(db, kb["id"], pii_mask=False)
+    assert not after["pii_mask"] and versions.out_of_date(db, after)
+
+
+# ---- 12c+: filtering search results ------------------------------------------------------------------------------
+def _doc_row(db, kb_id=4):
+    from app.db import Document
+    with db.session() as s:
+        row = Document(kb_id=kb_id, name="pay.txt", doc_key="pending", size=1, status="Indexed")
+        s.add(row)
+        s.flush()
+        row.doc_key = f"doc-{row.id}"
+        return row.id
+
+
+def _events(db):
+    from sqlalchemy import select
+    from app.db import GuardrailEvent
+    with db.session() as s:
+        return [(e.check, e.direction, e.action, e.count) for e in s.scalars(select(GuardrailEvent))]
+
+
+def test_search_results_are_masked_and_the_gap_is_reported(new_db, monkeypatch):
+    from app.knowledge import pii_filter
+    db = new_db("filter")
+    _keywords_only(db)
+    pii_filter.clear_cache()
+    monkeypatch.setattr(pii_filter, "_masked_index", lambda db, kb_id, memo: True)
+    doc_id = _doc_row(db)
+    chunks = [{"text": "Salary: 12,40,000. Ask HR.", "kb_id": 4, "id": f"doc-{doc_id}::0", "doc_id": f"doc-{doc_id}"},
+              {"text": "The canteen opens at 9.", "kb_id": 4, "id": f"doc-{doc_id}::1", "doc_id": f"doc-{doc_id}"}]
+    out = pii_filter.clean(chunks, db)
+    assert "12,40,000" not in out[0]["text"] and pii.TOKEN_RE.search(out[0]["text"]) and out[1]["text"] == "The canteen opens at 9."
+    assert documents.get(db, doc_id)["pii_flagged"]
+    assert _events(db) == [("personal_data", "search", "masked", 1)]
+    assert pii.reveal(out[0]["text"], [4], db)[0] == "Salary: 12,40,000. Ask HR."
+    again = pii_filter.clean([{"text": "Salary: 12,40,000. Ask HR.", "kb_id": 4, "id": f"doc-{doc_id}::0", "doc_id": f"doc-{doc_id}"}], db)
+    assert again[0]["text"] == out[0]["text"] and len(_events(db)) == 1          # cached: checked once
+
+
+def test_a_masked_index_is_not_flagged_for_what_it_already_masked(new_db):
+    from app.knowledge import pii_filter
+    db = new_db("filter_clean")
+    _keywords_only(db)
+    pii_filter.clear_cache()
+    doc_id = _doc_row(db)
+    text = "Salary: <SENSITIVE_VALUE_7f3a9c21>."
+    assert pii_filter.clean([{"text": text, "kb_id": 4, "id": "x", "doc_id": f"doc-{doc_id}"}], db)[0]["text"] == text
+    assert not documents.get(db, doc_id)["pii_flagged"] and _events(db) == []
+
+
+def test_without_masking_on_the_index_a_find_is_masked_but_not_flagged(new_db, monkeypatch):
+    from app.knowledge import pii_filter
+    db = new_db("filter_noflag")
+    _keywords_only(db)
+    pii_filter.clear_cache()
+    monkeypatch.setattr(pii_filter, "_masked_index", lambda db, kb_id, memo: False)
+    doc_id = _doc_row(db)
+    out = pii_filter.clean([{"text": "DOB 12/03/1990", "kb_id": 4, "id": "y", "doc_id": f"doc-{doc_id}"}], db)
+    assert "1990" not in out[0]["text"] and not documents.get(db, doc_id)["pii_flagged"]
+
+
+def test_the_filter_fails_closed(new_db, monkeypatch):
+    from sqlalchemy import select
+    from app.db import Alert
+    from app.knowledge import pii_filter
+    db = new_db("filter_fail")
+    _keywords_only(db)
+    pii_filter.clear_cache()
+
+    def boom(*a, **k):
+        raise RuntimeError("detector broke")
+    monkeypatch.setattr(guardrails, "detect", boom)
+    assert pii_filter.clean([{"text": "Salary: 1,00,000", "kb_id": 4, "id": "z", "doc_id": "doc-1"}], db) == []
+    with db.session() as s:
+        assert s.scalar(select(Alert.id).where(Alert.key == "guardrail_error"))
+
+
+def test_with_guardrails_off_search_results_pass_unchanged(new_db):
+    from app.knowledge import pii_filter
+    db = new_db("filter_off")
+    guardrails.update({"enabled": False}, "admin@x.com", db)
+    pii_filter.clear_cache()
+    chunks = [{"text": "Salary: 1,00,000", "kb_id": 4, "id": "z", "doc_id": "doc-1"}]
+    assert pii_filter.clean(chunks, db)[0]["text"] == "Salary: 1,00,000"

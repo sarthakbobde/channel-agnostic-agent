@@ -3,7 +3,7 @@ import logging
 import re
 from typing import Iterator
 from langchain_core.messages import HumanMessage, SystemMessage
-from app import guardrails, identity, memory, rag, summaries
+from app import guardrails, identity, memory, pii, rag, summaries
 from app.llm import get_chat_model
 
 log = logging.getLogger(__name__)
@@ -103,11 +103,13 @@ def chat_stream(message: str, conv_id: str | None, kb_ids=None, preview: bool = 
                 if turn:
                     memory.finish_turn(turn, final, meta)       # saved before it is handed over, so it cannot be lost
                     summaries.schedule(conv_id, identity.current().department)
-                yield final
+                yield pii.label(final)                         # tokens stay stored; people see plain labels
             else:
-                for tok in tokens:
-                    parts.append(tok)
-                    yield tok
+                def raw():
+                    for tok in tokens:
+                        parts.append(tok)
+                        yield tok
+                yield from pii.label_stream(raw())
         except BaseException:
             if turn:                       # the model failed or the caller went away: keep what arrived, marked incomplete
                 memory.fail_turn(turn, "".join(parts))
