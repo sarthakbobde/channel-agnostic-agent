@@ -1,7 +1,7 @@
 from typing import Iterator
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from app.llm import get_chat_model
-from app import prompts
+from app import pii, prompts
 from app.retriever import retrieve
 
 FALLBACK = "I couldn't find this in the knowledge base."
@@ -66,10 +66,19 @@ def search(query: str, kb_ids=None) -> list[dict]:
     return retrieve(query, kb_ids)
 
 
+def _snippet(text: str, n: int = 300) -> str:
+    """The first characters of a passage, never cutting a personal-data token in half."""
+    cut = text[:n]
+    lt = cut.rfind("<")
+    if lt >= 0 and ">" not in cut[lt:] and pii.TOKEN_RE.match(text, lt):
+        cut = text[:pii.TOKEN_RE.match(text, lt).end()]
+    return cut
+
+
 def format_sources(chunks: list[dict]) -> list[dict]:
     return [
         {"n": i, "source": c["source"], "page": c["page"],
-         "score": c["score"], "snippet": c["text"][:300], "via": c.get("via", "meaning")}
+         "score": c["score"], "snippet": _snippet(c["text"]), "via": c.get("via", "meaning")}
         for i, c in enumerate(chunks, 1)
     ]
 

@@ -93,7 +93,7 @@ def _search_kb(kb: dict, query: str, k: int, who) -> list[dict]:
     except NotImplementedError:
         log.warning("%s search is not available for this store; using similarity", strategy)
         hits = [{**h, "via": "meaning"} for h in kbs.store_for(kb).search(query, k, flt)]
-    safe = [h for h in hits if access.permits(h["metadata"], who, kb)]
+    safe = [{**h, "kb_id": kb["id"]} for h in hits if access.permits(h["metadata"], who, kb)]
     if len(safe) != len(hits):
         log.error("access filter let through %d passage(s) the chunk metadata does not permit; dropped", len(hits) - len(safe))
     return safe
@@ -117,10 +117,12 @@ def retrieve_scored(query: str, top_k: int | None = None, kb_ids=None) -> list[d
     else:
         merged = lists[0] if lists else []
     return [{"text": h["text"], "source": h["metadata"].get("source"),
-             "page": h["metadata"].get("page") or None, "score": h["score"], "via": h.get("via", "meaning")} for h in merged]
+             "page": h["metadata"].get("page") or None, "score": h["score"], "via": h.get("via", "meaning"),
+             "id": h.get("id"), "kb_id": h.get("kb_id"), "doc_id": h["metadata"].get("doc_id")} for h in merged]
 
 
 def retrieve(query: str, kb_ids=None) -> list[dict]:
-    """Top-k passages that pass the score threshold."""
+    """Top-k passages that pass the score threshold, checked for personal data before anything else sees them."""
+    from app.knowledge import pii_access, pii_filter
     scored = retrieve_scored(query, kb_ids=kb_ids) if kb_ids else retrieve_scored(query)
-    return [c for c in scored if c["score"] >= global_settings.current().score_threshold]
+    return pii_access.open_passages(pii_filter.clean([c for c in scored if c["score"] >= global_settings.current().score_threshold]))

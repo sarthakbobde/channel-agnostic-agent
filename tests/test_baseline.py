@@ -70,7 +70,8 @@ def test_retrieve_scored_asks_chroma_for_five_and_converts_distance(monkeypatch,
     monkeypatch.setattr(retriever, "get_collection", lambda: Col())
     got = retriever.retrieve_scored("leave policy")
     assert asked == {"n": 5, "q": ["leave policy"]}
-    assert got[0] == {"text": "doc1", "source": "a.pdf", "page": 3, "score": 0.75, "via": "meaning"}   # score = 1 - distance
+    assert {k: got[0][k] for k in ("text", "source", "page", "score", "via")} == {"text": "doc1", "source": "a.pdf", "page": 3, "score": 0.75, "via": "meaning"}   # score = 1 - distance
+    assert got[0]["kb_id"] is not None                                                 # the personal-data filter needs it
     assert got[1]["page"] is None and got[1]["score"] == 0.1                          # page 0 means "no page"
 
 

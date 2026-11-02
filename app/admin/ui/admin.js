@@ -370,6 +370,7 @@
     more: "M5 12a1 1 0 1 0 2 0 1 1 0 1 0-2 0zM11 12a1 1 0 1 0 2 0 1 1 0 1 0-2 0zM17 12a1 1 0 1 0 2 0 1 1 0 1 0-2 0z",
     refresh: "M20 11a8 8 0 0 0-14.9-3.9L3 9M3 4v5h5M4 13a8 8 0 0 0 14.9 3.9L21 15M21 20v-5h-5",
     upload: "M12 16V4M7 9l5-5 5 5M4 20h16",
+    download: "M12 4v12M7 11l5 5 5-5M4 20h16",
     folder: "M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z",
     star: "M12 3l2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.4 2.9 1-6.1-4.4-4.3 6.1-.9z",
     backup: "M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6zM9 12.5l2 2 4-4.5",
@@ -1154,10 +1155,10 @@
     "channel.disable": "Switched a channel off", "channel.test": "Tested a channel", "secret.replace": "Replaced a stored key or token",
     "provider.create": "Connected an AI provider", "provider.update": "Changed an AI provider", "provider.delete": "Removed an AI provider", "provider.test": "Tested an AI provider",
     "providers.approval": "Changed the allowed AI providers", "model_settings.update": "Changed which model answers", "settings.update": "Changed settings",
-    "guardrails.update": "Changed guardrails", "prompt.save": "Saved a prompt draft", "prompt.publish": "Published a prompt", "prompt.rollback": "Rolled a prompt back", "prompt.preview": "Tried a prompt",
+    "guardrails.update": "Changed guardrails", "pii_type.create": "Added a personal-data type", "pii_type.update": "Changed a personal-data type", "pii_type.delete": "Deleted a personal-data type", "prompt.save": "Saved a prompt draft", "prompt.publish": "Published a prompt", "prompt.rollback": "Rolled a prompt back", "prompt.preview": "Tried a prompt",
     "kb.create": "Created a knowledge base", "kb.update": "Changed a knowledge base", "kb.delete": "Deleted a knowledge base", "kb.access": "Changed who can ask a knowledge base",
     "kb.reindex": "Reprocessed a knowledge base", "kb.rollback": "Rolled back a knowledge base", "kb.rebuild.start": "Started a rebuild", "kb.rebuild.finish": "Finished a rebuild",
-    "kb.rebuild.fail": "A rebuild failed", "kb.rebuild.cancel": "Cancelled a rebuild", "document.upload": "Uploaded a document", "document.replace": "Replaced a document",
+    "kb.rebuild.fail": "A rebuild failed", "kb.rebuild.cancel": "Cancelled a rebuild", "document.upload": "Uploaded a document", "document.download_redacted": "Downloaded a redacted copy", "document.download_original": "Downloaded an original", "pii.protection": "Changed PII protection", "pii.reveal": "Saw real personal data", "kb.pii_viewers": "Changed who sees personal data", "conversation.mask": "Masked stored conversations", "document.replace": "Replaced a document",
     "document.delete": "Deleted a document", "document.move": "Moved a document", "document.reindex": "Reprocessed a document", "document.access": "Changed who can read a document",
     "embedding.download": "Downloaded a search model", "conversation.view": "Opened a conversation", "conversation.delete": "Deleted a conversation",
     "conversation.export": "Started an export", "conversation.export.done": "Finished an export", "retention.run": "Ran automatic deletion", "alert.resolve": "Dismissed an alert",
@@ -1722,6 +1723,21 @@
     var kind = d.status === "Indexed" ? "ok" : d.status === "Failed" ? "bad" : "warn";
     return h("span", { class: "pill " + kind }, d.status === "Pending" || d.status === "Indexing" ? d.status + "…" : d.status);
   }
+  function piiBadge(d) {                                 // what indexing masked, and whether search found something it missed
+    var out = [];
+    var types = Object.keys(d.pii_counts || {});
+    if (types.length) {
+      var n = types.reduce(function (t, k) { return t + d.pii_counts[k]; }, 0);
+      out.push(h("span", { class: "pill off", title: types.map(function (k) { return k + ": " + d.pii_counts[k]; }).join(", ") },
+        n + " personal data item" + (n === 1 ? "" : "s") + " masked"));
+    }
+    if (d.pii_flagged) out.push(h("span", { class: "pill warn", title: "A search found personal data that indexing missed. Re-index this file." }, "Needs re-index"));
+    return out.length ? h("div", { class: "chips-static" }, out) : null;
+  }
+  function download(path) {                                // a same-origin link: the session cookie goes with it
+    var a = h("a", { href: API + path, download: "" });
+    document.body.appendChild(a); a.click(); a.remove();
+  }
   function visibleTo(d) {
     if (d.visibility === "everyone") return h("span", { class: "pill off" }, "Everyone");
     var names = d.access_names || [];
@@ -1879,6 +1895,10 @@
         menuItem("refresh", d.status === "Failed" ? "Retry indexing" : "Re-index", function () { act(api("POST", "/documents/" + d.id + "/reindex", {}), "Re-indexing " + d.name + "."); },
           "Split and index this file again"),
         menuItem("upload", "Replace with a new version", function () { replaceInput.click(); }, "Keeps its access settings"),
+        k.pii_mask && d.status === "Indexed" ? menuItem("download", "Download redacted copy", function () { download("/documents/" + d.id + "/redacted"); },
+          "Text with personal data replaced") : null,
+        state.perm && state.perm.can_manage_all ? menuItem("download", "Download original", function () { download("/documents/" + d.id + "/original"); },
+          "Admins only; recorded in the audit log") : null,
         others.length ? h("div", { class: "menu-sep", role: "separator" }) : null,
         others.length ? h("div", { class: "menu-head" }, "Move to") : null,
         others.map(function (x) {
@@ -1890,6 +1910,7 @@
         h("td", { class: "wrap", "data-label": "File" }, h("div", { class: "file" }, fileIcon(d.name),
           h("div", { class: "row-text" }, h("b", { class: "fname", title: d.name }, d.name),
             h("span", { class: "meta" }, d.uploaded_by ? "Uploaded by " + d.uploaded_by : ""),
+            piiBadge(d),
             d.error ? h("span", { class: "meta bad" }, d.error) : null))),
         h("td", { "data-label": "Visible to" }, visibleTo(d)),
         h("td", { "data-label": "Status" }, docStatus(d)),
@@ -2269,6 +2290,16 @@
       }, !k.is_default);
       // one tab per job, so the card stays short however much each part grows
       var saveSplit = h("button", { type: "button", class: "btn primary", onclick: function () { save.click(); } }, "Save");
+      var canMask = state.perm && state.perm.can_manage_all;
+      var maskBox = h("input", { type: "checkbox", id: "kpii" + k.id, checked: !!k.pii_mask, disabled: !canMask, "aria-label": "Mask personal data in documents" });
+      var maskOut = h("div", { "aria-live": "polite" });
+      var maskSave = h("button", { type: "button", class: "btn primary", hidden: !canMask, onclick: async function () {
+        maskOut.replaceChildren(msg("wait", "Saving…"));
+        try {
+          var r = await api("PUT", "/kbs/" + k.id, { pii_mask: maskBox.checked });
+          await load(msg("ok", "Saved " + r.name + "." + (r.note ? " " + r.note : "")));
+        } catch (err) { if (me) maskOut.replaceChildren(msg("bad", err.message)); }
+      } }, "Save");
       var parts = { preview: foldToPane(previewPanel(k, data, strat, size, overlap)), search: foldToPane(embeddingPanel(k, data)),
                     storage: foldToPane(storePanel(k, data)), rebuild: foldToPane(indexPanel(k)), access: foldToPane(askPanel(k)) };
       var panes = {
@@ -2286,13 +2317,60 @@
             overlapField),
           h("div", { class: "actions" }, saveSplit),
           h("div", { class: "subpanel" }, parts.preview.pane)),
-        search: parts.search.pane, storage: parts.storage.pane, rebuild: parts.rebuild.pane, access: parts.access.pane
+        search: parts.search.pane, storage: parts.storage.pane,
+        personal: h("div", { class: "pane" },
+          h("p", { class: "help" }, "Personal data in this knowledge base's documents is replaced before anything is stored in the search index or sent to an AI model. "
+            + "The types and keywords are the ones on the Guardrails screen. Each file keeps a redacted copy to download. Changes apply after a rebuild."),
+          h("div", { class: "opt" }, h("label", { class: "switch" }, maskBox), h("b", {}, "Mask personal data in documents")),
+          canMask ? null : hint("Only an Admin can change this."),
+          h("div", { class: "actions" }, maskSave), maskOut,
+          piiAccessPane(k, canMask)),
+        rebuild: parts.rebuild.pane, access: parts.access.pane       // keys in tab order: the remembered tab is found by position
       };
       var tabs = tabBar([["general", "General"], ["splitting", "Splitting"], ["search", "Search model"], ["storage", "Search storage"],
-        ["rebuild", ["Rebuild", parts.rebuild.flag]], ["access", "Who can ask"]], panes, state.kbTab || "general");
+        ["personal", "Personal data"], ["rebuild", ["Rebuild", parts.rebuild.flag]], ["access", "Who can ask"]], panes, state.kbTab || "general");
       tabs.el.addEventListener("click", function (e) { var b = e.target.closest("button[role=tab]"); if (b) state.kbTab = Object.keys(panes)[Array.prototype.indexOf.call(tabs.el.children, b)]; });
       return h("section", { class: "panel kb-card" }, kbHead(k), out, tabs.el,
-        panes.general, panes.splitting, panes.search, panes.storage, panes.rebuild, panes.access);
+        panes.general, panes.splitting, panes.search, panes.storage, panes.personal, panes.rebuild, panes.access);
+    }
+
+    // Personal data tab, lower half: PII protection for this knowledge base, and who sees the real values (Admins change both).
+    function piiAccessPane(k, canEdit) {
+      var box = h("div", { class: "stack-sm" }, msg("wait", "Loading…"));
+      Promise.all([api("GET", "/kbs/" + k.id + "/pii"), loadChoices()]).then(function (r) {
+        var cur = r[0], ch = r[1];
+        var mode = selectOf([["inherit", "As the Guardrails setting (" + (cur.master ? "on" : "off") + ")"], ["on", "On"], ["off", "Off"]], cur.mode, null, "PII protection");
+        mode.id = "pm" + k.id; mode.disabled = !canEdit;
+        var reason = h("input", { type: "text", id: "pr" + k.id, placeholder: "Why (at least 10 characters)", disabled: !canEdit });
+        var mOut = h("div", { "aria-live": "polite" });
+        var mSave = h("button", { type: "button", class: "btn primary", hidden: !canEdit, onclick: async function () {
+          try { var v = await api("PUT", "/kbs/" + k.id + "/pii-protection", { mode: mode.value, reason: reason.value }); reason.value = "";
+                mOut.replaceChildren(msg(v.protected ? "ok" : "warn", v.protected ? "Saved. Personal data is protected." : "Saved. Personal data in this knowledge base is NOT protected.")); }
+          catch (err) { mOut.replaceChildren(msg("bad", err.message)); }
+        } }, "Save");
+        function checks(list, chosen, text) {
+          return list.map(function (x) { return { id: x.id, cb: h("input", { type: "checkbox", checked: chosen.indexOf(x.id) >= 0, disabled: !canEdit }), label: text(x) }; });
+        }
+        var g = checks(ch.groups, cur.group_ids, function (x) { return x.name; });
+        var u = checks(ch.people, cur.user_ids, function (x) { return (x.name || x.email) + " · " + x.email; });
+        var vOut = h("div", { "aria-live": "polite" });
+        var vSave = h("button", { type: "button", class: "btn primary", hidden: !canEdit, onclick: async function () {
+          var pick = function (l) { return l.filter(function (b) { return b.cb.checked; }).map(function (b) { return b.id; }); };
+          try { await api("PUT", "/kbs/" + k.id + "/pii-viewers", { group_ids: pick(g), user_ids: pick(u) }); vOut.replaceChildren(msg("ok", "Saved. Applies from the next question.")); }
+          catch (err) { vOut.replaceChildren(msg("bad", err.message)); }
+        } }, "Save");
+        var list = function (l) { return h("div", { class: "kbpick" }, l.map(function (b) { return h("label", { class: "check" }, b.cb, b.label); })); };
+        box.replaceChildren(
+          h("h4", {}, "PII protection", tip("Off: everyone sees the real values from this knowledge base's documents, and the AI model receives them. Applies within seconds.")),
+          h("div", { class: "form" }, h("div", { class: "field" }, fieldLabel("pm" + k.id, "Protection"), mode), h("div", { class: "field" }, fieldLabel("pr" + k.id, "Reason"), reason)),
+          h("div", { class: "actions" }, mSave), mOut,
+          h("h4", {}, "Can see personal data", tip("While protection is on, these groups and people see the real values in answers and sources; everyone else sees labels such as <EMAIL_ADDRESS>. Every reveal is recorded in the audit log.")),
+          h("span", { class: "l" }, "Groups"), g.length ? list(g) : hint("No groups yet."),
+          h("span", { class: "l" }, "People"), list(u),
+          canEdit ? null : hint("Only an Admin can change these."),
+          h("div", { class: "actions" }, vSave), vOut);
+      }, function (err) { box.replaceChildren(msg("bad", err.message)); });
+      return h("div", { class: "subpanel" }, box);
     }
 
     // The sub-sections were built as collapsible <details>; inside a tab they become a plain pane with a heading.
@@ -2306,7 +2384,8 @@
 
     function kbHead(k) {
       return h("div", { class: "head" },
-        h("div", {}, h("h3", {}, k.name, k.is_default ? h("span", { class: "pill ok" }, "Default") : null),
+        h("div", {}, h("h3", {}, k.name, k.is_default ? h("span", { class: "pill ok" }, "Default") : null,
+            k.pii_protected === false ? h("span", { class: "pill bad", title: "PII protection is off: everyone sees real personal data" }, "Unprotected") : null),
           h("div", { class: "meta" }, k.department + " · " + (k.documents === null ? "?" : k.documents) + " documents · " + (k.chunks === null ? "?" : k.chunks) + " passages")),
         h("div", { class: "head-right" }, k.bound_channels.length
           ? h("div", { class: "chips-static" }, k.bound_channels.map(function (c) { return h("span", { class: "pill off" }, c); }))
@@ -2615,6 +2694,12 @@
         var t = toggle(name, label);
         return h("div", { class: "opt" }, t, h("b", {}, label), help ? tip(help) : null);
       }
+      function confidenceControl() {
+        var f = fields.pii_threshold;
+        var n = h("input", { type: "number", id: id(), min: f.min, max: f.max, step: f.step, value: cur.pii_threshold, "aria-label": f.label,
+          oninput: function () { var v = Number(n.value); set("pii_threshold", n.value === "" || isNaN(v) ? n.value : v); } });
+        return h("div", { class: "field" }, fieldLabel(n.id, f.label, f.help), n);
+      }
       function lengthControl() {
         var n = h("input", { type: "number", id: id(), min: fields.max_input_tokens.min, max: fields.max_input_tokens.max, step: fields.max_input_tokens.step, value: cur.max_input_tokens,
           "aria-label": "Longest question in tokens", oninput: function () { var v = Number(n.value); set("max_input_tokens", n.value === "" || isNaN(v) ? n.value : v); } });
@@ -2670,7 +2755,9 @@
         card("Banned topics", "Questions and answers", "Blocks anything about a topic banned for the asker's department.", "banned_topics_enabled",
           h("div", { class: "help" }, "Topics are set per department. ", goLink("departments", "Edit in Departments"))),
         card("Mask personal data", "Questions", "Replaces personal data with a label such as <EMAIL_ADDRESS> before the question reaches the AI model, the history or any log.", "mask_enabled",
-          stack(typeChecks(), sub2("mask_names", "Also mask names", "Off by default, because names are often needed to answer. Detection is approximate."))));
+          stack(typeChecks(), sub2("mask_names", "Also mask names", "Off by default, because names are often needed to answer. Detection is approximate."), confidenceControl(),
+            sub2("keywords_enabled", fields.keywords_enabled.label, fields.keywords_enabled.help),
+            tags("sensitive_keywords", "Sensitive keywords", "The value after any of these is masked as <SENSITIVE_VALUE>, for example 'Salary: 12,40,000' or a 'Salary | 12,40,000' table row.", "e.g. Employee code"))));
       var answerCards = h("div", { class: "gr-list" },
         card("Check answers", "Answers", "The finished answer is checked before anyone sees it. This is the master switch for all three answer checks: if it is off, redaction and instruction protection below are not applied either.", "output_checks_enabled", hint("Failed answers are replaced by the blocked reply.")),
         card("Redact personal data", "Answers", "Personal data found in an answer is replaced, except values you allow.", "output_redaction",
@@ -2699,9 +2786,11 @@
       var bar = h("div", { class: "savebar" }, count, h("div", { class: "actions" }, discard, saveBtn));
       redraw.push(function () { var n = changed().length; count.textContent = n ? n + " unsaved change" + (n === 1 ? "" : "s") : "No unsaved changes"; saveBtn.disabled = !n; discard.disabled = !n; bar.classList.toggle("dirty", n > 0); });
 
-      var page = h("div", { class: "gr-page" }, master, warn,
+      var page = h("div", { class: "gr-page" }, master, warn, protectionPanel(),
         h("div", { class: "gr-cols" },
-          panel("Question checks", "Run first. A blocked question never reaches the AI model.", null, questionCards),
+          h("div", { class: "stack" },
+            panel("Question checks", "Run first. A blocked question never reaches the AI model.", null, questionCards),
+            piiTypesPanel()),
           h("div", { class: "stack" },
             panel("Answer checks", "Run on the finished answer, before the person sees it.", null, answerCards),
             blockedBox)),
@@ -2709,6 +2798,114 @@
       holder.replaceChildren(page);
       redraw.forEach(function (fn) { fn(); });
     }
+    // ---- PII protection (12g): changed with a reason, saved straight away; and masking stored conversations again ----
+    function protectionPanel() {
+      var state_ = h("div", {}, msg("wait", "Loading…"));
+      var out = h("div", { "aria-live": "polite" });
+      var reason = h("textarea", { id: "pp-reason", rows: "2", placeholder: "Why (at least 10 characters). Recorded in the audit log." });
+      var btn = h("button", { type: "button", class: "btn" });
+      var cur = null;
+      function paint(r) {
+        cur = r;
+        state_.replaceChildren(h("div", { class: "opt" }, h("span", { class: "pill " + (r.enabled ? "ok" : "bad") }, r.enabled ? "Protected" : "Not protected"),
+          h("span", { class: "meta" }, r.unprotected.length ? "Not protected now: " + r.unprotected.join(", ") : "Every knowledge base is protected.")),
+          r.enabled ? null : msg("warn", "Everyone sees real personal data from documents, and the AI model receives it. What people type now is stored and sent unmasked."));
+        btn.textContent = r.enabled ? "Turn protection off" : "Turn protection on";
+        btn.className = "btn " + (r.enabled ? "danger" : "primary");
+      }
+      btn.addEventListener("click", async function () {
+        out.replaceChildren(msg("wait", "Saving…"));
+        try { paint(await api("PUT", "/guardrails/pii-protection", { enabled: !cur.enabled, reason: reason.value })); reason.value = ""; out.replaceChildren(msg("ok", "Saved. Applies within seconds.")); }
+        catch (err) { out.replaceChildren(msg("bad", err.message)); }
+      });
+      api("GET", "/guardrails/pii-protection").then(paint, function (err) { state_.replaceChildren(msg("bad", err.message)); });
+
+      var from = h("input", { type: "date", id: "rm-from" }), to = h("input", { type: "date", id: "rm-to" });
+      var why = h("input", { type: "text", id: "rm-reason", placeholder: "Why (at least 10 characters)" });
+      var rmOut = h("div", { "aria-live": "polite" });
+      var rmBtn = h("button", { type: "button", class: "btn", onclick: async function () {
+        rmOut.replaceChildren(msg("wait", "Masking…"));
+        try { var r = await api("POST", "/conversations/mask", { date_from: from.value, date_to: to.value, reason: why.value }); rmOut.replaceChildren(msg("ok", r.masked + " stored messages masked.")); why.value = ""; }
+        catch (err) { rmOut.replaceChildren(msg("bad", err.message)); }
+      } }, "Mask stored conversations");
+      var rmFold = fold("Mask stored conversations again", "Questions and answers stored while protection was off keep the real values. This runs masking over the messages in a date range (empty = all).");
+      rmFold.append(h("div", { class: "form" },
+          h("div", { class: "field" }, fieldLabel("rm-from", "From"), from), h("div", { class: "field" }, fieldLabel("rm-to", "To"), to),
+          h("div", { class: "field wide" }, fieldLabel("rm-reason", "Reason"), why)),
+        h("div", { class: "actions" }, rmBtn), rmOut);
+      return panel("PII protection", "Master switch for personal data. Off: everyone sees real values, the AI model receives them, and questions and answers are no longer masked where every knowledge base a channel uses is off. Each knowledge base can override it under KB configuration → Personal data. Files stay encrypted either way.", null,
+        state_,
+        h("div", { class: "stack-sm" }, h("div", { class: "field" }, fieldLabel("pp-reason", "Reason"), reason), h("div", { class: "actions" }, btn), out),
+        rmFold);
+    }
+
+    // ---- personal-data types an Admin defines, and a Try it box (saved straight away, not with the Save bar) ----
+    function piiTypesPanel() {
+      var list = h("div", { class: "stack-sm" }, msg("wait", "Loading…"));
+      var out = h("div", { "aria-live": "polite" });
+      var fName = h("input", { type: "text", id: "pt-name", autocomplete: "off", placeholder: "EMPLOYEE_ID", maxlength: "40" });
+      var fPat = h("input", { type: "text", id: "pt-pat", autocomplete: "off", placeholder: "\\bEMP-\\d{5}\\b", maxlength: "300", spellcheck: "false" });
+      var fCtx = h("input", { type: "text", id: "pt-ctx", autocomplete: "off", placeholder: "employee, staff" });
+      var fConf = h("input", { type: "number", id: "pt-conf", min: "10", max: "100", step: "5", value: "60" });
+      var editing = null;
+      var saveBtn = h("button", { type: "button", class: "btn primary", onclick: async function () {
+        var body = { name: fName.value, pattern: fPat.value, confidence: Number(fConf.value),
+          context: fCtx.value.split(",").map(function (x) { return x.trim(); }).filter(Boolean) };
+        out.replaceChildren(msg("wait", "Saving…"));
+        try {
+          await api(editing ? "PUT" : "POST", "/guardrails/pii-types" + (editing ? "/" + editing : ""), body);
+          out.replaceChildren(msg("ok", "Saved. It is masked from now on; documents already indexed pick it up when they are reprocessed."));
+          reset(); load();
+        } catch (err) { out.replaceChildren(msg("bad", err.message)); }
+      } }, "Add type");
+      var cancel = h("button", { type: "button", class: "btn", hidden: true, onclick: function () { reset(); } }, "Cancel");
+      function reset() { editing = null; fName.value = fPat.value = fCtx.value = ""; fConf.value = "60"; saveBtn.textContent = "Add type"; cancel.hidden = true; }
+
+      var sample = h("textarea", { id: "pt-sample", rows: "3", placeholder: "Paste a line to see what is masked, e.g. Salary: 12,40,000. Contact ravi@company.com, EMP-12345." });
+      var result = h("div", { class: "bubble", hidden: true });
+      function tryIt(pattern) {
+        return async function () {
+          if (!sample.value.trim()) { sample.focus(); return; }
+          try {
+            var r = await api("POST", "/guardrails/pii-test", pattern ? { text: sample.value, pattern: fPat.value } : { text: sample.value });
+            result.hidden = false;
+            result.textContent = pattern ? (r.matches.length ? "The pattern matches: " + r.matches.join(", ") : "The pattern matches nothing in this text.")
+                                         : r.masked;
+          } catch (err) { result.hidden = false; result.textContent = err.message; }
+        };
+      }
+
+      async function load() {
+        try {
+          var r = await api("GET", "/guardrails/pii-types");
+          if (!r.types.length) { list.replaceChildren(hint("None yet. Add one for numbers only your organisation uses, such as employee or customer IDs.")); return; }
+          list.replaceChildren.apply(list, r.types.map(function (t) {
+            return h("div", { class: "opt" }, h("b", {}, t.name), h("code", {}, t.pattern),
+              h("span", { class: "meta" }, t.confidence + "% confidence" + (t.context.length ? " · near: " + t.context.join(", ") : "")),
+              h("button", { type: "button", class: "btn small", onclick: function () {
+                editing = t.id; fName.value = t.name; fPat.value = t.pattern; fCtx.value = t.context.join(", "); fConf.value = t.confidence;
+                saveBtn.textContent = "Save type"; cancel.hidden = false; fName.focus();
+              } }, "Edit"),
+              confirmButton("Delete", "Click again to delete", async function () {
+                try { await api("DELETE", "/guardrails/pii-types/" + t.id); load(); } catch (err) { out.replaceChildren(msg("bad", err.message)); }
+              }, true));
+          }));
+        } catch (err) { list.replaceChildren(msg("bad", err.message)); }
+      }
+      load();
+      return panel("Your own personal-data types", "Numbers or codes only your organisation uses. Each is a regular expression; context words nearby make a match more certain. Saved straight away.", null,
+        list,
+        h("div", { class: "stack-sm" },
+          h("div", { class: "field" }, fieldLabel("pt-name", "Name"), fName),
+          h("div", { class: "field" }, fieldLabel("pt-pat", "Pattern (regular expression)"), fPat),
+          h("div", { class: "field" }, fieldLabel("pt-ctx", "Context words (optional)", "Comma-separated words that usually appear near it."), fCtx),
+          h("div", { class: "field" }, fieldLabel("pt-conf", "Confidence (%)", "How sure a match is. Below the Detection confidence setting, it only counts when a context word is near."), fConf),
+          h("div", { class: "actions" }, cancel, h("button", { type: "button", class: "btn", onclick: tryIt(true) }, "Try pattern"), saveBtn), out),
+        h("div", { class: "stack-sm" },
+          h("div", { class: "field" }, fieldLabel("pt-sample", "Try it", "Uses the saved settings. Nothing you type here is stored or logged."), sample),
+          h("div", { class: "actions" }, h("button", { type: "button", class: "btn", onclick: tryIt(false) }, "Show what is masked")), result));
+    }
+
     try { show(await api("GET", "/guardrails")); }
     catch (err) { if (me) holder.replaceChildren(msg("bad", err.message)); }
   }

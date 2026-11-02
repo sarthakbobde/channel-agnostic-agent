@@ -38,7 +38,7 @@ def _now() -> datetime:
 
 def _view(v: KBIndexVersion) -> dict:
     return {"id": v.id, "kb_id": v.kb_id, "version": v.version, "collection": v.collection, "chunk_size": v.chunk_size,
-            "chunk_overlap": v.chunk_overlap, "chunk_strategy": v.chunk_strategy or "recursive", "embedding": v.embedding, "embedding_config": v.embedding_config or {}, "store_config": v.store_config or {}, "store": v.store, "status": v.status,
+            "chunk_overlap": v.chunk_overlap, "chunk_strategy": v.chunk_strategy or "recursive", "embedding": v.embedding, "embedding_config": v.embedding_config or {}, "store_config": v.store_config or {}, "store": v.store, "pii_mask": bool(v.pii_mask), "status": v.status,
             "is_active": v.is_active, "chunks": v.chunks, "documents": v.documents, "progress_done": v.progress_done,
             "progress_total": v.progress_total, "error": v.error, "created_by": v.created_by, "created_at": v.created_at,
             "finished_at": v.finished_at, "retired_at": v.retired_at, "seconds": v.seconds}
@@ -97,7 +97,7 @@ def desired(db: Database, kb: dict) -> dict:
     size, overlap = chunkers.effective(kb.get("chunk_size"), kb.get("chunk_overlap"), db)
     return {"chunk_size": size, "chunk_overlap": overlap, "chunk_strategy": kb.get("chunk_strategy") or "recursive",
             "embedding": kb.get("embedding") or embeddings.DEFAULT, "embedding_config": kb.get("embedding_config") or {},
-            "store": kb.get("store") or "chroma", "store_config": kb.get("store_config") or {}}
+            "store": kb.get("store") or "chroma", "store_config": kb.get("store_config") or {}, "pii_mask": bool(kb.get("pii_mask"))}
 
 
 def active_chunker(db: Database, kb: dict) -> chunkers.Chunker:
@@ -114,7 +114,7 @@ def out_of_date(db: Database, kb: dict) -> bool:
     if v is None:
         return False
     d = desired(db, kb)
-    return any(v[k] != d[k] for k in ("chunk_size", "chunk_overlap", "chunk_strategy", "embedding", "embedding_config", "store", "store_config"))
+    return any(v[k] != d[k] for k in ("chunk_size", "chunk_overlap", "chunk_strategy", "embedding", "embedding_config", "store", "store_config", "pii_mask"))
 
 
 def summary(db: Database, kb: dict) -> dict:
@@ -137,7 +137,7 @@ def init_for(db: Database, kb: dict, chunks: int | None = None) -> dict:
             chunks = 0
     with db.session() as s:
         v = KBIndexVersion(kb_id=kb["id"], version=1, collection=kb["collection"], chunk_size=d["chunk_size"],
-                           chunk_overlap=d["chunk_overlap"], chunk_strategy=d["chunk_strategy"], embedding=d["embedding"], embedding_config=d["embedding_config"], store=d["store"], store_config=d["store_config"], status="Ready",
+                           chunk_overlap=d["chunk_overlap"], chunk_strategy=d["chunk_strategy"], embedding=d["embedding"], embedding_config=d["embedding_config"], store=d["store"], store_config=d["store_config"], pii_mask=d["pii_mask"], status="Ready",
                            is_active=True, chunks=chunks, documents=0, created_by="system", finished_at=_now())
         s.add(v)
         s.flush()
@@ -218,7 +218,7 @@ def start_rebuild(db: Database, kb_id: int, actor: str) -> dict:
         collection = f"kb_{kb_id}_v{number}"
         v = KBIndexVersion(kb_id=kb_id, version=number, collection=collection, chunk_size=d["chunk_size"],
                            chunk_overlap=d["chunk_overlap"], chunk_strategy=d["chunk_strategy"], embedding=d["embedding"], embedding_config=d["embedding_config"], store=d["store"], store_config=d["store_config"],
-                           status="Building", is_active=False, created_by=actor)
+                           pii_mask=d["pii_mask"], status="Building", is_active=False, created_by=actor)
         s.add(v)
         s.flush()
         view = _view(v)
@@ -264,19 +264,24 @@ def _build(db: Database, vid: int, actor: str) -> None:
         docs = [d for d in documents.list_for_kb(db, kb["id"]) if d["status"] == "Indexed"]
         _progress(db, vid, progress_total=len(docs))
         per_doc: dict[int, int] = {}
+        pii_counts: dict[int, dict] = {}
         total_chunks = 0
         for i, d in enumerate(docs, 1):
             with _lock:
                 if vid in _cancel:
                     raise _Cancelled()
-            ids, texts, metas = documents.prepare(d, kb, chunker, department, access.ids_for(db, d['id']))
+            report: dict = {}
+            ids, texts, metas = documents.prepare(d, kb, chunker, department, access.ids_for(db, d['id']),
+                                                  pii_mask=v["pii_mask"], report=report, db=db)
             documents.add_in_batches(store, ids, texts, metas)
+            documents.save_redacted(d, report)
             per_doc[d["id"]] = len(ids)
+            pii_counts[d["id"]] = report.get("pii_counts", {})
             total_chunks += len(ids)
             _progress(db, vid, progress_done=i, chunks=total_chunks, documents=i)
         seconds = time.time() - started
         _progress(db, vid, seconds=seconds)
-        _activate(db, kb["id"], vid, actor, doc_chunks=per_doc)
+        _activate(db, kb["id"], vid, actor, doc_chunks=per_doc, doc_pii=pii_counts)
         _finish(db, vid, status="Ready")
         alerts.resolve_key(db, f"index_build:{kb['id']}")
         _audit(actor, "kb.rebuild.finish", kb["name"], f"version {v['version']}: {len(docs)} documents, {total_chunks} chunks, {round(seconds)} s")
@@ -300,7 +305,7 @@ def _build(db: Database, vid: int, actor: str) -> None:
 
 
 # ---- switching and rolling back ---------------------------------------------------------------------------
-def _activate(db: Database, kb_id: int, vid: int, actor: str, doc_chunks: dict | None = None) -> dict | None:
+def _activate(db: Database, kb_id: int, vid: int, actor: str, doc_chunks: dict | None = None, doc_pii: dict | None = None) -> dict | None:
     """Make version `vid` the one that is searched. Returns the retired version's row (for reconcile)."""
     with db.session() as s:
         new = s.get(KBIndexVersion, vid)
@@ -311,6 +316,8 @@ def _activate(db: Database, kb_id: int, vid: int, actor: str, doc_chunks: dict |
                 row = s.get(Document, doc_id)
                 if row is not None:
                     row.chunks = n
+                    if doc_pii is not None:
+                        row.pii_counts, row.pii_flagged = doc_pii.get(doc_id, {}), False
             s.flush()
         retired = None
         if old is not None and old.id != new.id:

@@ -4,7 +4,7 @@ tmp = tempfile.mkdtemp()
 SCRATCH = os.path.dirname(os.path.abspath(__file__))
 DBFILE = os.path.join(tmp, "admin.db")
 os.environ.update(ADMIN_DB_PATH=DBFILE, CHAT_DIR=os.path.join(tmp, "chats"), CHROMA_PATH=os.path.join(tmp, "chroma"),
-                  DATABASE_URL="", GUARDRAILS_ENABLED="true", APP_SECRET_KEY="", CHAT_API_TOKEN="svc-token")
+                  DATABASE_URL="", GUARDRAILS_ENABLED="true", APP_SECRET_KEY=__import__("cryptography.fernet", fromlist=["Fernet"]).Fernet.generate_key().decode(), CHAT_API_TOKEN="svc-token")
 ok = lambda cond, msg: print(("PASS " if cond else "FAIL ") + msg)
 import app.ratelimit as _rl; _rl.allow = lambda key, limit, now=None: (True, 0)     # the per-person question limit is tested in tests/test_hardening.py
 

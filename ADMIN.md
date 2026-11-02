@@ -163,6 +163,26 @@ notification addresses) and signs sign-in sessions. Without it those credentials
 Effects to expect: everyone is signed out when the first key changes (sessions are signed with it), and exports made after
 the change use different pseudonyms for people than earlier exports.
 
+**Stored files** use the same key. `check` also reports how many stored files are not encrypted yet, and `rotate`
+re-encrypts every stored file before the secrets (it checks every file first and changes nothing if one cannot be read).
+A file backup without the key is unreadable, so keep the key's backup apart from both.
+
+## Stored files
+
+Uploaded files are encrypted with `APP_SECRET_KEY` before they are written, on local disk (`DOCS_DIR`) or in Azure Blob
+Storage (`FILE_STORE=azure_blob`, `AZURE_BLOB_CONNECTION_STRING`, `AZURE_BLOB_CONTAINER`; install with
+`pip install -e .[azure-blob]`). While a file is parsed it is decrypted into `DOCS_DIR/.work` and deleted straight after;
+the server wipes that folder at start.
+
+- `python -m app.knowledge.filestore status`: how many stored files are still unencrypted.
+- `python -m app.knowledge.filestore encrypt`: encrypt them (the server also does this at start).
+- `python -m app.knowledge.filestore secure <folder>`: encrypt every file of another folder in place, for example the old
+  `chats` backup. The server can still import from a secured folder.
+
+While unencrypted files remain (in the store, `data/docs` or the old chat files) the Home screen shows an alert.
+Moving existing files from local disk to a blob container is not automated yet: copy the folder's files to the container
+with the same names (they are already encrypted).
+
 ## Backup and recovery
 
 - Back up `APP_SECRET_KEY` (see above) and `admin_data/admin.db` (plus the `-wal` file if the server is

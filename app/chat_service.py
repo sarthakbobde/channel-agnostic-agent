@@ -3,7 +3,8 @@ import logging
 import re
 from typing import Iterator
 from langchain_core.messages import HumanMessage, SystemMessage
-from app import guardrails, identity, memory, rag, summaries
+from app import guardrails, identity, memory, pii, rag, summaries
+from app.knowledge import pii_access
 from app.llm import get_chat_model
 
 log = logging.getLogger(__name__)
@@ -53,12 +54,32 @@ def trim_sources(answer: str, sources: list[dict]) -> None:
         sources[:] = [s for s in sources if s["n"] in cited]
 
 
+def _scope(kb_ids) -> list[dict]:
+    try:
+        from app.knowledge import kbs
+        return kbs.resolve(None, kb_ids or [])
+    except Exception:
+        log.warning("could not work out the knowledge bases of this channel", exc_info=True)
+        return []
+
+
+def _all_unprotected(scope: list[dict]) -> bool:
+    try:
+        from app.db import get_db
+        return pii_access.all_off(get_db(), scope)
+    except Exception:
+        log.warning("could not read the PII protection switch; protecting", exc_info=True)
+        return False
+
+
 def chat_stream(message: str, conv_id: str | None, kb_ids=None, preview: bool = False) -> tuple[Iterator[str], dict]:
     """Routing + retrieval happen now; the answer streams from the returned iterator.
     The question is saved before any model runs; the answer is saved as soon as it is complete (or kept, marked
     incomplete, if it never finishes). A blocked question is not stored.
     meta = {searched, query, sources}"""
-    gate = guardrails.guard_input(message)
+    scope = _scope(kb_ids)                                     # the knowledge bases this channel can search
+    unprotected = _all_unprotected(scope)                      # 12g: every one of them has PII protection off
+    gate = guardrails.guard_input(message, mask=not unprotected)
     if gate.blocked:                                           # no model is called, and nothing is stored
         return iter([gate.reply]), {"searched": False, "query": "", "sources": [], "blocked": True}
     message = gate.text                                        # personal data is masked from here on: model, history, logs
@@ -82,12 +103,12 @@ def chat_stream(message: str, conv_id: str | None, kb_ids=None, preview: bool = 
 
     meta = {"searched": decision["search"], "query": decision["query"], "sources": sources}
     if decision["search"]:
-        try:
-            from app.knowledge import kbs as _kbs
-            meta["kb_ids"] = [k["id"] for k in _kbs.resolve(None, kb_ids or [])]
-        except Exception:
-            pass
+        meta["kb_ids"] = [k["id"] for k in scope]
     checked = guardrails.output_active()
+    who = identity.current()
+    if not checked:                                            # values are only revealed on an answer checked as a whole
+        for s in sources:
+            s["snippet"] = pii.label(s["snippet"])
 
     def gen() -> Iterator[str]:
         parts: list[str] = []
@@ -97,17 +118,22 @@ def chat_stream(message: str, conv_id: str | None, kb_ids=None, preview: bool = 
                 collected: list[str] = []
                 for tok in tokens:
                     collected.append(tok)
-                final = guardrails.guard_output("".join(collected), len(sources), decision["search"])
+                final = guardrails.guard_output("".join(collected), len(sources), decision["search"], redact=not unprotected)
                 trim_sources(final, sources)
                 parts.append(final)
                 if turn:
                     memory.finish_turn(turn, final, meta)       # saved before it is handed over, so it cannot be lost
                     summaries.schedule(conv_id, identity.current().department)
-                yield final
+                ids = [k["id"] for k in scope]                 # tokens stay stored; each person sees what they may (12d)
+                for s in sources:
+                    s["snippet"] = pii_access.for_viewer(s["snippet"], ids, who, where="source")
+                yield pii_access.for_viewer(final, ids, who)
             else:
-                for tok in tokens:
-                    parts.append(tok)
-                    yield tok
+                def raw():
+                    for tok in tokens:
+                        parts.append(tok)
+                        yield tok
+                yield from pii.label_stream(raw())
         except BaseException:
             if turn:                       # the model failed or the caller went away: keep what arrived, marked incomplete
                 memory.fail_turn(turn, "".join(parts))

@@ -17,6 +17,10 @@ os.environ["CHAT_DIR"] = os.path.join(_SANDBOX, "chats")
 os.environ["CHROMA_PATH"] = os.path.join(_SANDBOX, "chroma")
 os.environ["DATABASE_URL"] = ""
 os.environ["CHAT_API_TOKEN"] = "test-chat-token"
+os.environ["DOCS_DIR"] = os.path.join(_SANDBOX, "files")
+if not os.environ.get("APP_SECRET_KEY"):           # stored files are encrypted, so the suite needs a master key
+    from cryptography.fernet import Fernet
+    os.environ["APP_SECRET_KEY"] = Fernet.generate_key().decode()
 os.environ["GUARDRAILS_ENABLED"] = "false"       # tests that need them switch them on (they load a language model)
 os.environ["SLACK_BOT_TOKEN"] = ""
 os.environ["SLACK_APP_TOKEN"] = ""

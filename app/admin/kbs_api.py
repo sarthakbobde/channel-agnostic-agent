@@ -2,9 +2,6 @@
 departments they are listed as an editor of (and can create new ones only in those departments)."""
 import logging
 
-import tempfile
-from pathlib import Path
-
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel
@@ -13,7 +10,7 @@ from sqlalchemy import select
 from app import global_settings
 from app.admin.api import AdminContext, Session, admin_session, get_ctx
 from app.db import Department, DepartmentEditor
-from app.knowledge import access, chunkers, documents, embeddings, kbs, parsers, storeadapters, versions
+from app.knowledge import access, chunkers, documents, embeddings, kbs, parsers, pii_access, storeadapters, versions
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/admin/api", tags=["admin"])
@@ -32,6 +29,7 @@ class KBIn(BaseModel):
     store: str | None = None
     store_config: dict | None = None
     store_secrets: dict | None = None
+    pii_mask: bool | None = None
 
 
 def _last_indexed(ctx: AdminContext, kb_id: int):
@@ -110,7 +108,7 @@ def _present(ctx: AdminContext, kb: dict, names: dict) -> dict:
             "active_store": (versions.active(ctx.db, kb["id"]) or {}).get("store"), "health": health,
             "size_bytes": stats.get("size_bytes"), "last_indexed": _last_indexed(ctx, kb["id"]),
             "active_embedding": (versions.active(ctx.db, kb["id"]) or {}).get("embedding"),
-            "bound_channels": kbs.channels_using(ctx.db, kb["id"])}
+            "bound_channels": kbs.channels_using(ctx.db, kb["id"]), "pii_protected": pii_access.protected(ctx.db, kb)}
 
 
 @router.get("/kbs")
@@ -272,6 +270,8 @@ def update(kb_id: int, body: KBIn, sess: Session = Depends(admin_session), ctx: 
     if current is None or not _can(ctx, sess, current["department_id"]):
         raise HTTPException(404, "No such knowledge base.")
     sent = body.model_fields_set
+    if "pii_mask" in sent and body.pii_mask is not None and body.pii_mask != current["pii_mask"] and sess.role != "admin":
+        raise HTTPException(403, "Only an Admin can change personal-data masking for a knowledge base.")
     if body.department_id is not None and not _can(ctx, sess, body.department_id):
         raise HTTPException(403, "You can only move a knowledge base to a department you edit.")
     emb_name = emb_config = None
@@ -287,16 +287,17 @@ def update(kb_id: int, body: KBIn, sess: Session = Depends(admin_session), ctx: 
             chunk_size=body.chunk_size if "chunk_size" in sent else "keep",
             chunk_overlap=body.chunk_overlap if "chunk_overlap" in sent else "keep",
             chunk_strategy=body.chunk_strategy if "chunk_strategy" in sent else None,
-            embedding=emb_name, embedding_config=emb_config, store=store_name, store_config=store_config)
+            embedding=emb_name, embedding_config=emb_config, store=store_name, store_config=store_config,
+            pii_mask=body.pii_mask if "pii_mask" in sent else None)
     except ValueError as e:
         raise HTTPException(422, str(e))
-    changes = [f"{k}: {before[k]} -> {after[k]}" for k in ("name", "description", "department_id", "chunk_size", "chunk_overlap", "chunk_strategy", "embedding", "store")
+    changes = [f"{k}: {before[k]} -> {after[k]}" for k in ("name", "description", "department_id", "chunk_size", "chunk_overlap", "chunk_strategy", "embedding", "store", "pii_mask")
                if before[k] != after[k]]
     ctx.store.record(sess.email, "kb.update", after["name"], "; ".join(changes) or "no changes")
     with ctx.db.session() as s:
         names = dict(s.execute(select(Department.id, Department.name)).all())
     out = _present(ctx, after, names)
-    if any(before[k] != after[k] for k in ("chunk_size", "chunk_overlap", "chunk_strategy", "embedding", "embedding_config", "store", "store_config")):
+    if any(before[k] != after[k] for k in ("chunk_size", "chunk_overlap", "chunk_strategy", "embedding", "embedding_config", "store", "store_config", "pii_mask")):
         out["note"] = "The index keeps its current settings until you rebuild it."
     return out
 
@@ -431,9 +432,7 @@ async def chunk_preview(kb_id: int, file: UploadFile = File(...), strategy: str 
         documents.check_upload(name, data)
     except ValueError as e:
         raise HTTPException(422, str(e))
-    with tempfile.TemporaryDirectory() as tmp:
-        path = Path(tmp) / name
-        path.write_bytes(data)
+    with documents.files().plain_file(data, name) as path:     # private working folder, deleted straight after
         try:
             chunker = chunkers.build(strategy, size, overlap)
             chunks = await run_in_threadpool(chunker.chunk, path)
@@ -453,3 +452,51 @@ async def chunk_preview(kb_id: int, file: UploadFile = File(...), strategy: str 
             "average_chars": round(sum(lengths) / len(lengths)), "longest": max(lengths), "notes": notes, "shown": min(len(chunks), PREVIEW_LIMIT),
             "chunks": [{"n": i, "page": c.page or None, "heading_path": c.heading_path, "chars": len(c.text), "text": c.text[:SNIPPET]}
                        for i, c in enumerate(chunks[:PREVIEW_LIMIT])]}
+
+
+
+# ---- personal data: protection and who may see the real values (12d, 12g). Admins change them; Editors can read ----
+class PiiModeBody(BaseModel):
+    mode: str
+    reason: str
+
+
+class PiiViewersBody(BaseModel):
+    group_ids: list[int] = []
+    user_ids: list[int] = []
+
+
+def _pii_view(ctx: AdminContext, kb: dict) -> dict:
+    return {"mode": kb["pii_protection"], "protected": pii_access.protected(ctx.db, kb), "master": pii_access.master(ctx.db),
+            **pii_access.viewers(ctx.db, kb["id"])}
+
+
+@router.get("/kbs/{kb_id}/pii")
+def get_pii(kb_id: int, sess: Session = Depends(admin_session), ctx: AdminContext = Depends(get_ctx)):
+    return _pii_view(ctx, _kb_for(ctx, sess, kb_id))
+
+
+@router.put("/kbs/{kb_id}/pii-protection")
+def set_pii_mode(kb_id: int, body: PiiModeBody, sess: Session = Depends(admin_session), ctx: AdminContext = Depends(get_ctx)):
+    _kb_for(ctx, sess, kb_id)
+    if sess.role != "admin":
+        raise HTTPException(403, "Only an Admin can change PII protection.")
+    try:
+        pii_access.set_kb_mode(ctx.db, kb_id, body.mode, body.reason, sess.email)
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+    return _pii_view(ctx, kbs.get_kb(ctx.db, kb_id))
+
+
+@router.put("/kbs/{kb_id}/pii-viewers")
+def set_pii_viewers(kb_id: int, body: PiiViewersBody, sess: Session = Depends(admin_session), ctx: AdminContext = Depends(get_ctx)):
+    kb = _kb_for(ctx, sess, kb_id)
+    if sess.role != "admin":
+        raise HTTPException(403, "Only an Admin can choose who sees personal data.")
+    before = pii_access.describe(ctx.db, kb_id)
+    try:
+        pii_access.set_viewers(ctx.db, kb_id, body.group_ids, body.user_ids)
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+    ctx.store.record(sess.email, "kb.pii_viewers", kb["name"], f"{before} -> {pii_access.describe(ctx.db, kb_id)}")
+    return _pii_view(ctx, kbs.get_kb(ctx.db, kb_id))

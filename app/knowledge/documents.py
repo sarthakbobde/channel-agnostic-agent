@@ -1,13 +1,12 @@
 """Documents in knowledge bases: upload, storage, indexing in the background, replace, move, delete.
 
-Status flow (D9): Pending -> Indexing -> Indexed or Failed. Originals are kept on disk under
-`DOCS_DIR/<kb id>/<document id>/<file name>` so any document can be re-indexed later.
+Status flow (D9): Pending -> Indexing -> Indexed or Failed. Originals are kept, encrypted, in the file store under
+`<kb id>/<document id>/<file name>` (see filestore.py) so any document can be re-indexed later.
 Indexing runs on one background worker; documents left Pending/Indexing by a restart are picked up again.
 """
 import hashlib
 import logging
 import re
-import shutil
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
@@ -16,9 +15,10 @@ from pathlib import Path
 from sqlalchemy import func, select
 from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
 
+from app import pii
 from app.config import settings
 from app.db import Database, Document, KnowledgeBase, get_db
-from app.knowledge import chunkers, kbs, metadata, parsers
+from app.knowledge import chunkers, filestore, kbs, metadata, parsers
 
 log = logging.getLogger(__name__)
 BATCH = 64
@@ -26,6 +26,7 @@ RETRY_WAIT = (1, 20)                  # seconds: exponential backoff between att
 RETRY_ATTEMPTS = 4
 _executor: ThreadPoolExecutor | None = None
 _lock = threading.Lock()
+_store: tuple | None = None
 
 
 def _now() -> datetime:
@@ -35,7 +36,8 @@ def _now() -> datetime:
 def _view(d: Document) -> dict:
     return {"id": d.id, "kb_id": d.kb_id, "name": d.name, "size": d.size, "visibility": d.visibility, "status": d.status, "error": d.error,
             "chunks": d.chunks, "uploaded_by": d.uploaded_by, "created_at": d.created_at,
-            "updated_at": d.updated_at, "indexed_at": d.indexed_at, "doc_key": d.doc_key}
+            "updated_at": d.updated_at, "indexed_at": d.indexed_at, "doc_key": d.doc_key,
+            "pii_counts": d.pii_counts or {}, "pii_flagged": bool(d.pii_flagged)}
 
 
 def _not_rebuilding(db: Database, kb_id: int) -> None:
@@ -45,12 +47,32 @@ def _not_rebuilding(db: Database, kb_id: int) -> None:
 
 
 # ---- files ---------------------------------------------------------------------------------
-def doc_dir(kb_id: int, doc_id: int) -> Path:
-    return Path(settings.docs_dir) / str(kb_id) / str(doc_id)
+def files() -> filestore.FileStore:
+    """The file store for the current settings (rebuilt if they change, as tests do)."""
+    global _store
+    sig = (settings.file_store, settings.docs_dir, settings.secret_key, settings.azure_blob_connection_string,
+           settings.azure_blob_container)
+    with _lock:
+        if _store is None or _store[0] != sig:
+            _store = (sig, filestore.build(settings))
+        return _store[1]
 
 
-def file_path(d: dict) -> Path:
-    return doc_dir(d["kb_id"], d["id"]) / d["name"]
+def doc_prefix(kb_id: int, doc_id: int) -> str:
+    return f"{kb_id}/{doc_id}/"
+
+
+def id_for_key(doc_key: str) -> int | None:
+    """The document id behind a chunk's doc_id ("doc-41"), or None for chunks indexed before documents had records."""
+    return int(doc_key[4:]) if (doc_key or "").startswith("doc-") and doc_key[4:].isdigit() else None
+
+
+def file_key(d: dict) -> str:
+    return doc_prefix(d["kb_id"], d["id"]) + d["name"]
+
+
+def stored(d: dict) -> bool:
+    return files().exists(file_key(d))
 
 
 def clean_name(raw: str) -> str:
@@ -126,12 +148,11 @@ def add(db: Database, kb_id: int, filename: str, data: bytes, actor: str, access
 
 
 def _write(d: dict, data: bytes) -> None:
-    folder = doc_dir(d["kb_id"], d["id"])
-    folder.mkdir(parents=True, exist_ok=True)
-    for old in folder.iterdir():
-        if old.name != d["name"]:
-            old.unlink(missing_ok=True)
-    (folder / d["name"]).write_bytes(data)
+    store = files()
+    store.put(file_key(d), data)
+    for old in store.keys(doc_prefix(d["kb_id"], d["id"])):
+        if old != file_key(d):
+            store.delete(old)
 
 
 def replace(db: Database, doc_id: int, filename: str, data: bytes) -> dict:
@@ -159,7 +180,7 @@ def reindex(db: Database, doc_id: int) -> dict:
     if d is None:
         raise ValueError("No such document.")
     _not_rebuilding(db, d["kb_id"])
-    if not file_path(d).exists():
+    if not stored(d):
         raise ValueError("The original file is missing; upload it again with Replace.")
     _set(db, doc_id, status="Pending", error="")
     enqueue(doc_id)
@@ -170,7 +191,7 @@ def reindex_kb(db: Database, kb_id: int) -> int:
     _not_rebuilding(db, kb_id)
     n = 0
     for d in list_for_kb(db, kb_id):
-        if file_path(d).exists():
+        if stored(d):
             _set(db, d["id"], status="Pending", error="")
             enqueue(d["id"])
             n += 1
@@ -194,11 +215,8 @@ def move(db: Database, doc_id: int, to_kb: int) -> dict:
             raise LookupError(f"'{d['name']}' is already in the target knowledge base.")
     if source:
         kbs.store_for(source).delete_by_document(d["doc_key"])
-    old_folder = doc_dir(d["kb_id"], doc_id)
-    new_folder = doc_dir(to_kb, doc_id)
-    new_folder.parent.mkdir(parents=True, exist_ok=True)
-    if old_folder.exists():
-        shutil.move(str(old_folder), str(new_folder))
+    files().move_prefix(doc_prefix(d["kb_id"], doc_id), doc_prefix(to_kb, doc_id))
+    pii.release_document(db, doc_id)                   # tokens are per knowledge base: indexing in the new one makes new ones
     _set(db, doc_id, kb_id=to_kb, status="Pending", error="", chunks=0)
     enqueue(doc_id)
     return get(db, doc_id)
@@ -212,7 +230,8 @@ def delete(db: Database, doc_id: int) -> dict:
     kb = kbs.get_kb(db, d["kb_id"])
     if kb:
         kbs.store_for(kb).delete_by_document(d["doc_key"])
-    shutil.rmtree(doc_dir(d["kb_id"], doc_id), ignore_errors=True)
+    files().delete_prefix(doc_prefix(d["kb_id"], doc_id))
+    pii.release_document(db, doc_id)
     from app.knowledge import access
     access.clear(db, doc_id)
     _clear_failed(db, doc_id)
@@ -231,7 +250,8 @@ def purge_kb(db: Database, kb_id: int) -> int:
         for r in rows:
             access.clear(db, r.id, session=s)
             s.delete(r)
-    shutil.rmtree(Path(settings.docs_dir) / str(kb_id), ignore_errors=True)
+    files().delete_prefix(f"{kb_id}/")
+    pii.release_kb(db, kb_id)
     return len(rows)
 
 
@@ -262,21 +282,66 @@ def add_in_batches(store, ids, texts, metas, size: int = BATCH) -> None:
         _add_with_retry(store, ids[i:i + size], texts[i:i + size], metas[i:i + size])
 
 
-def prepare(d: dict, kb: dict, chunker, department: str, access=((), ())) -> tuple[list, list, list]:
-    """Parse and chunk one document -> (ids, texts, metadatas). Raises ValueError with a message an admin can act on."""
-    path = file_path(d)
-    if not path.exists():
+def masking_settings(db: Database | None = None):
+    """The guardrail settings to mask documents with, or None while the guardrails are off."""
+    from app import guardrails
+    snap = guardrails.current(db or get_db())
+    return snap if snap.enabled and (snap.masked_types or snap.keywords or snap.mask_names) else None
+
+
+def prepare(d: dict, kb: dict, chunker, department: str, access=((), ()), pii_mask: bool = False,
+            report: dict | None = None, db: Database | None = None) -> tuple[list, list, list]:
+    """Parse and chunk one document -> (ids, texts, metadatas). Raises ValueError with a message an admin can act on.
+    With `pii_mask`, personal data in every chunk is replaced by its vault token before anything is embedded or stored,
+    and `report` receives {"pii_counts": {type: how many in the document}, "redacted": the text with plain labels}."""
+    if not stored(d):
         raise ValueError(f"The original of '{d['name']}' is missing; upload it again with Replace.")
-    chunks = chunker.chunk(path)
+    snap = masking_settings(db) if pii_mask else None
+    with files().plain_copy(file_key(d)) as path:              # decrypted only while it is parsed
+        chunks = chunker.chunk(path)
+        if snap is not None and report is not None:
+            report.update(_redacted(path, snap))
     if not chunks:
         raise ValueError("No readable text was found in this file (is it a scanned image?).")
     ids, texts, metas = [], [], []
     for n, ch in enumerate(chunks):
         ids.append(f"{d['doc_key']}::{n}")
-        texts.append(ch.text)
+        text = ch.text
+        if snap is not None:
+            from app import guardrails
+            hits = guardrails.detect(text, snap.masked_types, snap.mask_names, snap.allow_list, snap.keywords, snap.threshold)
+            text, _ = pii.tokenise(text, kb["id"], d["id"], hits, db)
+        texts.append(text)
         metas.append(metadata.build(source=d["name"], doc_id=d["doc_key"], page=ch.page, chunk=n, kb_id=kb["id"], department=department,
                                     heading_path=ch.heading_path, allowed_groups=access[0], allowed_people=access[1]))
     return ids, texts, metas
+
+
+def _redacted(path: Path, snap) -> dict:
+    """The whole document as text with personal data replaced by labels, and how much of each type it holds."""
+    from app import guardrails
+    parts, total = [], {}
+    for page, text in parsers.load_pages(path):
+        masked, counts = guardrails.mask_with(text, snap, snap.allow_list)
+        parts.append((f"--- Page {page} ---\n" if page else "") + masked)
+        for k, v in counts.items():
+            total[k] = total.get(k, 0) + v
+    return {"pii_counts": total, "redacted": "\n\n".join(parts)}
+
+
+REDACTED = ".redacted.txt"                 # file names never start with a dot (clean_name), so this cannot clash
+
+
+def redacted_key(d: dict) -> str:
+    return doc_prefix(d["kb_id"], d["id"]) + REDACTED
+
+
+def save_redacted(d: dict, report: dict) -> None:
+    """Keep the redacted copy (encrypted like every file), or drop a stale one when the document is not masked."""
+    if report.get("redacted") is not None:
+        files().put(redacted_key(d), report["redacted"].encode("utf-8"))
+    else:
+        files().delete(redacted_key(d))
 
 
 def index_document(db: Database, doc_id: int) -> None:
@@ -293,13 +358,19 @@ def index_document(db: Database, doc_id: int) -> None:
         chunker = versions.active_chunker(db, kb)          # the ACTIVE index's settings: strategies are never mixed in one index
         department = kbs.department_name(db, kb["department_id"])
         from app.knowledge import access
-        ids, texts, metas = prepare(d, kb, chunker, department, access.ids_for(db, doc_id))
+        active = versions.active(db, kb["id"])
+        mask = bool(active["pii_mask"]) if active else bool(kb.get("pii_mask"))   # as the active index was built
+        pii.release_document(db, doc_id)                   # the old chunks go below; their tokens are made again
+        report: dict = {}
+        ids, texts, metas = prepare(d, kb, chunker, department, access.ids_for(db, doc_id), pii_mask=mask, report=report, db=db)
         n = len(ids)
         store = kbs.store_for(kb)
         store.delete_by_document(d["doc_key"])
         add_in_batches(store, ids, texts, metas)
         access.sync_chunks(db, d)
-        _set(db, doc_id, status="Indexed", error="", chunks=n, indexed_at=_now())
+        save_redacted(d, report)
+        _set(db, doc_id, status="Indexed", error="", chunks=n, indexed_at=_now(), pii_counts=report.get("pii_counts", {}),
+             pii_flagged=False)
         _clear_failed(db, doc_id)
         log.info("indexed document %s (%s): %d chunks", doc_id, d["name"], n)
     except Exception as e:
@@ -347,7 +418,52 @@ def shutdown() -> None:
         ex.shutdown(wait=False, cancel_futures=True)
 
 
-# ---- start-up: documents indexed before this table existed, and unfinished work -----------------
+# ---- start-up: encryption, documents indexed before this table existed, and unfinished work -----------------
+LEGACY_DOCS = "data/docs"
+
+
+def secure_at_start(db: Database | None = None) -> None:
+    """Wipe what an interrupted parse left behind, encrypt stored files kept from before encryption, and raise an alert
+    while plain files remain: in the store, or in the old folders (`data/docs`, the old chat files)."""
+    db = db or get_db()
+    problems = []
+    try:
+        store = files()
+        wiped = store.wipe_work()
+        if wiped:
+            log.warning("removed %d decrypted file(s) an interrupted parse left in the working folder", wiped)
+        encrypted = store.encrypt_plain()
+        if encrypted:
+            log.info("encrypted %d stored file(s) that were kept as plain files", encrypted)
+    except Exception as e:
+        log.exception("could not encrypt the stored files")
+        problems.append(f"the stored documents could not be encrypted ({e})")
+    for folder, what in ((LEGACY_DOCS, "the old documents folder"), (settings.chat_dir, "the old chat files")):
+        n = _plain_files(Path(folder))
+        if n:
+            problems.append(f"{what} ({folder}) holds {n} unencrypted file(s)")
+    try:
+        from app import alerts
+        if problems:
+            alerts.raise_alert(db, "files_unencrypted", "files_unencrypted",
+                               "Unencrypted files on the server: " + "; ".join(problems) + ". Encrypt them with "
+                               "python -m app.knowledge.filestore secure <folder>, or delete the folder once its contents "
+                               "are in the admin center.", "warning")
+        else:
+            alerts.resolve_key(db, "files_unencrypted")
+    except Exception:
+        log.warning("could not raise the unencrypted-files alert", exc_info=True)
+
+
+def _plain_files(folder: Path) -> int:
+    if not folder.is_dir():
+        return 0
+    n = 0
+    for p in folder.rglob("*"):
+        if p.is_file() and p.name != ".gitkeep":
+            with p.open("rb") as f:
+                n += not f.read(len(filestore.MAGIC)).startswith(filestore.MAGIC)
+    return n
 def import_existing(db: Database | None = None) -> int:
     """Create a record (status Indexed) for each document already in the default knowledge base's index,
     and keep a copy of its original from data/docs when it is still there. Idempotent."""
@@ -370,7 +486,7 @@ def import_existing(db: Database | None = None) -> int:
         name = clean_name(info["source"])
         if name.lower() in names:
             name = clean_name(f"{Path(name).stem}-{hashlib.sha1(key.encode()).hexdigest()[:6]}{Path(name).suffix}")
-        original = Path("data/docs") / key
+        original = Path(LEGACY_DOCS) / key
         with db.session() as s:
             d = Document(kb_id=kb["id"], name=name, doc_key=key, size=original.stat().st_size if original.is_file() else 0,
                          status="Indexed", chunks=info["chunks"], uploaded_by="system (existing index)", indexed_at=_now())
@@ -378,7 +494,7 @@ def import_existing(db: Database | None = None) -> int:
             s.flush()
             view = _view(d)
         if original.is_file():
-            _write(view, original.read_bytes())
+            _write(view, filestore.read_maybe_encrypted(original, settings.secret_key))
         names.add(name.lower())
         made += 1
     return made
