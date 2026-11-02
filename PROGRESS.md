@@ -523,6 +523,48 @@ PyTorch, transformers and LLM Guard are NOT installed yet (part 6b); their memor
   router, answer, summariser or preview model call, forged and missing CSRF tokens on every state-changing route, upload names
   and types and sizes, one-time links, and login not revealing which accounts exist. It found no vulnerability.
 
+## 20. Phase 12: file storage and personal data in documents
+
+Plan: `docs/phase-12-plan.md`. Parts 12a and 12b are built; 12c (masking at indexing), 12c+ (filter at search time),
+12d (reveal), 12f (Excel and images) and 12g (PII protection switch) are next.
+
+### Phase 12, part 12a: every stored file encrypted
+- `app/knowledge/filestore.py`: one `FileStore` in front of a backend. Every file is encrypted with the master key
+  (Fernet, marked `CAAENC1`) before it is written, whatever its type; the backend only ever holds ciphertext.
+  Backends: local disk (`DOCS_DIR`, the default) and Azure Blob Storage (`FILE_STORE=azure_blob`, optional package
+  `pip install -e .[azure-blob]`). Keys are `<kb id>/<document id>/<file name>`; a key cannot leave the folder.
+- `documents.py` no longer touches the disk directly: upload, replace, re-index, move, delete and KB delete all go
+  through the store. Parsing decrypts into a private working folder (`DOCS_DIR/.work`) that is deleted straight after
+  the file is chunked, even if parsing fails; the chunk preview uses the same folder instead of the system temp folder.
+- At start: anything an interrupted parse left in `.work` is wiped, files stored before encryption are encrypted in
+  place (each in one step, so an interrupted run resumes), and a *Needs your attention* alert stays open while plain
+  files remain in the store, `data/docs` or the old chat files. The first-start import from `data/docs` and the chat
+  import read files secured with `python -m app.knowledge.filestore secure <folder>`.
+- `python -m app.secretstore check` also counts unencrypted files; `rotate` re-encrypts every file too (all files are
+  checked before any is changed). `python -m app.knowledge.filestore status|encrypt|secure <folder>`.
+- With no `APP_SECRET_KEY`, uploads are refused instead of stored in plain text.
+
+### Phase 12, part 12b: personal-data engine
+- Migration 0026: `pii_custom_types`, `pii_vault`, `pii_vault_refs`; guardrail settings gain a detection confidence
+  (default 40 %), a keyword switch and a sensitive-keyword list (seeded: Salary, CTC, DOB, Date of birth, Bank account,
+  Account no, IFSC, Aadhaar No, PAN, Passport, Medical, Diagnosis, Home address).
+- `app/pii.py`:
+  - **Admin-defined types** (name, regular expression, context words, confidence), registered with the detector and
+    switched on for masking when created. They work wherever the built-in types do.
+  - **Sensitive keywords**: the value after `Keyword:`, `Keyword =`, `Keyword | ` (a table row) or `Keyword - ` is
+    masked as `<SENSITIVE_VALUE>`; after a plain keyword (or `is`, `was`, `of`) only a value that starts with a number
+    is. "What is my salary?" or "Salary of employees is reviewed" are left alone. A value is at most 120 characters.
+  - **Tokens and the vault**: `tokenise()` replaces each hit with `<TYPE_xxxxxxxx>`, an HMAC of the value keyed per
+    knowledge base (the HMAC key is a random secret stored encrypted like other credentials), so the same value gets
+    the same token in every chunk. The value is stored encrypted in `pii_vault`; `reveal()` puts values back for
+    tokens of the given knowledge bases; values go when their last document is deleted or moved, or with their KB.
+- `guardrails.detect()` / `mask_with()` combine built-in types, custom types, names and keywords with the configured
+  confidence; questions, answers, summaries and the old-chat import all use them.
+- Guardrails screen: detection confidence, the keyword switch and list (under *Mask personal data*), and a new panel
+  *Your own personal-data types* (add, edit, delete, *Try pattern*, and a *Try it* box that shows what the saved
+  settings mask; nothing typed there is stored or logged). Audited as `pii_type.create|update|delete`.
+- Tests: `tests/test_storage_pii.py` (51).
+
 ## How to run
 
 ```powershell

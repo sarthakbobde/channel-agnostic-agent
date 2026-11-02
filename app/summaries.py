@@ -112,7 +112,7 @@ def _summarise(previous: str, older, department: str | None, db: Database) -> st
         from app import guardrails
         g = guardrails.current(db)
         if g.enabled and g.mask_enabled and text:
-            text, _ = guardrails.mask(text, g.masked_types, g.mask_names)
+            text, _ = guardrails.mask_with(text, g)
     except Exception:
         log.warning("could not mask the summary; discarding it", exc_info=True)
         return ""

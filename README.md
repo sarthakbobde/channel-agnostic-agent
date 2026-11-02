@@ -36,7 +36,8 @@ prompts, guardrails, people and retention. Changes apply within seconds, with no
 | **Knowledge bases** | Several per organisation, each owned by a department and bound to channels. Chunking strategies (fixed size, per page, by heading, semantic) with a preview; embedding models (local MiniLM, local multilingual, OpenAI, Azure OpenAI, Cohere); vector stores (Chroma, pgvector, Azure AI Search). Changes rebuild into a new versioned index with one-click rollback. |
 | **Document access** | Each document is visible to everyone, selected groups or selected people. Enforced inside the search, so blocked content never reaches the model. |
 | **Prompts** | Locked base prompts (Admin) plus a prompt per department (its Editors). Draft, test, publish, version history and rollback. |
-| **Guardrails** | Question length, prompt injection, toxic language, banned topics per department, personal-data masking on questions and redaction on answers, protection of the hidden instructions. |
+| **Guardrails** | Question length, prompt injection, toxic language, banned topics per department, personal-data masking on questions and redaction on answers (built-in types, your own types, and values after sensitive keywords such as *Salary*), protection of the hidden instructions. |
+| **File storage** | Every uploaded file is encrypted with the master key, on local disk or in Azure Blob Storage; parsing never leaves a plain copy behind. |
 | **Conversations** | Stored in the database (personal data masked), long chats summarised in the background, retention per department, audited export. |
 | **Monitoring** | Home dashboard, usage and cost per provider/model/department/knowledge base, guardrail and knowledge-base reports, alerts (banner, webhook, email), a full audit log. |
 | **People** | Admin, Editor and Viewer roles; departments; groups; one-time set-password links; profile photos; sign in with Microsoft or Google (admin center). |
@@ -143,6 +144,7 @@ Most configuration lives in the admin center. `.env` holds what the server needs
 | `DATABASE_URL` / `ADMIN_DB_PATH` | optional | PostgreSQL (`postgresql+psycopg://user:pass@host:5432/db`) instead of the SQLite file |
 | `ADMIN_PORT`, `ADMIN_HOST`, `ADMIN_ALLOW_REMOTE`, `ADMIN_REQUIRE_HTTPS`, `ADMIN_PUBLIC_URL` | optional | Run the admin center on its own port, and let Editors reach it over HTTPS ([DEPLOYMENT.md](DEPLOYMENT.md)) |
 | `CHROMA_PATH`, `DOCS_DIR`, `CHAT_DIR`, `MODELS_DIR` | optional | Where vectors, uploaded files, chats and downloaded models are kept |
+| `FILE_STORE`, `AZURE_BLOB_CONNECTION_STRING`, `AZURE_BLOB_CONTAINER` | optional | Keep uploaded files in Azure Blob Storage instead of `DOCS_DIR` (encrypted either way) |
 | `MAX_UPLOAD_MB`, `WEB_UI_URL`, `CORS_ORIGINS` | optional | Upload limit, where Viewers' password links point, allowed browser origins |
 | `NINEROUTER_*`, `LLM_MODEL`, `SLACK_*`, `TEAMS_*`, `GCHAT_*`, `TOP_K`, `CHUNK_*` … | first start only | Seeds imported once into the database; afterwards edit them in the admin center |
 

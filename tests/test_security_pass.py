@@ -317,7 +317,7 @@ def test_upload_names_cannot_escape_the_documents_folder(world):
     if r.status_code == 201:
         d = documents.get(world.db, r.json()["id"])
         assert ".." not in d["name"] and "/" not in d["name"] and "\\" not in d["name"]
-        assert documents.doc_dir(world.kb_hr["id"], d["id"]).resolve().is_relative_to(documents.settings.docs_dir and __import__("pathlib").Path(documents.settings.docs_dir).resolve())
+        assert documents.stored(d) and documents.file_key(d) == f"{world.kb_hr['id']}/{d['id']}/{d['name']}"
     else:
         assert r.status_code in (400, 422)
 

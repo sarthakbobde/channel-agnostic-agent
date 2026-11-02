@@ -2,9 +2,6 @@
 departments they are listed as an editor of (and can create new ones only in those departments)."""
 import logging
 
-import tempfile
-from pathlib import Path
-
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel
@@ -431,9 +428,7 @@ async def chunk_preview(kb_id: int, file: UploadFile = File(...), strategy: str 
         documents.check_upload(name, data)
     except ValueError as e:
         raise HTTPException(422, str(e))
-    with tempfile.TemporaryDirectory() as tmp:
-        path = Path(tmp) / name
-        path.write_bytes(data)
+    with documents.files().plain_file(data, name) as path:     # private working folder, deleted straight after
         try:
             chunker = chunkers.build(strategy, size, overlap)
             chunks = await run_in_threadpool(chunker.chunk, path)

@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from functools import lru_cache
 from pathlib import Path
 
-from sqlalchemy import (JSON, Boolean, DateTime, Float, Integer, LargeBinary, String, Text, UniqueConstraint,
+from sqlalchemy import (JSON, Boolean, DateTime, Float, ForeignKey, Integer, LargeBinary, String, Text, UniqueConstraint,
                         create_engine, event, inspect)
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -238,8 +238,44 @@ class GuardrailSettings(Base):
     toxicity_words: Mapped[list] = mapped_column(JSON, default=list)
     toxicity_allow: Mapped[list] = mapped_column(JSON, default=list)
     leak_check_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    pii_threshold: Mapped[int] = mapped_column(Integer, default=40)                 # detection confidence, percent
+    keywords_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    sensitive_keywords: Mapped[list] = mapped_column(JSON, default=list)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)
     updated_by: Mapped[str] = mapped_column(String(254), default="system")
+
+
+class PiiCustomType(Base):
+    """A personal-data type an Admin defined: a regular expression, optional context words and a confidence."""
+    __tablename__ = "pii_custom_types"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(40), unique=True)
+    pattern: Mapped[str] = mapped_column(Text)
+    context: Mapped[list] = mapped_column(JSON, default=list)
+    confidence: Mapped[int] = mapped_column(Integer, default=60)                    # percent
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)
+    updated_by: Mapped[str] = mapped_column(String(254), default="system")
+
+
+class PiiVault(Base):
+    """The real value behind one token in a knowledge base's documents (encrypted with the master key)."""
+    __tablename__ = "pii_vault"
+    __table_args__ = (UniqueConstraint("kb_id", "token", name="uq_pii_vault_token"),
+                      UniqueConstraint("kb_id", "value_hash", name="uq_pii_vault_value"))
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    kb_id: Mapped[int] = mapped_column(Integer)
+    token: Mapped[str] = mapped_column(String(80))
+    entity_type: Mapped[str] = mapped_column(String(48))
+    value_hash: Mapped[str] = mapped_column(String(64))
+    value_encrypted: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class PiiVaultRef(Base):
+    """Which documents use a vault token; a token goes when its last document goes."""
+    __tablename__ = "pii_vault_refs"
+    vault_id: Mapped[int] = mapped_column(Integer, ForeignKey("pii_vault.id", ondelete="CASCADE"), primary_key=True)
+    doc_id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
 
 
 class GuardrailEvent(Base):

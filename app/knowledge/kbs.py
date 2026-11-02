@@ -293,6 +293,7 @@ def run_startup() -> None:
         if n:
             log.info("completed metadata on %d existing chunks", n)
         from app.knowledge import documents
+        documents.secure_at_start()
         made = documents.import_existing()
         if made:
             log.info("recorded %d documents that were already indexed", made)

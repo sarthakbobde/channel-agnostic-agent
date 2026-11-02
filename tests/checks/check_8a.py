@@ -2,7 +2,7 @@ import os, sys, tempfile, time, json, dataclasses, io
 sys.path.insert(0, os.getcwd())
 tmp = tempfile.mkdtemp()
 os.environ.update(ADMIN_DB_PATH=os.path.join(tmp, "admin.db"), CHAT_DIR=os.path.join(tmp, "chats"), CHROMA_PATH=os.path.join(tmp, "chroma"),
-                  DATABASE_URL="", GUARDRAILS_ENABLED="false", APP_SECRET_KEY="", CHAT_API_TOKEN="x")
+                  DATABASE_URL="", GUARDRAILS_ENABLED="false", APP_SECRET_KEY=__import__("cryptography.fernet", fromlist=["Fernet"]).Fernet.generate_key().decode(), CHAT_API_TOKEN="x")
 ok = lambda cond, msg: print(("PASS " if cond else "FAIL ") + msg)
 from pathlib import Path
 from fastapi import FastAPI

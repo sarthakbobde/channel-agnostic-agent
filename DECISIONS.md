@@ -103,4 +103,11 @@ this file.
 | 9b | Channel health | Checked every 2 minutes; alert clears itself. | Quick enough to notice an outage. |
 | 9c | Audit search | Action filter is a prefix; target column widened to 254. | Targets such as `Knowledge base / file name` exceeded 64. |
 | 9c | Answered vs not-found | Counted from answers saved after this change (they record `kb_ids`). | Older answers do not say which knowledge base was used. |
+| 12a | File encryption | Fernet with the master key on whole files; a marker header tells encrypted from old plain files. | Chunked AES-GCM: only needed above about 100 MB; uploads are limited to 25 MB. |
+| 12a | Blob storage settings | `FILE_STORE`, `AZURE_BLOB_CONNECTION_STRING`, `AZURE_BLOB_CONTAINER` in `.env`. | The admin center: the server needs the store before it can read its database settings. |
+| 12a | Parsing | Every type (text files too) is decrypted into the private working folder for the parse. | Parse text files from memory: one path for all types is simpler and the file lives for milliseconds. |
+| 12a | `data/docs/HR-Policy.pdf` | Still in git (several checks use it); an alert says the folder holds plain files. | Removing it needs the checks to get their own sample. |
+| 12b | Token form | `<TYPE_` + first 8 hex characters of an HMAC-SHA256 keyed per KB `>`; longer on a clash. | Shorter tokens clash; a plain counter would differ between chunks indexed in a different order. |
+| 12b | Keyword values | After `:`, `=`, `|` or ` - `, any value to the end of the sentence or cell; otherwise only a value starting with a number. | Masking after `is`/`of` without a number would hide ordinary sentences. |
+| 12b | Custom types | Admin only; a new type is switched on at once. | Editors per department: open point in the plan. |
 | 8c | Store health cadence | Every 5 minutes. | Quick enough to catch an outage, light enough not to load the stores. |

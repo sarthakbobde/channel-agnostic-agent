@@ -1,13 +1,12 @@
 """Documents in knowledge bases: upload, storage, indexing in the background, replace, move, delete.
 
-Status flow (D9): Pending -> Indexing -> Indexed or Failed. Originals are kept on disk under
-`DOCS_DIR/<kb id>/<document id>/<file name>` so any document can be re-indexed later.
+Status flow (D9): Pending -> Indexing -> Indexed or Failed. Originals are kept, encrypted, in the file store under
+`<kb id>/<document id>/<file name>` (see filestore.py) so any document can be re-indexed later.
 Indexing runs on one background worker; documents left Pending/Indexing by a restart are picked up again.
 """
 import hashlib
 import logging
 import re
-import shutil
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
@@ -16,9 +15,10 @@ from pathlib import Path
 from sqlalchemy import func, select
 from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
 
+from app import pii
 from app.config import settings
 from app.db import Database, Document, KnowledgeBase, get_db
-from app.knowledge import chunkers, kbs, metadata, parsers
+from app.knowledge import chunkers, filestore, kbs, metadata, parsers
 
 log = logging.getLogger(__name__)
 BATCH = 64
@@ -26,6 +26,7 @@ RETRY_WAIT = (1, 20)                  # seconds: exponential backoff between att
 RETRY_ATTEMPTS = 4
 _executor: ThreadPoolExecutor | None = None
 _lock = threading.Lock()
+_store: tuple | None = None
 
 
 def _now() -> datetime:
@@ -45,12 +46,27 @@ def _not_rebuilding(db: Database, kb_id: int) -> None:
 
 
 # ---- files ---------------------------------------------------------------------------------
-def doc_dir(kb_id: int, doc_id: int) -> Path:
-    return Path(settings.docs_dir) / str(kb_id) / str(doc_id)
+def files() -> filestore.FileStore:
+    """The file store for the current settings (rebuilt if they change, as tests do)."""
+    global _store
+    sig = (settings.file_store, settings.docs_dir, settings.secret_key, settings.azure_blob_connection_string,
+           settings.azure_blob_container)
+    with _lock:
+        if _store is None or _store[0] != sig:
+            _store = (sig, filestore.build(settings))
+        return _store[1]
 
 
-def file_path(d: dict) -> Path:
-    return doc_dir(d["kb_id"], d["id"]) / d["name"]
+def doc_prefix(kb_id: int, doc_id: int) -> str:
+    return f"{kb_id}/{doc_id}/"
+
+
+def file_key(d: dict) -> str:
+    return doc_prefix(d["kb_id"], d["id"]) + d["name"]
+
+
+def stored(d: dict) -> bool:
+    return files().exists(file_key(d))
 
 
 def clean_name(raw: str) -> str:
@@ -126,12 +142,11 @@ def add(db: Database, kb_id: int, filename: str, data: bytes, actor: str, access
 
 
 def _write(d: dict, data: bytes) -> None:
-    folder = doc_dir(d["kb_id"], d["id"])
-    folder.mkdir(parents=True, exist_ok=True)
-    for old in folder.iterdir():
-        if old.name != d["name"]:
-            old.unlink(missing_ok=True)
-    (folder / d["name"]).write_bytes(data)
+    store = files()
+    store.put(file_key(d), data)
+    for old in store.keys(doc_prefix(d["kb_id"], d["id"])):
+        if old != file_key(d):
+            store.delete(old)
 
 
 def replace(db: Database, doc_id: int, filename: str, data: bytes) -> dict:
@@ -159,7 +174,7 @@ def reindex(db: Database, doc_id: int) -> dict:
     if d is None:
         raise ValueError("No such document.")
     _not_rebuilding(db, d["kb_id"])
-    if not file_path(d).exists():
+    if not stored(d):
         raise ValueError("The original file is missing; upload it again with Replace.")
     _set(db, doc_id, status="Pending", error="")
     enqueue(doc_id)
@@ -170,7 +185,7 @@ def reindex_kb(db: Database, kb_id: int) -> int:
     _not_rebuilding(db, kb_id)
     n = 0
     for d in list_for_kb(db, kb_id):
-        if file_path(d).exists():
+        if stored(d):
             _set(db, d["id"], status="Pending", error="")
             enqueue(d["id"])
             n += 1
@@ -194,11 +209,8 @@ def move(db: Database, doc_id: int, to_kb: int) -> dict:
             raise LookupError(f"'{d['name']}' is already in the target knowledge base.")
     if source:
         kbs.store_for(source).delete_by_document(d["doc_key"])
-    old_folder = doc_dir(d["kb_id"], doc_id)
-    new_folder = doc_dir(to_kb, doc_id)
-    new_folder.parent.mkdir(parents=True, exist_ok=True)
-    if old_folder.exists():
-        shutil.move(str(old_folder), str(new_folder))
+    files().move_prefix(doc_prefix(d["kb_id"], doc_id), doc_prefix(to_kb, doc_id))
+    pii.release_document(db, doc_id)                   # tokens are per knowledge base: indexing in the new one makes new ones
     _set(db, doc_id, kb_id=to_kb, status="Pending", error="", chunks=0)
     enqueue(doc_id)
     return get(db, doc_id)
@@ -212,7 +224,8 @@ def delete(db: Database, doc_id: int) -> dict:
     kb = kbs.get_kb(db, d["kb_id"])
     if kb:
         kbs.store_for(kb).delete_by_document(d["doc_key"])
-    shutil.rmtree(doc_dir(d["kb_id"], doc_id), ignore_errors=True)
+    files().delete_prefix(doc_prefix(d["kb_id"], doc_id))
+    pii.release_document(db, doc_id)
     from app.knowledge import access
     access.clear(db, doc_id)
     _clear_failed(db, doc_id)
@@ -231,7 +244,8 @@ def purge_kb(db: Database, kb_id: int) -> int:
         for r in rows:
             access.clear(db, r.id, session=s)
             s.delete(r)
-    shutil.rmtree(Path(settings.docs_dir) / str(kb_id), ignore_errors=True)
+    files().delete_prefix(f"{kb_id}/")
+    pii.release_kb(db, kb_id)
     return len(rows)
 
 
@@ -264,10 +278,10 @@ def add_in_batches(store, ids, texts, metas, size: int = BATCH) -> None:
 
 def prepare(d: dict, kb: dict, chunker, department: str, access=((), ())) -> tuple[list, list, list]:
     """Parse and chunk one document -> (ids, texts, metadatas). Raises ValueError with a message an admin can act on."""
-    path = file_path(d)
-    if not path.exists():
+    if not stored(d):
         raise ValueError(f"The original of '{d['name']}' is missing; upload it again with Replace.")
-    chunks = chunker.chunk(path)
+    with files().plain_copy(file_key(d)) as path:              # decrypted only while it is parsed
+        chunks = chunker.chunk(path)
     if not chunks:
         raise ValueError("No readable text was found in this file (is it a scanned image?).")
     ids, texts, metas = [], [], []
@@ -347,7 +361,52 @@ def shutdown() -> None:
         ex.shutdown(wait=False, cancel_futures=True)
 
 
-# ---- start-up: documents indexed before this table existed, and unfinished work -----------------
+# ---- start-up: encryption, documents indexed before this table existed, and unfinished work -----------------
+LEGACY_DOCS = "data/docs"
+
+
+def secure_at_start(db: Database | None = None) -> None:
+    """Wipe what an interrupted parse left behind, encrypt stored files kept from before encryption, and raise an alert
+    while plain files remain: in the store, or in the old folders (`data/docs`, the old chat files)."""
+    db = db or get_db()
+    problems = []
+    try:
+        store = files()
+        wiped = store.wipe_work()
+        if wiped:
+            log.warning("removed %d decrypted file(s) an interrupted parse left in the working folder", wiped)
+        encrypted = store.encrypt_plain()
+        if encrypted:
+            log.info("encrypted %d stored file(s) that were kept as plain files", encrypted)
+    except Exception as e:
+        log.exception("could not encrypt the stored files")
+        problems.append(f"the stored documents could not be encrypted ({e})")
+    for folder, what in ((LEGACY_DOCS, "the old documents folder"), (settings.chat_dir, "the old chat files")):
+        n = _plain_files(Path(folder))
+        if n:
+            problems.append(f"{what} ({folder}) holds {n} unencrypted file(s)")
+    try:
+        from app import alerts
+        if problems:
+            alerts.raise_alert(db, "files_unencrypted", "files_unencrypted",
+                               "Unencrypted files on the server: " + "; ".join(problems) + ". Encrypt them with "
+                               "python -m app.knowledge.filestore secure <folder>, or delete the folder once its contents "
+                               "are in the admin center.", "warning")
+        else:
+            alerts.resolve_key(db, "files_unencrypted")
+    except Exception:
+        log.warning("could not raise the unencrypted-files alert", exc_info=True)
+
+
+def _plain_files(folder: Path) -> int:
+    if not folder.is_dir():
+        return 0
+    n = 0
+    for p in folder.rglob("*"):
+        if p.is_file() and p.name != ".gitkeep":
+            with p.open("rb") as f:
+                n += not f.read(len(filestore.MAGIC)).startswith(filestore.MAGIC)
+    return n
 def import_existing(db: Database | None = None) -> int:
     """Create a record (status Indexed) for each document already in the default knowledge base's index,
     and keep a copy of its original from data/docs when it is still there. Idempotent."""
@@ -370,7 +429,7 @@ def import_existing(db: Database | None = None) -> int:
         name = clean_name(info["source"])
         if name.lower() in names:
             name = clean_name(f"{Path(name).stem}-{hashlib.sha1(key.encode()).hexdigest()[:6]}{Path(name).suffix}")
-        original = Path("data/docs") / key
+        original = Path(LEGACY_DOCS) / key
         with db.session() as s:
             d = Document(kb_id=kb["id"], name=name, doc_key=key, size=original.stat().st_size if original.is_file() else 0,
                          status="Indexed", chunks=info["chunks"], uploaded_by="system (existing index)", indexed_at=_now())
@@ -378,7 +437,7 @@ def import_existing(db: Database | None = None) -> int:
             s.flush()
             view = _view(d)
         if original.is_file():
-            _write(view, original.read_bytes())
+            _write(view, filestore.read_maybe_encrypted(original, settings.secret_key))
         names.add(name.lower())
         made += 1
     return made

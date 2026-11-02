@@ -187,7 +187,13 @@ def import_files(db: Database | None = None, directory: str | None = None) -> di
                 skipped += 1
                 continue
         records = []
-        for line in f.read_text(encoding="utf-8", errors="ignore").splitlines():
+        try:
+            from app.knowledge.filestore import read_maybe_encrypted
+            content = read_maybe_encrypted(f, settings.secret_key).decode("utf-8", errors="ignore")
+        except Exception:
+            log.warning("could not read %s", f.name, exc_info=True)
+            continue
+        for line in content.splitlines():
             try:
                 rec = json.loads(line)
             except json.JSONDecodeError:
@@ -204,7 +210,7 @@ def import_files(db: Database | None = None, directory: str | None = None) -> di
                 for rec in records:
                     text = str(rec.get("content", ""))
                     if mask and text:
-                        text, _ = guardrails.mask(text, g.masked_types, g.mask_names)
+                        text, _ = guardrails.mask_with(text, g)
                     ts = datetime.fromtimestamp(float(rec.get("ts", 0)), timezone.utc) if rec.get("ts") else _now()
                     _store(s, conv_id, who, rec["role"], text, rec.get("meta") if isinstance(rec.get("meta"), dict) else None, True, ts)
             done += 1

@@ -1154,7 +1154,7 @@
     "channel.disable": "Switched a channel off", "channel.test": "Tested a channel", "secret.replace": "Replaced a stored key or token",
     "provider.create": "Connected an AI provider", "provider.update": "Changed an AI provider", "provider.delete": "Removed an AI provider", "provider.test": "Tested an AI provider",
     "providers.approval": "Changed the allowed AI providers", "model_settings.update": "Changed which model answers", "settings.update": "Changed settings",
-    "guardrails.update": "Changed guardrails", "prompt.save": "Saved a prompt draft", "prompt.publish": "Published a prompt", "prompt.rollback": "Rolled a prompt back", "prompt.preview": "Tried a prompt",
+    "guardrails.update": "Changed guardrails", "pii_type.create": "Added a personal-data type", "pii_type.update": "Changed a personal-data type", "pii_type.delete": "Deleted a personal-data type", "prompt.save": "Saved a prompt draft", "prompt.publish": "Published a prompt", "prompt.rollback": "Rolled a prompt back", "prompt.preview": "Tried a prompt",
     "kb.create": "Created a knowledge base", "kb.update": "Changed a knowledge base", "kb.delete": "Deleted a knowledge base", "kb.access": "Changed who can ask a knowledge base",
     "kb.reindex": "Reprocessed a knowledge base", "kb.rollback": "Rolled back a knowledge base", "kb.rebuild.start": "Started a rebuild", "kb.rebuild.finish": "Finished a rebuild",
     "kb.rebuild.fail": "A rebuild failed", "kb.rebuild.cancel": "Cancelled a rebuild", "document.upload": "Uploaded a document", "document.replace": "Replaced a document",
@@ -2615,6 +2615,12 @@
         var t = toggle(name, label);
         return h("div", { class: "opt" }, t, h("b", {}, label), help ? tip(help) : null);
       }
+      function confidenceControl() {
+        var f = fields.pii_threshold;
+        var n = h("input", { type: "number", id: id(), min: f.min, max: f.max, step: f.step, value: cur.pii_threshold, "aria-label": f.label,
+          oninput: function () { var v = Number(n.value); set("pii_threshold", n.value === "" || isNaN(v) ? n.value : v); } });
+        return h("div", { class: "field" }, fieldLabel(n.id, f.label, f.help), n);
+      }
       function lengthControl() {
         var n = h("input", { type: "number", id: id(), min: fields.max_input_tokens.min, max: fields.max_input_tokens.max, step: fields.max_input_tokens.step, value: cur.max_input_tokens,
           "aria-label": "Longest question in tokens", oninput: function () { var v = Number(n.value); set("max_input_tokens", n.value === "" || isNaN(v) ? n.value : v); } });
@@ -2670,7 +2676,9 @@
         card("Banned topics", "Questions and answers", "Blocks anything about a topic banned for the asker's department.", "banned_topics_enabled",
           h("div", { class: "help" }, "Topics are set per department. ", goLink("departments", "Edit in Departments"))),
         card("Mask personal data", "Questions", "Replaces personal data with a label such as <EMAIL_ADDRESS> before the question reaches the AI model, the history or any log.", "mask_enabled",
-          stack(typeChecks(), sub2("mask_names", "Also mask names", "Off by default, because names are often needed to answer. Detection is approximate."))));
+          stack(typeChecks(), sub2("mask_names", "Also mask names", "Off by default, because names are often needed to answer. Detection is approximate."), confidenceControl(),
+            sub2("keywords_enabled", fields.keywords_enabled.label, fields.keywords_enabled.help),
+            tags("sensitive_keywords", "Sensitive keywords", "The value after any of these is masked as <SENSITIVE_VALUE>, for example 'Salary: 12,40,000' or a 'Salary | 12,40,000' table row.", "e.g. Employee code"))));
       var answerCards = h("div", { class: "gr-list" },
         card("Check answers", "Answers", "The finished answer is checked before anyone sees it. This is the master switch for all three answer checks: if it is off, redaction and instruction protection below are not applied either.", "output_checks_enabled", hint("Failed answers are replaced by the blocked reply.")),
         card("Redact personal data", "Answers", "Personal data found in an answer is replaced, except values you allow.", "output_redaction",
@@ -2701,7 +2709,9 @@
 
       var page = h("div", { class: "gr-page" }, master, warn,
         h("div", { class: "gr-cols" },
-          panel("Question checks", "Run first. A blocked question never reaches the AI model.", null, questionCards),
+          h("div", { class: "stack" },
+            panel("Question checks", "Run first. A blocked question never reaches the AI model.", null, questionCards),
+            piiTypesPanel()),
           h("div", { class: "stack" },
             panel("Answer checks", "Run on the finished answer, before the person sees it.", null, answerCards),
             blockedBox)),
@@ -2709,6 +2719,73 @@
       holder.replaceChildren(page);
       redraw.forEach(function (fn) { fn(); });
     }
+    // ---- personal-data types an Admin defines, and a Try it box (saved straight away, not with the Save bar) ----
+    function piiTypesPanel() {
+      var list = h("div", { class: "stack-sm" }, msg("wait", "Loading…"));
+      var out = h("div", { "aria-live": "polite" });
+      var fName = h("input", { type: "text", id: "pt-name", autocomplete: "off", placeholder: "EMPLOYEE_ID", maxlength: "40" });
+      var fPat = h("input", { type: "text", id: "pt-pat", autocomplete: "off", placeholder: "\\bEMP-\\d{5}\\b", maxlength: "300", spellcheck: "false" });
+      var fCtx = h("input", { type: "text", id: "pt-ctx", autocomplete: "off", placeholder: "employee, staff" });
+      var fConf = h("input", { type: "number", id: "pt-conf", min: "10", max: "100", step: "5", value: "60" });
+      var editing = null;
+      var saveBtn = h("button", { type: "button", class: "btn primary", onclick: async function () {
+        var body = { name: fName.value, pattern: fPat.value, confidence: Number(fConf.value),
+          context: fCtx.value.split(",").map(function (x) { return x.trim(); }).filter(Boolean) };
+        out.replaceChildren(msg("wait", "Saving…"));
+        try {
+          await api(editing ? "PUT" : "POST", "/guardrails/pii-types" + (editing ? "/" + editing : ""), body);
+          out.replaceChildren(msg("ok", "Saved. It is masked from now on; documents already indexed pick it up when they are reprocessed."));
+          reset(); load();
+        } catch (err) { out.replaceChildren(msg("bad", err.message)); }
+      } }, "Add type");
+      var cancel = h("button", { type: "button", class: "btn", hidden: true, onclick: function () { reset(); } }, "Cancel");
+      function reset() { editing = null; fName.value = fPat.value = fCtx.value = ""; fConf.value = "60"; saveBtn.textContent = "Add type"; cancel.hidden = true; }
+
+      var sample = h("textarea", { id: "pt-sample", rows: "3", placeholder: "Paste a line to see what is masked, e.g. Salary: 12,40,000. Contact ravi@company.com, EMP-12345." });
+      var result = h("div", { class: "bubble", hidden: true });
+      function tryIt(pattern) {
+        return async function () {
+          if (!sample.value.trim()) { sample.focus(); return; }
+          try {
+            var r = await api("POST", "/guardrails/pii-test", pattern ? { text: sample.value, pattern: fPat.value } : { text: sample.value });
+            result.hidden = false;
+            result.textContent = pattern ? (r.matches.length ? "The pattern matches: " + r.matches.join(", ") : "The pattern matches nothing in this text.")
+                                         : r.masked;
+          } catch (err) { result.hidden = false; result.textContent = err.message; }
+        };
+      }
+
+      async function load() {
+        try {
+          var r = await api("GET", "/guardrails/pii-types");
+          if (!r.types.length) { list.replaceChildren(hint("None yet. Add one for numbers only your organisation uses, such as employee or customer IDs.")); return; }
+          list.replaceChildren.apply(list, r.types.map(function (t) {
+            return h("div", { class: "opt" }, h("b", {}, t.name), h("code", {}, t.pattern),
+              h("span", { class: "meta" }, t.confidence + "% confidence" + (t.context.length ? " · near: " + t.context.join(", ") : "")),
+              h("button", { type: "button", class: "btn small", onclick: function () {
+                editing = t.id; fName.value = t.name; fPat.value = t.pattern; fCtx.value = t.context.join(", "); fConf.value = t.confidence;
+                saveBtn.textContent = "Save type"; cancel.hidden = false; fName.focus();
+              } }, "Edit"),
+              confirmButton("Delete", "Click again to delete", async function () {
+                try { await api("DELETE", "/guardrails/pii-types/" + t.id); load(); } catch (err) { out.replaceChildren(msg("bad", err.message)); }
+              }, true));
+          }));
+        } catch (err) { list.replaceChildren(msg("bad", err.message)); }
+      }
+      load();
+      return panel("Your own personal-data types", "Numbers or codes only your organisation uses. Each is a regular expression; context words nearby make a match more certain. Saved straight away.", null,
+        list,
+        h("div", { class: "stack-sm" },
+          h("div", { class: "field" }, fieldLabel("pt-name", "Name"), fName),
+          h("div", { class: "field" }, fieldLabel("pt-pat", "Pattern (regular expression)"), fPat),
+          h("div", { class: "field" }, fieldLabel("pt-ctx", "Context words (optional)", "Comma-separated words that usually appear near it."), fCtx),
+          h("div", { class: "field" }, fieldLabel("pt-conf", "Confidence (%)", "How sure a match is. Below the Detection confidence setting, it only counts when a context word is near."), fConf),
+          h("div", { class: "actions" }, cancel, h("button", { type: "button", class: "btn", onclick: tryIt(true) }, "Try pattern"), saveBtn), out),
+        h("div", { class: "stack-sm" },
+          h("div", { class: "field" }, fieldLabel("pt-sample", "Try it", "Uses the saved settings. Nothing you type here is stored or logged."), sample),
+          h("div", { class: "actions" }, h("button", { type: "button", class: "btn", onclick: tryIt(false) }, "Show what is masked")), result));
+    }
+
     try { show(await api("GET", "/guardrails")); }
     catch (err) { if (me) holder.replaceChildren(msg("bad", err.message)); }
   }
