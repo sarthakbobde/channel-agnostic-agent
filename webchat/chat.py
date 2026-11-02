@@ -2,8 +2,10 @@
 password from the one-time link an Admin gives them (/set-password). Run from this folder:
     chainlit run chat.py --port 8501
 RAG_BACKEND_URL points at the API; CHAINLIT_AUTH_SECRET signs the sign-in cookie."""
+import asyncio
 import html
 import logging
+import re
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -21,6 +23,8 @@ from starlette.routing import Route  # noqa: E402
 import backend  # noqa: E402
 
 logging.getLogger("httpx").setLevel(logging.WARNING)       # not a line per API call
+TYPING_SECONDS = 1.5           # longest time an answer takes to type out, however long it is
+TYPING_STEP = 0.03             # pause between words for a short answer
 
 
 
@@ -66,6 +70,16 @@ async def answer(message: cl.Message):
     await _show(token, status, body)
 
 
+async def _type(msg: cl.Message, text: str) -> None:
+    """Type the answer out word by word. It is the finished answer, already checked by the API (guardrails, personal data,
+    sources): nothing unchecked is ever shown, this only makes a long answer easier to follow as it appears."""
+    pieces = re.findall(r"\S+\s*|\s+", text) or [text]
+    pause = min(TYPING_STEP, TYPING_SECONDS / len(pieces))
+    for piece in pieces:
+        await msg.stream_token(piece)
+        await asyncio.sleep(pause)
+
+
 async def _show(token: str, status: int, body: dict) -> None:
     if status == 200 and body.get("language"):
         cl.user_session.set("lang", body["language"])          # the person's language, for the texts below
@@ -74,8 +88,10 @@ async def _show(token: str, status: int, body: dict) -> None:
         items = body.get("suggestions") or []
         content = (backend.with_sources(body.get("answer", ""), body.get("sources", []), body.get("language", ""), texts["sources"])
                    + backend.suggestions_text([s for s in items if not s.get("payload")], texts["suggested"]))
-        await cl.Message(content=content, elements=_suggestions(items, texts["suggested"]),
-                         **({"id": backend.step_id(body["answer_id"], "")} if body.get("answer_id") else {})).send()
+        msg = cl.Message(content="", **({"id": backend.step_id(body["answer_id"], "")} if body.get("answer_id") else {}))
+        await _type(msg, content)
+        msg.elements = _suggestions(items, texts["suggested"])     # the suggestions appear once the answer is complete
+        await msg.send()
     elif status in (400, 403, 409, 410):                     # a suggestion button that is not valid, not yours, used or expired
         await cl.ErrorMessage(content=body.get("detail", texts["web_try_again"])).send()
     elif status in (401, 503):
