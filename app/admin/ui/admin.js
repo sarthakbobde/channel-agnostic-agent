@@ -2367,7 +2367,7 @@
           h("h4", {}, "Can see personal data", tip("While protection is on, these groups and people see the real values in answers and sources; everyone else sees labels such as <EMAIL_ADDRESS>. Every reveal is recorded in the audit log.")),
           h("span", { class: "l" }, "Groups"), g.length ? list(g) : hint("No groups yet."),
           h("span", { class: "l" }, "People"), list(u),
-          canEdit ? null : hint("Only an Admin can change these."),
+          canEdit ? "" : hint("Only an Admin can change these."),
           h("div", { class: "actions" }, vSave), vOut);
       }, function (err) { box.replaceChildren(msg("bad", err.message)); });
       return h("div", { class: "subpanel" }, box);
@@ -2809,7 +2809,7 @@
         cur = r;
         state_.replaceChildren(h("div", { class: "opt" }, h("span", { class: "pill " + (r.enabled ? "ok" : "bad") }, r.enabled ? "Protected" : "Not protected"),
           h("span", { class: "meta" }, r.unprotected.length ? "Not protected now: " + r.unprotected.join(", ") : "Every knowledge base is protected.")),
-          r.enabled ? null : msg("warn", "Everyone sees real personal data from documents, and the AI model receives it. What people type now is stored and sent unmasked."));
+          r.enabled ? "" : msg("warn", "Everyone sees real personal data from documents, and the AI model receives it. What people type now is stored and sent unmasked."));
         btn.textContent = r.enabled ? "Turn protection off" : "Turn protection on";
         btn.className = "btn " + (r.enabled ? "danger" : "primary");
       }
