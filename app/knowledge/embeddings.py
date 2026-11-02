@@ -58,6 +58,8 @@ class EmbeddingModel(ABC):
     SPEC: tuple[Field, ...] = ()
     PRICES: dict = {}                      # model -> list price in USD per million tokens (approximate; check yours)
     warning: str = ""
+    # The match threshold that suits this model's scores (D31), from the Phase 2 comparison; None = not measured.
+    RECOMMENDED_THRESHOLD: float | None = None
 
     def __init__(self, config: dict | None = None, secrets: dict | None = None, resolver=None):
         self.config = dict(config or {})
@@ -129,6 +131,7 @@ class ChromaDefaultEmbeddings(EmbeddingModel):
     title = "Local MiniLM (built in)"
     builtin = True
     PRICES = {"chroma-default": 0.0}
+    RECOMMENDED_THRESHOLD = 0.35
     _fn = None
     _lock = threading.Lock()
 
@@ -146,6 +149,7 @@ class LocalMultilingualEmbeddings(EmbeddingModel):
     title = "Local multilingual (e5-small)"
     PRICES = {"multilingual-e5-small": 0.0}
     SPEC = ()
+    RECOMMENDED_THRESHOLD = 0.75          # its scores bunch between 0.75 and 0.86; MiniLM's 0.35 would let everything through
     REPO = "intfloat/multilingual-e5-small"
     FILES = ("onnx/model_qint8_avx512_vnni.onnx", "tokenizer.json")
     MAX_LEN = 512

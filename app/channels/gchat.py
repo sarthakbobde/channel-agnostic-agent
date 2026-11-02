@@ -17,8 +17,8 @@ from fastapi import HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
 from google.auth.transport import requests as g_requests
 from google.oauth2 import id_token
-from app.channels.base import Adapter, Envelope, Field
-from app.channels.core import handle, sources_line, to_mrkdwn
+from app.channels.base import Adapter, ChannelPresenter, Envelope, Field
+from app.channels.core import handle, handle_action, sources_footer, suggestion_controls, suggestions_text, to_mrkdwn
 
 log = logging.getLogger(__name__)
 CHAT_ISSUER = "chat@system.gserviceaccount.com"
@@ -26,6 +26,30 @@ CHAT_CERTS = f"https://www.googleapis.com/service_accounts/v1/metadata/x509/{CHA
 TIMEOUT_S = 25
 GREETING = "Hi! Ask me a question about the knowledge base and I'll answer with sources."
 TIMEOUT_REPLY = "That took too long. Please try again, or ask a shorter question."
+
+
+FUNCTION = "caa_suggest"
+
+
+class GChatPresenter(ChannelPresenter):
+    """Text, plus a cardsV2 card of buttons in the same synchronous reply (D30). With buttons off, suggestions are text."""
+
+    def __init__(self, buttons: bool = True):
+        self.buttons = buttons
+
+    def render(self, result: dict, show_sources: bool) -> tuple[str, list]:
+        out = to_mrkdwn(result["answer"])
+        if show_sources and result["sources"]:
+            out += sources_footer(result)
+        chips = suggestion_controls(result)
+        buttons = [c for c in chips if c["payload"]] if self.buttons else []
+        plain = [c for c in chips if c not in buttons]
+        if plain:
+            out += suggestions_text({**result, "suggestions": plain})
+        cards = [{"cardId": "caa-suggestions", "card": {"sections": [{"widgets": [{"buttonList": {"buttons": [
+            {"text": c["text"][:100], "onClick": {"action": {"function": FUNCTION, "parameters": [{"key": "payload", "value": c["payload"]}]}}}
+            for c in buttons]}}]}]}}] if buttons else []
+        return out, cards
 
 
 class GChatAdapter(Adapter):
@@ -44,6 +68,8 @@ class GChatAdapter(Adapter):
         Field("kb_ids", "Knowledge bases", kind="kbs",
               help="Which knowledge bases this channel answers from. Empty = the default knowledge base."),
         Field("show_sources", "Show sources", kind="bool", default=True),
+        Field("suggestion_buttons", "Suggestions as buttons", kind="bool", default=True,
+              help="Off shows suggested questions as text, for spaces where card buttons do not work."),
     )
 
     def __init__(self, cfg: dict):
@@ -59,6 +85,7 @@ class GChatAdapter(Adapter):
             raise RuntimeError("gchat: service_account_email is required for auth=endpoint_url")
         self.allowed = set(cfg.get("allowed_spaces") or [])
         self.show_sources = cfg.get("show_sources", True)
+        self.presenter = GChatPresenter(cfg.get("suggestion_buttons", True))
 
     # ---- auth -------------------------------------------------------------
     def _verify(self, authorization: str) -> None:
@@ -79,14 +106,26 @@ class GChatAdapter(Adapter):
 
     # ---- event parsing / response -----------------------------------------
     @staticmethod
-    def _parse(body: dict):
-        """-> (kind, space, thread, user, text, addon). kind: message|added|ignore"""
+    def click_payload(body: dict) -> str | None:
+        """The signed payload of a suggestion button click, in either event format; None for anything else."""
+        common = body.get("commonEventObject") or {}
+        if common.get("invokedFunction") == FUNCTION:                         # add-on shape
+            return (common.get("parameters") or {}).get("payload")
+        action = body.get("action") or {}
+        if body.get("type") == "CARD_CLICKED" and action.get("actionMethodName") == FUNCTION:   # classic shape
+            return next((p.get("value") for p in action.get("parameters") or [] if p.get("key") == "payload"), None)
+        return None
+
+    @classmethod
+    def _parse(cls, body: dict):
+        """-> (kind, space, thread, user, text, addon). kind: message|click|added|ignore"""
+        click = cls.click_payload(body) is not None
         if "chat" in body:                                     # Workspace add-on shape
             chat = body["chat"]
             user = (chat.get("user") or {}).get("name", "")
             if "addedToSpacePayload" in chat:
                 return "added", "", "", user, "", True
-            p = chat.get("messagePayload")
+            p = chat.get("buttonClickedPayload") if click else chat.get("messagePayload")
             if not p:
                 return "ignore", "", "", user, "", True
             msg, space = p.get("message", {}), p.get("space", {})
@@ -96,21 +135,24 @@ class GChatAdapter(Adapter):
             user = (body.get("user") or {}).get("name", "")
             if kind == "ADDED_TO_SPACE":
                 return "added", "", "", user, "", False
-            if kind != "MESSAGE":
+            if kind != "MESSAGE" and not click:
                 return "ignore", "", "", user, "", False
             msg, space = body.get("message", {}), body.get("space", {})
             addon = False
+        if click:
+            thread = (msg.get("thread") or {}).get("name") or msg.get("name", "")
+            return "click", space.get("name", ""), thread, user, "", addon
         # argumentText is the message with the @mention already removed
         text = (msg.get("argumentText") or msg.get("text") or "").strip()
         thread = (msg.get("thread") or {}).get("name") or msg.get("name", "")
         return "message", space.get("name", ""), thread, user, text, addon
 
     @staticmethod
-    def _reply(text: str, addon: bool) -> dict:
+    def _reply(text: str, addon: bool, cards: list | None = None, click: bool = False) -> dict:
+        message = {"text": text, **({"cardsV2": cards} if cards else {})}
         if not addon:
-            return {"text": text}
-        return {"hostAppDataAction": {"chatDataAction": {"createMessageAction": {
-            "message": {"text": text}}}}}
+            return {**message, "actionResponse": {"type": "NEW_MESSAGE"}} if click else message
+        return {"hostAppDataAction": {"chatDataAction": {"createMessageAction": {"message": message}}}}
 
     # ---- webhook ----------------------------------------------------------
     async def handle_webhook(self, request: Request):
@@ -126,17 +168,21 @@ class GChatAdapter(Adapter):
             return {}
         if kind == "added":
             return self._reply(GREETING, addon)
-        if not text or (self.allowed and space not in self.allowed):
+        if (kind == "message" and not text) or (self.allowed and space not in self.allowed):
             return {}
         env = Envelope("gchat", "g", space, thread or space, user, text, tuple(self.cfg.get("kb_ids") or ()), sender.get("email", ""))
         try:
-            result = await asyncio.wait_for(run_in_threadpool(handle, env), TIMEOUT_S)
+            if kind == "click":
+                result = await asyncio.wait_for(run_in_threadpool(handle_action, env, self.click_payload(body)), TIMEOUT_S)
+                if result.get("ignored"):
+                    return {}
+            else:
+                result = await asyncio.wait_for(run_in_threadpool(handle, env), TIMEOUT_S)
         except asyncio.TimeoutError:
-            return self._reply(TIMEOUT_REPLY, addon)
-        out = to_mrkdwn(result["answer"])
-        if self.show_sources and result["sources"]:
-            out += f"\n\n_Sources: {sources_line(result['sources'])}_"
-        return self._reply(out, addon)
+            from app import catalog, chat_service
+            return self._reply(catalog.t("gchat_timeout", chat_service.reply_language(text, env.conv_id)), addon)
+        out, cards = self.presenter.render(result, self.show_sources)
+        return self._reply(out, addon, cards, click=kind == "click")
 
     def test(self) -> tuple[bool, str]:
         """Google signs requests; there is no outbound credential to try. Check that the

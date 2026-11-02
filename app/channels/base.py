@@ -21,6 +21,15 @@ class Envelope:
         return f"{self.channel}-{self.workspace}-{self.room}-{self.thread}"
 
 
+class ChannelPresenter:
+    """Formats one result for a platform: `render(result, show_sources)` -> what the platform sends. Controls are
+    [{type: "suggestion_chip", text, payload}] (see core.suggestion_controls); a control without a payload is plain text.
+    Presenters only format: every click goes back through core.handle_action()."""
+
+    def render(self, result: dict, show_sources: bool):
+        raise NotImplementedError
+
+
 class Adapter(ABC):
     """One per platform. Must not contain RAG logic; call channels.core.handle() instead.
 

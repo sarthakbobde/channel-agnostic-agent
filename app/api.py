@@ -8,12 +8,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-from app import channels, chat_auth, chat_service, global_settings, guardrails, identity, memory, prompts, ratelimit, retention, summaries
+from app import catalog, suggestions, channels, chat_auth, chat_service, global_settings, guardrails, identity, language, memory, prompts, ratelimit, retention, summaries
 from app.knowledge import storehealth
 from app.channels import health as channel_health
 from app.jobs import scheduler
 from app.providers import seed as provider_seed
-from app.knowledge import documents as knowledge_documents, kbs as knowledge_kbs
+from app.knowledge import doc_summary as knowledge_doc_summary, documents as knowledge_documents, kbs as knowledge_kbs
 from app.admin.api import check_local
 from app.admin.server import include_admin, listener as admin_listener
 from app.config import settings
@@ -29,9 +29,19 @@ class MessageRequest(BaseModel):
 
 class ChatResponse(BaseModel):
     answer: str
+    answer_id: int | None = None      # the saved answer (for ratings); None when nothing was answered
+    found: bool = False               # False for "could not find this", a refusal or an error
     sources: list[dict]
     searched: bool
     query: str = ""
+    language: str = ""                # the language the answer is written in (D19)
+    rejected: str | None = None       # "language" when the question's language is not accepted (D39)
+    suggestions: list[dict] = []      # [{text, suggestion_id, payload}]; payload None = show as plain text (D26, D37)
+
+
+class ActionRequest(BaseModel):
+    conv_id: str
+    payload: str
 
 
 class ConversationSummary(BaseModel):
@@ -56,6 +66,10 @@ async def lifespan(app: FastAPI):
     except Exception:
         log.exception("could not seed the prompts; the built-in text is used")
     try:
+        catalog.seed()
+    except Exception:
+        log.exception("could not seed the message catalogue; the English texts are used")
+    try:
         imported = memory.import_files()
         if imported["imported"]:
             log.info("imported %d conversations from the old text files (kept as a backup)", imported["imported"])
@@ -78,6 +92,7 @@ async def lifespan(app: FastAPI):
     yield
     admin_listener.stop()
     knowledge_documents.shutdown()
+    knowledge_doc_summary.shutdown()
     summaries.shutdown()
     scheduler.stop()
     channels.stop_all()
@@ -92,7 +107,7 @@ app = FastAPI(
     docs_url=None, redoc_url=None, openapi_url=None,      # built-in docs are public; replaced by local-only routes below
 )
 
-# CORS: no browser origin is trusted unless listed in CORS_ORIGINS. (Streamlit and the chat
+# CORS: no browser origin is trusted unless listed in CORS_ORIGINS. (The web chat server and the chat
 # platforms call this server directly, not from a browser page, so they are unaffected.)
 app.add_middleware(
     CORSMiddleware,
@@ -111,8 +126,9 @@ app.include_router(chat_auth.router)
 
 @app.get("/health")
 def health():
-    """Health check endpoint. `guardrails`: off | ready | loading | error (the detection model is loaded once at start-up)."""
-    return {"status": "ok", "guardrails": guardrails.status()}
+    """Health check endpoint. `guardrails`: off | ready | loading | error (the detection model is loaded once at start-up).
+    `language`: ready | missing (without the detector every question is answered in the default language)."""
+    return {"status": "ok", "guardrails": guardrails.status(), "language": language.status()}
 
 
 # API documentation: reachable only from this machine, never through a tunnel or proxy.
@@ -137,7 +153,7 @@ def _audit(actor: str, action: str, target: str, detail: str = "") -> None:
         log.warning("could not audit %s", action, exc_info=True)
 
 
-PROVIDER_REFUSED_REPLY = "The AI service refused to process this message. Please rephrase your question and try again."
+PROVIDER_REFUSED_REPLY = catalog.TEXTS["provider_refused"][0]
 
 
 def _refused_by_provider(e: BaseException) -> bool:
@@ -151,34 +167,74 @@ def _conv(caller: Caller, conv_id: str) -> str:
     return caller.prefix + conv_id
 
 
+def _asker(caller: Caller) -> str:
+    return "web:" + (caller.email.lower() or caller.prefix or "service")
+
+
 @app.post("/chat", response_model=ChatResponse)
 def chat(request: MessageRequest, caller: Caller = Depends(require_chat_caller)):
     """Chat endpoint - returns answer with sources."""
+    return _answer(request, caller)
+
+
+def _answer(request: MessageRequest, caller: Caller, suggestion: dict | None = None) -> ChatResponse:
     ok, wait = ratelimit.allow("chat:" + (caller.email.lower() or "service"), global_settings.current().chat_rate_per_minute)
     if not ok:
-        raise HTTPException(429, f"You are asking too quickly. Please wait {wait} seconds and try again.", headers={"Retry-After": str(wait)})
+        lang = chat_service.reply_language(request.message, _conv(caller, request.conv_id))
+        raise HTTPException(429, catalog.t("slow_down_wait", lang, seconds=wait), headers={"Retry-After": str(wait)})
     who = identity.resolve(caller.email)
     token = identity.bind(who)
     try:
         kb_ids = chat_auth.web_kb_ids()
-        answer_iter, meta = chat_service.chat_stream(request.message, _conv(caller, request.conv_id),
+        answer_iter, meta = chat_service.chat_stream(request.message, _conv(caller, request.conv_id), asker=_asker(caller),
                                                      **({"kb_ids": kb_ids} if kb_ids else {}))
         answer = "".join(answer_iter)
+        if suggestion:
+            suggestions.link_question(suggestion.get("s"), meta.get("question_id"))
 
         return ChatResponse(
             answer=answer,
+            answer_id=meta.get("answer_id"),
+            found=meta.get("found", False),
             sources=meta.get("sources", []),
             searched=meta.get("searched", False),
             query=meta.get("query", ""),
+            language=meta.get("language", ""),
+            rejected=meta.get("rejected"),
+            suggestions=meta.get("suggestions") or [],
         )
     except Exception as e:
         if _refused_by_provider(e):
             log.warning("the AI provider's own content filter refused the request: %s", e)
-            return ChatResponse(answer=PROVIDER_REFUSED_REPLY, sources=[], searched=False, query="")
+            lang = chat_service.reply_language(request.message, _conv(caller, request.conv_id))
+            return ChatResponse(answer=catalog.t("provider_refused", lang), sources=[], searched=False, query="", language=lang)
         log.error(f"Chat error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Internal error")
     finally:
         identity.unbind(token)
+
+
+@app.post("/chat/action", response_model=ChatResponse)
+def chat_action(request: ActionRequest, caller: Caller = Depends(require_chat_caller)):
+    """A click on a suggestion: the signed payload is checked (only the asker, not expired, once), then it is asked as an
+    ordinary question in the same conversation."""
+    try:
+        data = suggestions.verify(request.payload, suggestions.asker_key(_asker(caller)))
+    except suggestions.PayloadError as e:
+        lang = memory.last_language(_conv(caller, request.conv_id))
+        raise HTTPException(403 if e.key == "suggestion_not_yours" else 410 if e.key == "suggestion_expired" else 400,
+                            catalog.t(e.key, lang))
+    if not suggestions.record_click(data):
+        raise HTTPException(409, "Already asked.")
+    return _answer(MessageRequest(message=data["t"], conv_id=request.conv_id), caller, data)
+
+
+@app.get("/catalog/{lang}")
+def message_texts(lang: str, caller: Caller = Depends(require_chat_caller)):
+    """The system texts in one language, with the fallbacks applied (the Web UI shows its own errors with these)."""
+    if not language.valid(lang):
+        raise HTTPException(404, "Unknown language.")
+    return catalog.bundle(lang)
 
 
 @app.get("/conversations")

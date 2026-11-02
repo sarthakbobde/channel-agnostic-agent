@@ -35,8 +35,18 @@ def _day(text: str | None, end: bool = False):
 @router.get("/conversations")
 def list_conversations(department: str = "", channel: str = "", person: str = "", date_from: str = "", date_to: str = "",
                        limit: int = 50, offset: int = 0, _: Session = Depends(admin_session), ctx: AdminContext = Depends(get_ctx)):
+    return conversation_list(ctx, department, channel, person, date_from, date_to, limit, offset)
+
+
+def conversation_list(ctx: AdminContext, department: str, channel: str, person: str, date_from: str, date_to: str, limit: int, offset: int,
+                      only_departments: set[int] | None = None) -> dict:
+    """One page of conversations. `only_departments` limits it to those departments' conversations (an Editor's view)."""
     limit, offset = max(1, min(limit, 200)), max(0, offset)
     q = select(Conversation)
+    dept_q = select(Conversation.department).distinct().order_by(Conversation.department)
+    if only_departments is not None:
+        q = q.where(Conversation.department_id.in_(only_departments))
+        dept_q = dept_q.where(Conversation.department_id.in_(only_departments))
     if department:
         q = q.where(Conversation.department == department)
     if channel:
@@ -52,7 +62,7 @@ def list_conversations(department: str = "", channel: str = "", person: str = ""
         rows = list(s.scalars(q.order_by(Conversation.updated_at.desc()).limit(limit).offset(offset)))
         counts = dict(s.execute(select(Message.conversation_id, func.count()).where(Message.conversation_id.in_([c.id for c in rows]))
                                 .group_by(Message.conversation_id)).all()) if rows else {}
-        departments = [d for (d,) in s.execute(select(Conversation.department).distinct().order_by(Conversation.department)).all() if d]
+        departments = [d for (d,) in s.execute(dept_q).all() if d]
         return {"total": total, "departments": departments,
                 "conversations": [{"id": c.id, "channel": c.channel, "person": c.owner_email or "unknown", "department": c.department,
                                    "title": c.title or "New chat", "messages": counts.get(c.id, 0), "updated_at": c.updated_at,

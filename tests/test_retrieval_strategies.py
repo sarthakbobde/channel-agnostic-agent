@@ -53,7 +53,7 @@ def setup(monkeypatch):
     monkeypatch.setattr(kbs, "store_for", lambda kb, **k: store)
     monkeypatch.setattr(versions, "active", lambda db, kb_id: {"version": 1})
     monkeypatch.setattr(access, "can_query", lambda db, kb, who: True)
-    monkeypatch.setattr(access, "visible_doc_keys", lambda db, kb, who: list(ALLOWED))
+    monkeypatch.setattr(access, "visible_docs", lambda db, kb, who: {key: n for n, key in enumerate(ALLOWED, 1)})
     monkeypatch.setattr(access, "permits", lambda meta, who, kb: True)
     monkeypatch.setattr("app.identity.current", lambda: types.SimpleNamespace(group_ids=[], user_id=None))
     keyword_search.clear()

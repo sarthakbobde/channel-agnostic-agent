@@ -10,12 +10,32 @@ import jwt
 from fastapi import HTTPException, Request, Response
 from fastapi.concurrency import run_in_threadpool
 from botbuilder.core import BotFrameworkAdapter, BotFrameworkAdapterSettings, TurnContext
-from botbuilder.schema import Activity, ActivityTypes
-from app.channels.base import Adapter, Envelope, Field
-from app.channels.core import handle, sources_line
+from botbuilder.schema import Activity, ActivityTypes, Attachment
+from app.channels.base import Adapter, ChannelPresenter, Envelope, Field
+from app.channels.core import handle, handle_action, sources_footer, suggestion_controls, suggestions_text
 from app.identity import TTLCache, lookup_ok, lookup_problem
 
 log = logging.getLogger(__name__)
+
+
+class TeamsPresenter(ChannelPresenter):
+    """Plain text, or an Adaptive Card whose Action.Submit buttons send {caa_action: payload} back as a message value."""
+
+    def render(self, result: dict, show_sources: bool):
+        out = result["answer"]
+        if show_sources and result["sources"]:
+            out += sources_footer(result)
+        chips = suggestion_controls(result)
+        buttons = [c for c in chips if c["payload"]]
+        plain = [c for c in chips if not c["payload"]]
+        if plain:
+            out += suggestions_text({**result, "suggestions": plain})
+        if not buttons:
+            return out
+        card = {"type": "AdaptiveCard", "$schema": "http://adaptivecards.io/schemas/adaptive-card.json", "version": "1.4",
+                "body": [{"type": "TextBlock", "text": out, "wrap": True}],
+                "actions": [{"type": "Action.Submit", "title": c["text"][:100], "data": {"caa_action": c["payload"]}} for c in buttons]}
+        return Activity(type=ActivityTypes.message, attachments=[Attachment(content_type="application/vnd.microsoft.card.adaptive", content=card)])
 
 
 class TeamsAdapter(Adapter):
@@ -45,6 +65,7 @@ class TeamsAdapter(Adapter):
             channel_auth_tenant=cfg.get("tenant_id") or None,   # needed for single-tenant bots
         ))
         self._tasks: set[asyncio.Task] = set()
+        self.presenter = TeamsPresenter()
 
     async def handle_webhook(self, request: Request):
         if "application/json" not in request.headers.get("Content-Type", ""):
@@ -89,11 +110,15 @@ class TeamsAdapter(Adapter):
 
     async def _on_turn(self, ctx: TurnContext) -> None:
         act = ctx.activity
-        if act.type != ActivityTypes.message or not act.text:
+        if act.type != ActivityTypes.message:
             return
-        TurnContext.remove_recipient_mention(act)
+        payload = act.value.get("caa_action") if isinstance(act.value, dict) else None    # an Action.Submit: a value, no text
+        if not act.text and not payload:
+            return
+        if act.text:
+            TurnContext.remove_recipient_mention(act)
         text = (act.text or "").strip()
-        if not text:
+        if not text and not payload:
             return
         tenant = (act.channel_data or {}).get("tenant", {}).get("id", "") or "t"
         if self.allowed_tenants and tenant not in self.allowed_tenants:
@@ -103,15 +128,15 @@ class TeamsAdapter(Adapter):
                        tuple(self.cfg.get("kb_ids") or ()), await self._email_for(ctx, sender))
         await ctx.send_activity(Activity(type=ActivityTypes.typing))
         ref = TurnContext.get_conversation_reference(act)
-        task = asyncio.create_task(self._answer(ref, env))     # ack now, answer later
+        task = asyncio.create_task(self._answer(ref, env, payload))     # ack now, answer later
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
 
-    async def _answer(self, ref, env: Envelope) -> None:
-        result = await run_in_threadpool(handle, env)
-        out = result["answer"]
-        if self.show_sources and result["sources"]:
-            out += f"\n\n_Sources: {sources_line(result['sources'])}_"
+    async def _answer(self, ref, env: Envelope, payload: str | None = None) -> None:
+        result = await run_in_threadpool(handle_action, env, payload) if payload else await run_in_threadpool(handle, env)
+        if result.get("ignored"):
+            return
+        out = self.presenter.render(result, self.show_sources)
 
         async def send(ctx: TurnContext):
             await ctx.send_activity(out)

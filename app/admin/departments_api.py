@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import delete, func, select
 
-from app import global_settings
+from app import global_settings, scoped_settings
 from app.admin.api import AdminContext, Session, admin_session, get_ctx
 from app.db import Department, DepartmentEditor, User
 
@@ -171,5 +171,8 @@ def delete_department(did: int, sess: Session = Depends(admin_session), ctx: Adm
         name = d.name
         s.execute(delete(DepartmentEditor).where(DepartmentEditor.department_id == did))
         s.delete(d)
+    scoped_settings.purge(scoped_settings.DEPARTMENT, did, ctx.db)
+    from app import glossary
+    glossary.purge(glossary.DEPARTMENT, did, ctx.db)
     ctx.store.record(sess.email, "department.delete", name)
     return {"ok": True}

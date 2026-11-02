@@ -18,6 +18,8 @@ from app.knowledge import kbs, documents, storehealth
 from app.secretstore import generate_key
 
 db = get_db()
+from app import global_settings
+global_settings.update({"summary_enabled": False}, "check", db)   # this check counts alerts; a summary call would add a model alert
 default = kbs.ensure_default(db)
 store = get_store()
 documents.settings = dataclasses.replace(config.settings, docs_dir=os.path.join(tmp, "files"))

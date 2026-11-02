@@ -93,7 +93,7 @@ class FakeAzure:
                 return 200, {"value": [{**{k: d[k] for k in ("id", "content", "metadata")}, "@search.score": s} for d, s in scored[:payload["top"]]]}
             rows.sort(key=lambda d: d["id"])
             skip, top = payload.get("skip", 0), payload.get("top", 50)
-            return 200, {"value": [{k: d[k] for k in ("id", "doc_id", "metadata")} for d in rows[skip:skip + top]]}
+            return 200, {"value": [{k: d[k] for k in payload["select"].split(",")} for d in rows[skip:skip + top]]}
         return 400, None
 
     @staticmethod
@@ -185,6 +185,13 @@ def test_awkward_values_are_handled_as_data(store):
     assert len(store.search("quoted", 3, {"doc_id": "it's; DROP TABLE x;--"})) == 1
     assert len(store.search("quoted", 3, {"doc_id": {"in": ["it's; DROP TABLE x;--", "b"]}})) == 1
     assert store.count() == 1
+
+
+def test_get_returns_text_and_metadata_for_the_ids_that_exist(store):
+    store.add(["g1", "g2"], ["first passage", "second passage"], [{"doc_id": "d1", "source": "a"}, {"doc_id": "d2", "source": "b"}])
+    got = store.get(["g2", "missing", "g1"])
+    assert [g["id"] for g in got] == ["g2", "g1"] and got[0]["text"] == "second passage" and got[1]["metadata"]["source"] == "a"
+    assert store.get([]) == [] and store.get(["missing"]) == []
 
 
 def test_delete_by_document(store):

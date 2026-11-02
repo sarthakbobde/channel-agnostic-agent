@@ -152,7 +152,8 @@ with db.session() as s:
     rows = s.scalars(select(GuardrailEvent)).all()
 kinds = {(e.check, e.direction, e.action) for e in rows}
 ok({("max_length", "input", "blocked"), ("banned_topic", "input", "blocked"), ("personal_data", "input", "masked"), ("personal_data", "output", "redacted"), ("banned_topic", "output", "blocked"), ("citation", "output", "redacted")} <= kinds, f"events recorded for each check: {len(rows)} rows")
-ok(set(GuardrailEvent.__table__.columns.keys()) == {"id", "ts", "check", "direction", "action", "department", "count"}, "the event table has no column that could hold content")
+ok(set(GuardrailEvent.__table__.columns.keys()) == {"id", "ts", "check", "direction", "action", "department", "count", "language"}
+   and GuardrailEvent.__table__.columns["language"].type.length == 16, "the event table has no column that could hold content (language is a code)")
 ok(any(e.department == "HR" for e in rows), "events carry the department")
 
 # ---- settings via the API: hot reload, validation, permissions
@@ -174,8 +175,11 @@ r, seen = ask("hr@sysfore.com", "What is the CEO's salary?")
 ok(r["answer"] == "Not available.", "the Admin's blocked reply text is used")
 c.put("/admin/api/guardrails", headers=h, json={"values": {"enabled": False}}); guardrails.invalidate()
 r, seen = ask("it@sysfore.com", "my card 4111 1111 1111 1111 please")
-ok("4111 1111 1111 1111" in seen, "with guardrails switched off nothing is masked (confirms the switch works)")
-c.put("/admin/api/guardrails", headers=h, json={"values": {"enabled": True, "mask_names": False}}); guardrails.invalidate()
+ok("4111 1111 1111 1111" not in seen, "with the guardrails switched off, masking still runs on its own switch (D36)")
+c.put("/admin/api/guardrails", headers=h, json={"values": {"mask_enabled": False}}); guardrails.invalidate()
+r, seen = ask("it@sysfore.com", "my card 4111 1111 1111 1111 please")
+ok("4111 1111 1111 1111" in seen, "with the masking switch off nothing is masked (confirms the switch works)")
+c.put("/admin/api/guardrails", headers=h, json={"values": {"enabled": True, "mask_enabled": True, "mask_names": False}}); guardrails.invalidate()
 ok(any(e["action"] == "guardrails.update" for e in store.recent_audit()), "settings changes are audited")
 
 # ---- fail closed

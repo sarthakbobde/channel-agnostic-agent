@@ -46,10 +46,16 @@ def test_defaults_are_top5_and_threshold_035():
     assert (settings.chunk_size, settings.chunk_overlap) == (900, 150)
 
 
-def test_threshold_is_inclusive_and_filters_below(monkeypatch):
-    monkeypatch.setattr(retriever, "retrieve_scored",
-                        lambda q, top_k=None: [chunk("a", score=0.9), chunk("b", score=0.35),
-                                               chunk("c", score=0.349), chunk("d", score=0.1)])
+def test_threshold_is_inclusive_and_filters_below(monkeypatch, open_document):
+    # Release 2: the threshold is applied inside each knowledge base's search (before any merge), still inclusive.
+    class Col:
+        def count(self):
+            return 4
+
+        def query(self, query_texts, n_results, where=None):
+            return {"documents": [["a", "b", "c", "d"]], "metadatas": [[{"source": "s"}] * 4],
+                    "distances": [[0.1, 0.65, 0.651, 0.9]]}                  # scores 0.9, 0.35, 0.349, 0.1
+    monkeypatch.setattr(retriever, "get_collection", lambda: Col())
     got = retriever.retrieve("anything")
     assert [c["text"] for c in got] == ["a", "b"]
 
@@ -70,7 +76,8 @@ def test_retrieve_scored_asks_chroma_for_five_and_converts_distance(monkeypatch,
     monkeypatch.setattr(retriever, "get_collection", lambda: Col())
     got = retriever.retrieve_scored("leave policy")
     assert asked == {"n": 5, "q": ["leave policy"]}
-    assert {k: got[0][k] for k in ("text", "source", "page", "score", "via")} == {"text": "doc1", "source": "a.pdf", "page": 3, "score": 0.75, "via": "meaning"}   # score = 1 - distance
+    assert got[0] == {"text": "doc1", "source": "a.pdf", "page": 3, "score": 0.75, "via": "meaning", "doc_language": "",   # score = 1 - distance
+                      "doc_id": None, "kb_id": got[0]["kb_id"], "chunk_id": None, "id": None, "doc_key": got[0]["doc_key"], "title": "a.pdf"}
     assert got[0]["kb_id"] is not None                                                 # the personal-data filter needs it
     assert got[1]["page"] is None and got[1]["score"] == 0.1                          # page 0 means "no page"
 
@@ -226,4 +233,5 @@ def test_odd_conversation_ids_are_just_data(chat_dir):
 def test_conversation_title_is_the_first_user_message(chat_dir):
     memory.add("c5", "assistant", "welcome")
     memory.add("c5", "user", "what about diwali leave?")
-    assert memory.list_conversations() == [{"id": "c5", "title": "what about diwali leave?"}]
+    assert [{k: c[k] for k in ("id", "title")} for c in memory.list_conversations()] == [{"id": "c5", "title": "what about diwali leave?"}]
+    assert memory.list_conversations()[0]["updated_at"]                   # the web chat groups its history by date

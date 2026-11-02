@@ -26,7 +26,7 @@ Before the build (sheet 'Summary' in the workbook): 17 built, 21 partial, 44 not
 | 1 | Slack connector, live | Built | app/channels/slack.py | Channels tab | tests/test_channels.py; verified live in the Sysfore workspace | Reading senders' email needs the Slack scopes users:read and users:read.email (owner action). |
 | 2 | Microsoft Teams connector live | Partial | app/channels/teams.py | POST /channels/teams/messages | tests/test_platforms.py | Needs a real Azure Bot, HTTPS address and sideloading (PLATFORM_RUNBOOK.md). |
 | 3 | Google Chat connector live | Partial | app/channels/gchat.py | POST /channels/gchat/events | tests/test_platforms.py | Needs a real Google Workspace app and HTTPS address (PLATFORM_RUNBOOK.md). |
-| 4 | Web UI connector | Built | streamlit_app.py, app/channels/web.py, app/chat_auth.py | POST /chat, /chat-auth/*; Channels tab (Web UI) | tests/test_streamlit_client.py, tests/test_api_security.py, tests/test_exposure.py |  |
+| 4 | Web UI connector | Built | webchat/chat.py, webchat/backend.py, app/channels/web.py, app/chat_auth.py | POST /chat, /chat-auth/*; Channels tab (Web UI) | tests/test_webchat.py, tests/test_api_security.py, tests/test_exposure.py |  |
 | 5 | One answering core for every channel | Built | app/channels/core.py (handle), app/chat_service.py | - | tests/test_hardening.py, tests/test_platforms.py |  |
 | 6 | Channel type, credentials (write-only), enabled, status fields | Built | app/channels/store.py, app/channels/base.py (Field SPEC), app/secretstore.py | GET/PUT/DELETE /admin/api/channels/{typ}; Channels tab | tests/test_store.py, tests/test_admin.py |  |
 | 7 | Display Name field | Not built | - | - | - | Gap: channels have no separate Display Name field (the channel type is the label). Small; not planned in any phase. |
@@ -127,7 +127,7 @@ Before the build (sheet 'Summary' in the workbook): 17 built, 21 partial, 44 not
 | 72 | Adapter pattern for channels, providers, embeddings, stores | Built | channels/base.py, providers/base.py, knowledge/embeddings.py, knowledge/stores.py | - | tests/test_store_contract.py, tests/test_providers.py, tests/test_channels.py |  |
 | 73 | Every config, prompt, document, export and deletion audited | Built | record() calls across the admin APIs | Audit log tab | tests/checks/scenario_admin.py (every configuration step), tests/checks/scenario_resilience_governance.py |  |
 | 74 | Admin panel on desktop and mobile browsers | Built | app/admin/ui/admin.css (responsive) | Admin page | checked by hand on desktop and phone widths | No automated browser test. |
-| 75 | FastAPI, Pydantic, Streamlit, slack-bolt, botbuilder-core, google-auth, Fernet, SQLAlchemy + SQLite, plain-JS admin page | Built | pyproject.toml (pinned) | - | whole suite |  |
+| 75 | FastAPI, Pydantic, Chainlit, slack-bolt, botbuilder-core, google-auth, Fernet, SQLAlchemy + SQLite, plain-JS admin page | Built | pyproject.toml (pinned) | - | whole suite |  |
 | 76 | Provider libraries (langchain-anthropic, langchain-google-genai) | Built | pyproject.toml (langchain-anthropic, langchain-google-genai, langchain-openai) | - | tests/test_providers.py |  |
 | 77 | LLM Guard and Presidio | Partial | app/guardrails.py (Presidio) | - | tests/checks/check_6a.py, tests/checks/scenario_editor_viewer.py | Presidio is used. LLM Guard was rejected (unmaintained, forces older cryptography); rules replace it, see DECISIONS.md. |
 | 78 | python-docx, python-pptx | Built | pyproject.toml, app/knowledge/parsers.py | - | tests/checks/check_3b.py (Word and PowerPoint) |  |
@@ -135,3 +135,33 @@ Before the build (sheet 'Summary' in the workbook): 17 built, 21 partial, 44 not
 | 80 | APScheduler | Built | app/jobs/scheduler.py (APScheduler) | - | tests/test_jobs.py |  |
 | 81 | Alerts: fallback used, provider key failing, channel failing, indexing failed, store unreachable | Built | app/alerts.py, app/alert_sinks.py, app/channels/health.py, app/knowledge/storehealth.py, app/llm.py | Alert banners; Settings (notifications); /admin/api/me/alerts | tests/checks/check_9b.py, tests/checks/scenario_resilience_governance.py, tests/test_providers.py | Fallback used, provider key failing, channel down, indexing failed, store unreachable; optional webhook and email. |
 | 82 | Usage & Cost, Guardrails, Knowledge Bases, Channels reports; filterable audit log | Built | app/admin/reports_api.py, usage_api.py, GET /audit/search | Reports tab, Usage and cost tab, Audit log tab | tests/checks/check_9c.py, tests/checks/scenario_admin.py |  |
+
+## Release 2 (plan v4.3): requirement to module, route, screen and test
+
+| # | Requirement | Status | Code | Route / screen | Test |
+|---|---|---|---|---|---|
+| R2.1 | Settings per channel, KB and department, with a registry of allowed scopes (D31) | Built | app/scoped_settings.py | /admin/api/scoped-settings; Settings → Scoped settings | tests/test_release2_trace_settings.py |
+| R2.2 | Answer trace, references only, deleted with the conversation (D23) | Built | app/trace.py, app/chat_service.py | /admin/api/traces; Conversations → Why this answer? | tests/test_release2_trace_settings.py, tests/test_release2_acceptance.py |
+| R2.3 | Passage text only for documents the viewer may see | Built | app/admin/traces_api.py, VectorStore.get | /admin/api/traces/{id} | tests/test_release2_trace_settings.py, tests/test_store_contract.py |
+| R2.4 | Answer in the question's language; detection with fallback (D19, D21) | Built | app/language.py, app/prompts.py (code-owned directive) | - | tests/test_release2_multilingual.py |
+| R2.5 | Accepted languages: polite reply, no search, no model (D39) | Built | app/chat_service.py, app/catalog.py | Settings → RAG settings / Scoped settings | tests/test_release2_multilingual.py |
+| R2.6 | Message catalogue, English byte-identical, approval for others (D29) | Built | app/catalog.py, app/admin/languages_api.py | /admin/api/catalog; Settings → Languages; GET /catalog/{lang} | tests/test_release2_multilingual.py |
+| R2.7 | Cross-language questions skip keywords (D35) | Built | app/retriever.py | - | tests/test_release2_multilingual.py |
+| R2.8 | Passage and document languages, back-filled without re-embedding | Built | app/knowledge/documents.py, metadata.py | - | tests/test_release2_multilingual.py |
+| R2.9 | Guardrail word lists per language; masking on its own switch (D36) | Built | app/guardrails.py | Settings → Guardrails → Other languages | tests/test_release2_multilingual.py, tests/checks/check_6a.py |
+| R2.10 | Citations show the document language | Built | app/channels/core.py, webchat/backend.py | all channels | tests/test_release2_multilingual.py |
+| R2.11 | Document summaries, display only (D46) | Built | app/knowledge/doc_summary.py, app/admin/languages_api.py | KB documents (summary, Regenerate, Summarise existing) | tests/test_release2_multilingual.py |
+| R2.12 | Recommended threshold per embedding model (D31) | Built | app/knowledge/embeddings.py, versions.estimate | KB configuration | tests/test_release2_multilingual.py |
+| R2.13 | Language report | Built | app/admin/languages_api.py | Settings → Languages | tests/test_release2_multilingual.py |
+| R2.14 | Glossaries with versions, KB beats department (D22) | Built | app/glossary.py, app/admin/glossary_api.py | /admin/api/glossaries; Input → Glossary | tests/test_release2_glossary.py |
+| R2.15 | Query-time expansion of the search text only | Built | app/retriever.py | - | tests/test_release2_glossary.py, tests/test_release2_acceptance.py |
+| R2.16 | Index-time expansion for stable terms, re-index flag | Built | app/glossary.py, VectorStore.add(embed_texts) | Input → Glossary | tests/test_release2_glossary.py |
+| R2.17 | Suggestions in the code-owned block or a second call, parsed off (D26) | Built | app/suggestions.py, app/prompts.py | Settings → RAG settings / Scoped settings | tests/test_release2_suggestions.py |
+| R2.18 | Three checks per suggestion, best 2 shown (D40) | Built | app/suggestions.py | - | tests/test_release2_suggestions.py, tests/test_release2_acceptance.py |
+| R2.19 | Every candidate stored masked with its outcome (D47) | Built | app/suggestions.py, app/memory.py, app/retention.py | Reports → Suggested questions | tests/test_release2_suggestions.py |
+| R2.20 | Signed payloads: asker only, once, expiry, key rotation (D37) | Built | app/suggestions.py, app/channels/core.py (handle_action) | POST /chat/action | tests/test_release2_suggestions.py |
+| R2.21 | Buttons in Web UI, Slack, Teams, Google Chat (D30) | Partial | webchat/chat.py, app/channels/slack.py, teams.py, gchat.py | all channels | tests/test_release2_suggestions.py, tests/test_release2_acceptance.py |
+| R2.22 | Adversarial permissions for glossary, suggestions and traces on every store | Partial | - | - | tests/test_release2_acceptance.py (Chroma and Azure stand-in; pgvector needs TEST_PGVECTOR_URL) |
+
+R2.21 is partial because no chat app has been clicked live. Slack needs Interactivity switched on, Teams needs the tenant,
+and Google Chat needs a Workspace. R2.22 is partial until pgvector is run.

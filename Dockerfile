@@ -16,9 +16,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY pyproject.toml .
 COPY app/ ./app/
 COPY channels.yaml .
-# The optional Streamlit web chat runs from the same image (a second container or Cloud Run service)
-COPY streamlit_app.py .
+# The optional web chat (Chainlit) runs from the same image (a second container or Cloud Run service)
+COPY webchat/ ./webchat/
 RUN pip install -e .
+
+# Language detection (fastText lid.176, about 1 MB, licence CC BY-SA 3.0), checked against its known hash. It lives outside
+# /app/models so a volume mounted there does not hide it.
+ENV LANGID_MODEL=/opt/langid/lid.176.ftz
+RUN mkdir -p /opt/langid \
+    && curl -fsSL -o /opt/langid/lid.176.ftz https://dl.fbaipublicfiles.com/fasttext/supervised-models/lid.176.ftz \
+    && echo "8f3472cfe8738a7b6099e8e999c3cbfae0dcd15696aac7d7738a8039db603e83  /opt/langid/lid.176.ftz" | sha256sum -c -
 
 # Persistent data lives in volumes: admin database, chat history, vector store, documents
 RUN mkdir -p /app/admin_data /app/chats /app/chroma_db /app/data/docs /app/data/kb_files /app/models \
@@ -28,6 +35,10 @@ USER agent
 
 # Bake the default embedding model (about 80 MB) into the image, so a fresh container never downloads it
 RUN python -c "from chromadb.utils.embedding_functions import DefaultEmbeddingFunction as F; F()(['warm up'])"
+
+# ...and the local multilingual model (multilingual-e5-small, about 129 MB, MIT licence) for knowledge bases that answer
+# questions in several languages. MODELS_DIR is /app/models on Cloud Run, which is not a volume, so it must be in the image.
+RUN python -c "from app.knowledge.embeddings import LocalMultilingualEmbeddings as M; M.download(); assert M.available()"
 
 EXPOSE 8000 8090
 

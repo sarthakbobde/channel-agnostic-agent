@@ -136,6 +136,14 @@ class Document(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)
     indexed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    language: Mapped[str] = mapped_column(String(16), default="")             # detected from its passages (Phase 2)
+    content_hash: Mapped[str] = mapped_column(String(64), default="")         # of the original file, for the summary
+    summary: Mapped[str] = mapped_column(Text, default="")                    # display only (D46)
+    summary_lang: Mapped[str] = mapped_column(String(16), default="")
+    summary_status: Mapped[str] = mapped_column(String(12), default="")       # "" | Pending | Ready | Failed
+    summary_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    summary_hash: Mapped[str] = mapped_column(String(64), default="")         # content_hash the summary was written from
+    glossary_indexed: Mapped[str] = mapped_column(String(120), default="")    # "<hash> <versions>" of index-time glossary terms
     pii_counts: Mapped[dict] = mapped_column(JSON, default=dict)           # {type: how many} masked at the last indexing
     pii_flagged: Mapped[bool] = mapped_column(Boolean, default=False)      # search found personal data indexing missed
     __table_args__ = (UniqueConstraint("kb_id", "name", name="uq_documents_kb_name"),)
@@ -251,6 +259,8 @@ class GuardrailSettings(Base):
     toxicity_words: Mapped[list] = mapped_column(JSON, default=list)
     toxicity_allow: Mapped[list] = mapped_column(JSON, default=list)
     leak_check_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    language_lists: Mapped[dict | None] = mapped_column(JSON, nullable=True)   # {lang: {injection, toxicity, banned_topics}}
+    unlisted_language: Mapped[str] = mapped_column(String(16), default="english")   # english | block
     pii_threshold: Mapped[int] = mapped_column(Integer, default=40)                 # detection confidence, percent
     keywords_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     sensitive_keywords: Mapped[list] = mapped_column(JSON, default=list)
@@ -302,6 +312,7 @@ class GuardrailEvent(Base):
     action: Mapped[str] = mapped_column(String(10))
     department: Mapped[str] = mapped_column(String(80), default="")
     count: Mapped[int] = mapped_column(Integer, default=1)
+    language: Mapped[str] = mapped_column(String(16), default="")
 
 
 class Conversation(Base):
@@ -331,6 +342,9 @@ class Message(Base):
     meta: Mapped[dict] = mapped_column(JSON, default=dict)
     complete: Mapped[bool] = mapped_column(Boolean, default=True)
     ts: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    author_user_id: Mapped[int | None] = mapped_column(Integer, nullable=True)   # who asked (user messages)
+    author_email: Mapped[str] = mapped_column(String(254), default="")
+    language: Mapped[str] = mapped_column(String(16), default="")       # resolved language of a question (D19)
 
 
 class SetPasswordToken(Base):
@@ -377,6 +391,23 @@ class GlobalSettings(Base):
     retrieval_strategy: Mapped[str] = mapped_column(String(16), default="similarity")   # similarity | keyword | hybrid | mmr
     hybrid_keyword_weight: Mapped[float] = mapped_column(Float, default=0.5)
     diversity: Mapped[float] = mapped_column(Float, default=0.3)
+    accepted_languages: Mapped[list | None] = mapped_column(JSON, nullable=True)   # empty = every language (D39)
+    document_languages: Mapped[list | None] = mapped_column(JSON, nullable=True)   # empty = detected from the documents
+    default_language: Mapped[str] = mapped_column(String(16), default="en")        # last fallback when detection is unsure
+    language_confidence: Mapped[float] = mapped_column(Float, default=0.5)
+    catalog_languages: Mapped[list | None] = mapped_column(JSON, nullable=True)    # languages with system texts besides English
+    summary_enabled: Mapped[bool] = mapped_column(Boolean, default=False)   # sends document text to the model: off until agreed
+    summary_max_input_tokens: Mapped[int] = mapped_column(Integer, default=6000)
+    glossary_mode: Mapped[str] = mapped_column(String(8), default="off")        # off | query | index (Phase 3)
+    glossary_max_terms: Mapped[int] = mapped_column(Integer, default=5)
+    glossary_max_aliases: Mapped[int] = mapped_column(Integer, default=3)
+    suggestions_enabled: Mapped[bool] = mapped_column(Boolean, default=False)      # Phase 4: off by default
+    suggestions_requested: Mapped[int] = mapped_column(Integer, default=3)
+    suggestions_shown: Mapped[int] = mapped_column(Integer, default=2)
+    suggestions_dedup_threshold: Mapped[float] = mapped_column(Float, default=0.9)
+    suggestions_mode: Mapped[str] = mapped_column(String(12), default="same_call")  # same_call | second_call
+    suggestions_max_searches: Mapped[int] = mapped_column(Integer, default=3)
+    suggestions_payload_days: Mapped[int] = mapped_column(Integer, default=14)
 
 
 class JobLock(Base):
@@ -438,12 +469,122 @@ class UsageRecord(Base):
     department: Mapped[str | None] = mapped_column(String(64), nullable=True)
     kb_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     kind: Mapped[str] = mapped_column(String(16), default="llm")       # llm | embedding (later)
-    purpose: Mapped[str] = mapped_column(String(16), default="answer") # router | answer | summarise
+    purpose: Mapped[str] = mapped_column(String(32), default="answer") # router | answer | summary | ...
+    message_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)  # the answer this call served
     input_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
     output_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
     cost: Mapped[float | None] = mapped_column(Float, nullable=True)   # null when the model has no price
     status: Mapped[str] = mapped_column(String(8), default="ok")       # ok | failed
     error: Mapped[str] = mapped_column(Text, default="")
+
+
+class ScopedSetting(Base):
+    """An override of one setting for a channel, knowledge base or department. See app/scoped_settings.py."""
+    __tablename__ = "scoped_settings"
+    __table_args__ = (UniqueConstraint("scope_type", "scope_id", "key", name="uq_scoped_settings"),)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    scope_type: Mapped[str] = mapped_column(String(16))                # channel | kb | department
+    scope_id: Mapped[str] = mapped_column(String(64))
+    key: Mapped[str] = mapped_column(String(64))
+    value: Mapped[object] = mapped_column(JSON)
+    updated_by: Mapped[str] = mapped_column(String(254), default="")
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)
+
+
+class AnswerTrace(Base):
+    """How one answer came about (one row per assistant Message). References only: no rendered prompt, no passage text. See app/trace.py."""
+    __tablename__ = "answer_traces"
+    answer_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=False)
+    question_id: Mapped[int] = mapped_column(Integer)
+    conversation_id: Mapped[str] = mapped_column(String(200), index=True)
+    complete: Mapped[bool] = mapped_column(Boolean)
+    found: Mapped[bool] = mapped_column(Boolean)
+    searched: Mapped[bool] = mapped_column(Boolean)
+    language: Mapped[str] = mapped_column(String(16), default="")      # filled from Phase 2
+    language_confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
+    standalone_query: Mapped[str] = mapped_column(Text, default="")
+    search_text: Mapped[str] = mapped_column(Text, default="")         # differs from the query once the glossary expands it
+    hits: Mapped[list] = mapped_column(JSON, default=list)             # [{kb_id, doc_id, chunk_id, score, rank, via, above_threshold, used}]
+    retrieval: Mapped[list] = mapped_column(JSON, default=list)        # per KB: index version and the settings in effect
+    prompt_versions: Mapped[dict] = mapped_column(JSON, default=dict)
+    provider: Mapped[str] = mapped_column(String(64), default="")      # what wrote the answer, after any fallback
+    model: Mapped[str] = mapped_column(String(200), default="")
+    fallback_used: Mapped[bool] = mapped_column(Boolean, default=False)
+    timings: Mapped[dict] = mapped_column(JSON, default=dict)          # milliseconds per stage
+    glossary: Mapped[dict] = mapped_column(JSON, default=dict)         # applied terms and version, filled from Phase 3
+    config_snapshot_id: Mapped[str] = mapped_column(String(32), default="")
+    language_detail: Mapped[dict | None] = mapped_column(JSON, nullable=True)   # detection, fallback, accepted list, retry
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class Glossary(Base):
+    """A knowledge base's or a department's glossary (D22). Its terms live in versions."""
+    __tablename__ = "glossaries"
+    __table_args__ = (UniqueConstraint("scope_type", "scope_id", name="uq_glossaries_scope"),)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    scope_type: Mapped[str] = mapped_column(String(16))                    # kb | department
+    scope_id: Mapped[int] = mapped_column(Integer)
+    created_by: Mapped[str] = mapped_column(String(254), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class GlossaryVersion(Base):
+    __tablename__ = "glossary_versions"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    glossary_id: Mapped[int] = mapped_column(Integer, index=True)
+    version: Mapped[int] = mapped_column(Integer)
+    status: Mapped[str] = mapped_column(String(12), default="Draft")      # Draft | Published | Archived
+    created_by: Mapped[str] = mapped_column(String(254), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    published_by: Mapped[str] = mapped_column(String(254), default="")
+    published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class GlossaryTerm(Base):
+    __tablename__ = "glossary_terms"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    version_id: Mapped[int] = mapped_column(Integer, index=True)
+    canonical: Mapped[str] = mapped_column(String(200))
+    aliases: Mapped[list] = mapped_column(JSON, default=list)
+    kind: Mapped[str] = mapped_column(String(12), default="synonym")      # acronym | synonym | preferred
+    language: Mapped[str] = mapped_column(String(16), default="")         # "" = any language
+    case_sensitive: Mapped[bool] = mapped_column(Boolean, default=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    stable: Mapped[bool] = mapped_column(Boolean, default=False)          # may be added to passages at index time
+
+
+class Suggestion(Base):
+    """A suggested follow-up question (D47): every candidate, masked, with its outcome. Deleted with its conversation."""
+    __tablename__ = "suggestions"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    answer_id: Mapped[int] = mapped_column(Integer, index=True)
+    conversation_id: Mapped[str] = mapped_column(String(200), index=True)
+    channel: Mapped[str] = mapped_column(String(16), default="other")
+    kb_id: Mapped[int | None] = mapped_column(Integer, nullable=True)        # the knowledge base that supports it
+    text: Mapped[str] = mapped_column(Text)
+    position: Mapped[int] = mapped_column(Integer)                          # order the model wrote them in, from 1
+    outcome: Mapped[str] = mapped_column(String(16))                        # Shown | Not selected | Duplicate | Not answerable | Failed checks
+    support: Mapped[float | None] = mapped_column(Float, nullable=True)
+    asker: Mapped[str] = mapped_column(String(32), default="")              # hash of who asked: only they may click
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    shown_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    clicked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    clicked_question_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+
+class MessageCatalogEntry(Base):
+    """A system text in one language (D29). Only Approved entries are used; English is seeded from the code."""
+    __tablename__ = "message_catalog"
+    __table_args__ = (UniqueConstraint("key", "lang", name="uq_message_catalog"),)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    key: Mapped[str] = mapped_column(String(48))
+    lang: Mapped[str] = mapped_column(String(16))
+    text: Mapped[str] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(12), default="Draft")      # Draft | Approved
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    source: Mapped[str] = mapped_column(String(16), default="person")     # person | ai-draft | built-in
+    updated_by: Mapped[str] = mapped_column(String(254), default="")
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)
 
 
 class Alert(Base):

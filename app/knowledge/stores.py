@@ -1,6 +1,6 @@
 """Vector stores behind one interface.
 
-Operations: add, search(filter), delete_by_document, delete, update_metadata, count, health, stats.
+Operations: add, search(filter), get(ids), delete_by_document, delete, update_metadata, count, health, stats.
 One filter format for every store: {"field": value} (equals) or {"field": {"in": [...]}}; several keys
 are ANDed. Each adapter translates it (Chroma `where` today; SQL WHERE / OData for later stores).
 """
@@ -26,11 +26,17 @@ class VectorStore(ABC):
     name: str
 
     @abstractmethod
-    def add(self, ids: list[str], texts: list[str], metadatas: list[dict]) -> None: ...
+    def add(self, ids: list[str], texts: list[str], metadatas: list[dict], embed_texts: list[str] | None = None) -> None:
+        """Store the passages. `embed_texts`, when given, is what is embedded instead (glossary terms added at index
+        time); the stored and displayed text is always `texts`."""
 
     @abstractmethod
     def search(self, query: str, k: int, flt: dict | None = None) -> list[dict]:
         """-> [{id, text, metadata, score}], best first; score = similarity (1 = identical)."""
+
+    @abstractmethod
+    def get(self, ids: list[str]) -> list[dict]:
+        """-> [{id, text, metadata}] for the ids that exist, in the order asked. The caller checks access."""
 
     @abstractmethod
     def delete_by_document(self, doc_id: str) -> None: ...
@@ -75,12 +81,15 @@ class ChromaStore(VectorStore):
         self._col, self._drop = get_collection, delete_collection
         self.embeddings = embeddings if embeddings is not None and not embeddings.builtin else None
 
-    def add(self, ids, texts, metadatas):
+    def add(self, ids, texts, metadatas, embed_texts=None):
         if not ids:
             return
         kw = {"ids": ids, "documents": texts, "metadatas": metadatas}
         if self.embeddings is not None:
-            kw["embeddings"] = self.embeddings.embed_documents(texts)
+            kw["embeddings"] = self.embeddings.embed_documents(embed_texts or texts)
+        elif embed_texts is not None:                  # the built-in model, run here so Chroma stores the original text
+            from app.knowledge import embeddings
+            kw["embeddings"] = embeddings.get(embeddings.DEFAULT).embed_documents(embed_texts)
         self._col().upsert(**kw)
 
     def search(self, query, k, flt=None):
@@ -101,6 +110,13 @@ class ChromaStore(VectorStore):
         ids = (res.get("ids") or [[None] * len(res["documents"][0])])[0]
         return [{"id": i, "text": d, "metadata": m or {}, "score": round(1 - dist, 3)}
                 for i, d, m, dist in zip(ids, res["documents"][0], res["metadatas"][0], res["distances"][0])]
+
+    def get(self, ids):
+        if not ids:
+            return []
+        got = self._col().get(ids=list(ids), include=["documents", "metadatas"])
+        found = {i: {"id": i, "text": d, "metadata": m or {}} for i, d, m in zip(got["ids"], got["documents"], got["metadatas"])}
+        return [found[i] for i in ids if i in found]
 
     def delete_by_document(self, doc_id):
         self._col().delete(where={"doc_id": doc_id})

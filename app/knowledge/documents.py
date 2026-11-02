@@ -36,8 +36,10 @@ def _now() -> datetime:
 def _view(d: Document) -> dict:
     return {"id": d.id, "kb_id": d.kb_id, "name": d.name, "size": d.size, "visibility": d.visibility, "status": d.status, "error": d.error,
             "chunks": d.chunks, "uploaded_by": d.uploaded_by, "created_at": d.created_at,
-            "updated_at": d.updated_at, "indexed_at": d.indexed_at, "doc_key": d.doc_key,
-            "pii_counts": d.pii_counts or {}, "pii_flagged": bool(d.pii_flagged)}
+            "updated_at": d.updated_at, "indexed_at": d.indexed_at, "doc_key": d.doc_key, "language": d.language or "",
+            "summary": d.summary or "", "summary_lang": d.summary_lang or "", "summary_status": d.summary_status or "",
+            "summary_updated_at": d.summary_updated_at, "content_hash": d.content_hash or "", "summary_hash": d.summary_hash or "",
+            "glossary_indexed": d.glossary_indexed or "", "pii_counts": d.pii_counts or {}, "pii_flagged": bool(d.pii_flagged)}
 
 
 def _not_rebuilding(db: Database, kb_id: int) -> None:
@@ -268,18 +270,33 @@ def _retryable(exc: BaseException) -> bool:
     return not isinstance(exc, (ValueError, TypeError, KeyError))     # bad input never gets better by retrying
 
 
-def _add_with_retry(store, ids, texts, metas) -> None:
+def _add_with_retry(store, ids, texts, metas, embed=None) -> None:
     @retry(stop=stop_after_attempt(RETRY_ATTEMPTS), wait=wait_exponential(multiplier=RETRY_WAIT[0], max=RETRY_WAIT[1]),
            retry=retry_if_exception(_retryable), reraise=True)
     def go():
-        store.add(ids, texts, metas)
+        if embed is None:
+            store.add(ids, texts, metas)
+        else:
+            store.add(ids, texts, metas, embed_texts=embed)
     go()
 
 
-def add_in_batches(store, ids, texts, metas, size: int = BATCH) -> None:
-    """Embed and store in batches, retrying a failed batch with backoff (rate limits, brief outages)."""
+def add_in_batches(store, ids, texts, metas, size: int = BATCH, kb: dict | None = None) -> str:
+    """Embed and store in batches, retrying a failed batch with backoff (rate limits, brief outages). With the knowledge base
+    given, passages are embedded with its stable glossary terms when its glossary mode is index (D22). Returns the glossary
+    signature used ("" = none)."""
+    embed, signature = None, ""
+    if kb is not None:
+        from app import glossary
+        try:
+            signature = glossary.index_signature(kb)
+            embed = glossary.index_texts(kb, texts, [m.get("lang", "") for m in metas]) if signature else None
+        except Exception:
+            log.warning("glossary unavailable while indexing; passages are embedded as written", exc_info=True)
+            embed, signature = None, ""
     for i in range(0, len(ids), size):
-        _add_with_retry(store, ids[i:i + size], texts[i:i + size], metas[i:i + size])
+        _add_with_retry(store, ids[i:i + size], texts[i:i + size], metas[i:i + size], embed[i:i + size] if embed else None)
+    return signature
 
 
 def masking_settings(db: Database | None = None):
@@ -303,8 +320,10 @@ def prepare(d: dict, kb: dict, chunker, department: str, access=((), ()), pii_ma
             report.update(_redacted(path, snap))
     if not chunks:
         raise ValueError("No readable text was found in this file (is it a scanned image?).")
+    from app import language, scoped_settings
+    langs, doc_lang = language.of_document([ch.text for ch in chunks], scoped_settings.for_kb(kb, "language_confidence"))
     ids, texts, metas = [], [], []
-    for n, ch in enumerate(chunks):
+    for n, (ch, (lang, conf)) in enumerate(zip(chunks, langs)):
         ids.append(f"{d['doc_key']}::{n}")
         text = ch.text
         if snap is not None:
@@ -313,7 +332,8 @@ def prepare(d: dict, kb: dict, chunker, department: str, access=((), ()), pii_ma
             text, _ = pii.tokenise(text, kb["id"], d["id"], hits, db)
         texts.append(text)
         metas.append(metadata.build(source=d["name"], doc_id=d["doc_key"], page=ch.page, chunk=n, kb_id=kb["id"], department=department,
-                                    heading_path=ch.heading_path, allowed_groups=access[0], allowed_people=access[1]))
+                                    heading_path=ch.heading_path, allowed_groups=access[0], allowed_people=access[1],
+                                    lang=lang, lang_confidence=conf, doc_lang=doc_lang))
     return ids, texts, metas
 
 
@@ -366,13 +386,16 @@ def index_document(db: Database, doc_id: int) -> None:
         n = len(ids)
         store = kbs.store_for(kb)
         store.delete_by_document(d["doc_key"])
-        add_in_batches(store, ids, texts, metas)
+        signature = add_in_batches(store, ids, texts, metas, kb=kb)
         access.sync_chunks(db, d)
         save_redacted(d, report)
+        from app.knowledge import doc_summary
         _set(db, doc_id, status="Indexed", error="", chunks=n, indexed_at=_now(), pii_counts=report.get("pii_counts", {}),
-             pii_flagged=False)
+             pii_flagged=False, language=metas[0].get("doc_lang", "") if metas else "",
+             content_hash=doc_summary.file_hash(files().get(file_key(d))), glossary_indexed=signature)
         _clear_failed(db, doc_id)
         log.info("indexed document %s (%s): %d chunks", doc_id, d["name"], n)
+        doc_summary.schedule(db, doc_id)          # in the background: indexing never waits for it
     except Exception as e:
         log.warning("indexing document %s failed: %s", doc_id, e, exc_info=not isinstance(e, ValueError))
         message = str(e) if isinstance(e, ValueError) else f"{type(e).__name__}: {str(e)[:300]}"
@@ -498,6 +521,75 @@ def import_existing(db: Database | None = None) -> int:
         names.add(name.lower())
         made += 1
     return made
+
+
+def set_glossary_indexed(db: Database, doc_id: int, signature: str) -> None:
+    _set(db, doc_id, glossary_indexed=signature)
+
+
+def glossary_stale(db: Database, kb: dict) -> int:
+    """How many indexed documents were embedded with other glossary terms than the knowledge base has now (re-index them)."""
+    from app import glossary
+    want = glossary.index_signature(kb, db).split(" ")[0]
+    with db.session() as s:
+        have = list(s.scalars(select(Document.glossary_indexed).where(Document.kb_id == kb["id"], Document.status == "Indexed")))
+    return sum(1 for h in have if (h or "").split(" ")[0] != want)
+
+
+def backfill_languages(db: Database, kb_id: int) -> int:
+    """Passages indexed before Phase 2 get their language through a metadata update (no re-embedding, text untouched), and
+    their documents get a language. Returns how many passages were updated."""
+    from app import language, scoped_settings
+    kb = kbs.get_kb(db, kb_id)
+    if kb is None:
+        return 0
+    store = kbs.store_for(kb)
+    threshold = scoped_settings.for_kb(kb, "language_confidence")
+    per_doc: dict[str, dict[str, int]] = {}
+    done = 0
+    for ids, metas in store.iter_metadata():
+        todo = [i for i, m in zip(ids, metas) if "lang" not in (m or {})]
+        for got in (store.get(todo[j:j + BATCH]) for j in range(0, len(todo), BATCH)):
+            new = []
+            for c in got:
+                code, conf = language.detect(c["text"])
+                new.append({**c["metadata"], "lang": code, "lang_confidence": round(conf, 3)})
+                if code and conf >= threshold:
+                    w = per_doc.setdefault(c["metadata"].get("doc_id", ""), {})
+                    w[code] = w.get(code, 0) + len(c["text"])
+            if new:
+                store.replace_metadata([c["id"] for c in got], new)
+                done += len(new)
+    langs = {key: max(w, key=w.get) for key, w in per_doc.items() if w}
+    with db.session() as s:
+        for row in s.scalars(select(Document).where(Document.kb_id == kb_id, Document.language == "")):
+            if row.doc_key in langs:
+                row.language = langs[row.doc_key]
+    for key, lang in langs.items():
+        store.update_metadata({"doc_lang": lang}, document=key)
+    return done
+
+
+def queue_language_backfill(db: Database | None = None) -> None:
+    """At start-up: knowledge bases with documents that have no language yet are back-filled on the indexing worker."""
+    db = db or get_db()
+    with db.session() as s:
+        kb_ids = sorted(set(s.scalars(select(Document.kb_id).where(Document.status == "Indexed", Document.language == ""))))
+    global _executor
+    with _lock:
+        if _executor is None:
+            _executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="indexer")
+        ex = _executor
+
+    def run(kb_id: int) -> None:
+        try:
+            n = backfill_languages(get_db(), kb_id)
+            if n:
+                log.info("detected the language of %d existing passages in knowledge base %s", n, kb_id)
+        except Exception:
+            log.warning("language back-fill of knowledge base %s failed; it is tried again at the next start", kb_id, exc_info=True)
+    for kb_id in kb_ids:
+        ex.submit(run, kb_id)
 
 
 def resume_unfinished(db: Database | None = None) -> int:

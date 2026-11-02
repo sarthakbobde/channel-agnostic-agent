@@ -17,6 +17,14 @@ WEB_URL=https://caa-uat-web-$N.$R.run.app
 
 echo "Deploying $IMAGE"
 
+# The web chat signs its sign-in cookie with this secret. Generated once, never printed.
+if ! gcloud secrets describe caa-chainlit-auth-secret --project=$P >/dev/null 2>&1; then
+  python -c "import secrets; print(secrets.token_urlsafe(48), end='')" |
+    gcloud secrets create caa-chainlit-auth-secret --project=$P --replication-policy=user-managed --locations=$R --data-file=-
+fi
+gcloud secrets add-iam-policy-binding caa-chainlit-auth-secret --project=$P \
+  --member=serviceAccount:caa-uat-web@$P.iam.gserviceaccount.com --role=roles/secretmanager.secretAccessor >/dev/null
+
 # API, Teams, Google Chat and the admin center (/admin). CPU stays on while an instance runs, because Teams replies
 # and document indexing finish after the request; it still scales to zero when idle. Max 1: caches live in memory.
 gcloud run deploy caa-uat-app --project=$P --region=$R --image=$IMAGE \
@@ -32,15 +40,16 @@ gcloud run deploy caa-uat-app --project=$P --region=$R --image=$IMAGE \
   --set-secrets=APP_SECRET_KEY=caa-app-secret-key:latest,CHAT_API_TOKEN=caa-chat-api-token:latest,DATABASE_URL=caa-database-url:latest \
   --set-env-vars=ADMIN_PORT=0,ADMIN_ALLOW_REMOTE=true,ADMIN_REQUIRE_HTTPS=true,ADMIN_PUBLIC_URL=$APP_URL,WEB_UI_URL=$WEB_URL,ADMIN_EMAIL_DOMAIN=sysfore.com,DOCS_DIR=/mnt/data/kb_files,CHAT_DIR=/mnt/data/chats,MODELS_DIR=/app/models,GUARDRAILS_ENABLED=true,MAX_UPLOAD_MB=25
 
-# Streamlit web chat. Nothing runs in the background, so request-based billing is fine. Session affinity keeps each
-# browser tab's live connection on the same instance.
+# Web chat (Chainlit). Nothing runs in the background, so request-based billing is fine. Session affinity keeps each
+# browser tab's live connection on the same instance; max 1 because it remembers sign-ins in memory.
 gcloud run deploy caa-uat-web --project=$P --region=$R --image=$IMAGE \
   --service-account=caa-uat-web@$P.iam.gserviceaccount.com \
   --port=8080 --cpu=1 --memory=512Mi \
   --min-instances=0 --max-instances=1 --timeout=3600 --session-affinity \
   --allow-unauthenticated --ingress=all \
-  --command=streamlit --args="run,streamlit_app.py,--server.port,8080,--server.address,0.0.0.0,--server.headless,true" \
-  --set-env-vars=RAG_BACKEND_URL=$APP_URL
+  --command=chainlit --args="run,webchat/chat.py,--host,0.0.0.0,--port,8080,--headless" \
+  --set-secrets=CHAINLIT_AUTH_SECRET=caa-chainlit-auth-secret:latest \
+  --set-env-vars=RAG_BACKEND_URL=$APP_URL,CHAINLIT_APP_ROOT=/app/webchat
 
 echo
 echo "App and admin center: $APP_URL/admin"

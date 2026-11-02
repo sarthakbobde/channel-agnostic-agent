@@ -523,7 +523,267 @@ PyTorch, transformers and LLM Guard are NOT installed yet (part 6b); their memor
   router, answer, summariser or preview model call, forged and missing CSRF tokens on every state-changing route, upload names
   and types and sizes, one-time links, and login not revealing which accounts exist. It found no vulnerability.
 
-## 20. Phase 12: file storage and personal data in documents
+## 20. Release 2, Phase 0: release and groundwork (2026-10-28)
+
+This follows `docs/development-plan-v4.1-release-2.md`, on branch `r2/phase-0-groundwork`. The decisions are D18 to D38 and the deviations are marked R2-0 in `DECISIONS.md`.
+
+- **Web chat on Chainlit.** It is built and tested, and released after review. Rating comments are no longer written to the service log, only whether a comment was given.
+- **Answer identity.**
+  - Every saved answer returns its `answer_id`, the assistant message id. It comes back from `chat_service`, `channels.core.handle()`, `POST /chat` (which also gains `found`), and the history API, which now gives every message its `id`.
+  - The web chat shows live and past answers under `msg-<id>`, so a rating can name the answer.
+  - Previews and replies that are not answers have no id.
+- **Who asked.** Questions record their author (`messages.author_user_id`, `author_email`). Several people can ask in one Slack or Teams thread.
+- **Sources carry ids.** Each source has `doc_id` (the Document), `kb_id`, `chunk_id` (the store's passage id) and `title`. How channels present sources is unchanged.
+- **The person's own question reaches the answer step (D34).**
+  - The answer model now gets the masked question as written. The router's standalone version is added only when it differs.
+  - The router is told to keep the user's language and never translate.
+- **Masking is its own step (D36).** The input checks (`guardrails.check_input`) are followed by masking (`guardrails.mask_input`). If masking breaks, the question is refused and nothing is stored. It still follows the master switch (deviation R2-0).
+- **Not found, whatever the wording (D33).**
+  - A code-owned reply rule asks for a marker. The code replaces the marker with the usual sentence and sets `found=false`.
+  - The old sentence is still recognised, since Admin-edited prompts keep it.
+  - Answers are now always collected whole before they are handed over, so the marker never reaches anyone.
+  - The answered/not-found report uses `found` when it is present.
+- **Threshold per knowledge base, before merging (D31).** Each KB's passages are filtered by its own threshold (`retriever.threshold_for`, still the global value) and then merged. Scores from different embedding models no longer meet a single bar after merging.
+- **Keyword words in every script (D35).** Combining marks stay inside words. Hindi was split into single letters before and now forms whole words. English results are unchanged.
+- **Usage linked to its answer.**
+  - Model and embedding calls made during a turn record `usage_records.message_id`.
+  - `purpose` is widened to 32 characters.
+- **Migration 0026.**
+- **Tests.**
+  - `tests/test_release2_groundwork.py` has 22 new tests.
+  - These existing tests were updated deliberately:
+    - baseline: the threshold now applies inside each KB's search, and results carry ids;
+    - check_5: the prompt parity check now expects the reply rule;
+    - retrieval strategies: they fake the new `visible_docs`;
+    - web chat: real ids, and no comment in the log.
+- **Results:**
+  - **SQLite:** 395 passed, 12 skipped.
+  - **PostgreSQL:** still to run. Docker Desktop was not running.
+  - **Flaky check:** `check_3b` failed once in one full run, then passed alone, in its group, and in the next full run. It looks like an existing timing wait.
+
+## 21. Release 2, Phase 1: trace and scoped settings (2026-11-02)
+
+This follows `docs/development-plan-v4_3-release-2 1.md`, on branch `r2/phase-1-trace-settings`, which is built on `r2/phase-0-groundwork`. Deviations are marked R2-1 in `DECISIONS.md`, whose Release 2 table now follows v4.3.
+
+- **Scoped settings (D31).**
+  - `app/scoped_settings.py` holds a typed registry and the resolver (channel, KB, department, global, cached for 2 seconds). Overrides live in `scoped_settings`; the Global Settings row is unchanged.
+  - The first keys are `score_threshold` (KB only), `top_k`, `retrieval_strategy`, `hybrid_keyword_weight` and `diversity` (KB and department). Validation and labels come from the Global Settings definitions.
+  - `app/retriever.py` now reads them for each KB it searches.
+  - **Scoped settings** is a new admin screen: inherited or overridden values per scope, with Save and Reset. Changes are audited with old and new values. Editors are limited to their own departments and those departments' KBs; channel scope is Admin only.
+  - Overrides are removed when their KB or department is deleted.
+- **Answer trace (D23).**
+  - `app/trace.py` collects references through the turn and writes one `answer_traces` row per answer that is not a preview: hits per KB, the settings and index version per KB, prompt version ids, the model that wrote the answer and whether a fallback was used, timing per stage and `config_snapshot_id`. Usage rows link by answer id.
+  - It stores no passage text and no rendered prompt. A failed write is logged by error type only and never touches the answer.
+  - Deleting a conversation, by hand or by retention, deletes its traces.
+- **`VectorStore.get(ids)`** on Chroma, pgvector and Azure AI Search, covered by the store contract test.
+- **Trace API and screen.** `app/admin/traces_api.py`, and a **Why this answer?** button on each answer in Conversations.
+  - Passage text is fetched when the trace is opened, checking the KB permission, the document's visibility and the chunk's own access. Anything else shows as restricted, with no title, ids or text.
+  - Every view is audited, without text. Answers given before this release have no trace.
+- **Editors** gain the Conversations screen, read-only and limited to their own departments (see R2-1).
+- **Migration 0027.** Its PostgreSQL SQL was rendered offline and read through.
+- **Tests.** `tests/test_release2_trace_settings.py` has 27 new tests, and the store contract gains `get`. These pinned lists were updated on purpose: the Editor route list, the Editor screens, and the migration head and tables.
+- **Results:**
+  - **SQLite:** 424 passed, 13 skipped, 2 deselected.
+  - **PostgreSQL and pgvector:** not run, because Docker Desktop is not running. So "no passage text from the trace API on pgvector" is not yet verified against a real pgvector server; only Chroma and the Azure stand-in were exercised. The Phase 0 run is still pending for the same reason.
+  - **Browser:** the admin page script passes a syntax check, and its API calls are tested, but the two screens have not been opened in a browser.
+- **Prerequisite still open:** the privacy sign-off for storing traces (plan, section 0).
+
+## 22. Release 2, Phase 2: multilingual answers and document summaries (2026-11-02)
+
+This follows `docs/development-plan-v4_3-release-2 1.md`, on branch `r2/phase-2-multilingual`, which is built on Phase 1. Deviations are marked R2-2 in `DECISIONS.md`, which also holds the spike numbers.
+
+- **Spikes.** These were run on stand-in samples, because the customer documents and question pairs have not arrived; re-run them on customer data before confirming. See "Phase 2 spike results" in `DECISIONS.md`.
+  - **Detector:** fastText lid.176 is chosen. It is right 91% of the time overall and 84% on short text, uses 15 MB and loads in 0.4 s. The confidence threshold is 0.5.
+  - **Embeddings:** multilingual e5-small reaches recall at 5 of 1.00 for Hindi questions and 0.85 for Marathi questions against an English policy; MiniLM reaches 0.20 and 0.15. The recommended threshold is 0.75 for e5 and 0.35 for MiniLM.
+- **Language (D19, D21).**
+  - `app/language.py` handles clean-up (NFKC, zero-width characters, whitespace; nothing is translated) and holds the detector adapter.
+  - When detection is unsure, the turn falls back to the conversation's last language, then the knowledge base's default.
+  - The question's language is stored on the question and carried through the turn.
+  - A code-owned directive tells the model to answer in the question's language. Passages are labelled with their title and language.
+  - The answer's language is checked; a wrong one is retried once with a stronger directive, then delivered and counted.
+- **Accepted languages (D39).**
+  - Set in RAG settings or per KB and department. Empty means every language.
+  - A language can be accepted only when all its system messages are approved.
+  - A question in any other language gets a polite reply naming the accepted languages. Nothing is searched, no model is called, nothing is stored and no trace is written.
+  - In a question to several KBs, a KB that does not accept the language is left out.
+- **Keyword search across languages (D35).** For a question in a language the KB's documents are not written in, hybrid and keyword search use meaning only. The trace records this.
+- **Ingestion.**
+  - Each passage gets `lang`, `lang_confidence` and `doc_lang`, and each document gets a language.
+  - Existing passages are back-filled at start-up by a metadata update, with no re-embedding and no change to the text.
+- **Message catalogue (D29).**
+  - `app/catalog.py` holds the system texts per language. The English texts are byte-identical to before, and the English blocked text is still the Blocked Reply Text.
+  - The texts behind it: not found, blocked, friendly error, chat-app error, slow down (both forms), access turned off, provider refused, the Google Chat timeout, the language reply, the "Sources" label, and the Web UI's error texts.
+  - Admins edit the texts on the new **Languages** screen, and can draft a language with the AI model. Drafts are used only once approved.
+- **Guardrails.**
+  - Masking now follows its own switch, not the master switch (D36, as recommended).
+  - Each language can have its own injection, toxicity and banned-topic word lists.
+  - For a language without lists, the Admin chooses: apply the English checks with a warning (the default), or block.
+- **Citations.** Every source carries `doc_language`. Slack, Teams, Google Chat and the Web UI tag a source whose language differs from the answer's (for example `[EN]`). `/chat`, `core.handle()` and the history return `language`; `/chat` also returns `rejected`.
+- **Trace.** The detected language, how it was chosen, the accepted lists, the document languages per KB and any retry are recorded, and are part of `config_snapshot_id`. The trace view shows them.
+- **Document summaries (D46).**
+  - `app/knowledge/doc_summary.py`, on its own worker. Indexing never waits for it, and a failure leaves the document Indexed with summary status Failed.
+  - The summary is in the document's language. A file whose content has not changed is never summarised again.
+  - In KB documents, the summary shows under the file name with **Show more**, the row menu has **Regenerate summary**, and search matches summaries.
+  - Admins get **Summarise existing documents**, which shows an estimate before anything is sent.
+  - A per-KB switch turns it off. A summary is never used in retrieval or in a prompt.
+- **Recommended threshold.** It is shown with the rebuild estimate, and once the new model is in use, KB configuration offers it as a one-click setting.
+- **Language report.** The Languages screen shows, per language: answers, questions refused, answers retried, answers still in the wrong language, questions checked only with the English lists, and whether the detector is ready. `/health` gains `language`.
+- **Packaging.** `fasttext-wheel==0.9.2` is pinned. The Dockerfile bakes the detector model into `/opt/langid`, checked against its SHA-256. The model's licence is CC BY-SA 3.0.
+- **Migration 0028.** Its PostgreSQL SQL (upgrade and downgrade) was rendered offline and read through.
+- **Tests.**
+  - `tests/test_release2_multilingual.py` has 37 tests (one of them runs for 7 routes), including the retrieval check against `tests/data/retrieval_check.csv` with the real e5 model; it is skipped where that model is not downloaded.
+  - A stand-in detector, based on the script of the text, is installed for every test.
+  - Pinned lists updated on purpose: the Global Settings fields and kinds, the health keys, the migration head and tables, the guardrail event columns, and the old "guardrails off means no masking" check (now D36).
+- **Results:**
+  - **SQLite:** 462 passed, 12 skipped, 2 deselected. An earlier full run failed check_8b with a non-zero exit at shutdown, because summary jobs were still queued as the process ended. Queued summaries are now cancelled at exit (Pending ones resume at the next start), and the full suite then passed.
+  - **PostgreSQL and pgvector:** not run, because Docker Desktop is not running. Phases 0 and 1 are still pending for the same reason.
+  - **Browser:** the admin page script passes a syntax check, and its API calls are tested, but the new and changed screens have not been opened in a browser. These are Languages, RAG settings, Scoped settings, Guardrails, KB documents, KB configuration and the trace.
+- **Not done, or still needed from people:**
+  - The customer sample, to re-run both spikes and set the real recall targets.
+  - The first languages and the accepted list.
+  - A native speaker to approve each language's messages and word lists.
+  - Agreement that whole document text may go to the preferred model for summaries.
+  - Name masking stays English-only.
+  - Romanised Hindi is not detected, so it falls back.
+
+## 23. Release 2, Phase 3: glossary of acronyms and synonyms (2026-11-02)
+
+This follows `docs/development-plan-v4_3-release-2 1.md`, on branch `r2/phase-3-glossary`, which is built on Phase 2. Deviations are marked R2-3 in `DECISIONS.md`.
+
+- **Data.** `glossaries`, `glossary_versions` and `glossary_terms` (migration 0029).
+  - One glossary per knowledge base or department. Versions are Draft, Published or Archived, like prompts.
+  - Each term has its canonical form, its aliases, a type (acronym, synonym or preferred), an optional language, exact case, on/off, and stable.
+  - `glossary_mode` (off, query or index; off by default) is a scoped setting for a KB or department. The caps (5 terms and 3 forms per question) are in Global Settings.
+  - A deleted KB or department takes its glossary with it.
+- **Resolver** (`app/glossary.py`).
+  - A KB's terms beat its department's. Matching is on whole words, multi-word terms included, with the keyword search's word rules.
+  - A term with a language applies only to questions in that language.
+  - Results are cached for 2 seconds, and publishing or rolling back clears the cache.
+- **Query time.** Each KB's search text is the standalone query plus the other forms of the matched terms, and it feeds both the meaning and the keyword search. The question in the prompt, the memory and the answer are unchanged, and the asker's allow-list applies as before. The terms applied, the versions and the texts searched go into the trace and the snapshot.
+- **Choosing the default.** One combined search string beat two searches merged by rank on both models: recall at 5 1.00 and MRR 0.97 against 0.88 with MiniLM, and 1.00/0.92 against 0.93/0.74 with e5. See `DECISIONS.md`.
+- **Index time.**
+  - Terms marked stable are added to a passage's embedded text, while the stored and displayed text stays the original (`VectorStore.add(..., embed_texts=)` on Chroma, pgvector and Azure).
+  - Each document records the glossary it was indexed with. The Glossary screen counts the documents to re-index after a change.
+- **Glossary screen** (Input → Glossary), for Admins and for Editors in their own departments:
+  - the versions, with Publish, Roll back and Export CSV;
+  - a draft term editor, with Add term, Save draft, Import CSV and Discard;
+  - a conflicts report, and publishing is refused while there are conflicts;
+  - a "Test a question" view that shows the expansion, with or without the draft, and searches nothing.
+  - The trace view lists the terms applied. Every change is audited, with counts and versions only.
+- **Tests.** `tests/test_release2_glossary.py` has 16 tests. These pinned lists were updated on purpose: the Editor route list (`/glossaries`), the Editor screens, the Global Settings fields, and the migration head and tables.
+- **Results:**
+  - **SQLite:** 478 passed, 12 skipped, 2 deselected.
+  - **PostgreSQL and pgvector:** not run, because Docker Desktop is not running. The pgvector and Azure `embed_texts` paths are covered only by reading the code; no test exercises them.
+  - **Browser:** the admin page script passes a syntax check, and its API calls are tested, but the Glossary screen has not been opened in a browser.
+- **Still needed from people:** a seed glossary per department, and a named owner who approves changes (plan, section 0).
+
+## 24. Release 2, Phase 4: suggested follow-up questions (2026-11-02)
+
+This follows `docs/development-plan-v4_3-release-2 1.md`, on branch `r2/phase-4-suggestions`, which is built on Phase 3. Deviations are marked R2-4 in `DECISIONS.md`.
+
+- **Settings.** Off by default.
+  - `suggestions_enabled` is scoped per channel, KB and department, and the channel and a KB must both be on. The Web UI counts as the channel `web`.
+  - Global Settings: how many candidates are written (3) and shown (2), how alike counts as a repeat (0.9), same call or second call, the most checking searches per answer (3), and how many days buttons work (14).
+- **Prompt and parser** (`app/suggestions.py`).
+  - When suggestions are on, a code-owned block asks for up to N follow-up questions between fixed markers, in the question's language.
+  - The parser splits the block off, so it never reaches the answer, the memory or the trace. A missing or broken block means the answer alone, and a counter goes up.
+  - Second-call mode asks for the block separately.
+- **Three checks (D40),** cheapest first:
+  - not a repeat, exactly (after normalization) or in meaning, of the asker's earlier questions, the suggestions already shown, or the other candidates;
+  - answerable by this asker, through a search under their allow-list above the KB threshold. This is the support score, cached per KBs, text and allow-list, with a ceiling on searches;
+  - passes the guardrails and carries no personal data.
+  - The best 2 by support are shown.
+- **Storage (D47).** Every candidate is stored, masked, with its outcome, support score, knowledge base, channel, and when it was shown and clicked (migration 0030). Each conversation's history returns the shown suggestions with their buttons until they expire, then as text. Suggestions are deleted with their conversation, by hand or by retention. A failed write never hides the suggestions.
+- **Signed buttons (D37).** HMAC with a key derived from the master key (rotation-safe), carrying a hash of who asked and an expiry. Only the asker can click, and a replay is ignored. `core.handle_action()` asks the suggestion as a normal question in the same conversation and links the click to the question it created.
+- **Channels.** Each has a `ChannelPresenter` and the `suggestion_chip` control:
+  - **Web UI:** Chainlit action buttons, and `POST /chat/action`. A reopened conversation shows the last answer's buttons again.
+  - **Slack:** Block Kit buttons, with an `app.action` handler in Socket Mode. This needs Interactivity switched on.
+  - **Teams:** an Adaptive Card with `Action.Submit`. `_on_turn` accepts a value without text.
+  - **Google Chat:** cardsV2 buttons in the synchronous reply, with clicks in both event formats on the same endpoint. A per-channel switch gives text only.
+- **Report.** Reports → Suggested questions: shown, clicked and click rate by channel and KB, the outcome of every candidate, and replies without a usable block. Admin only; Editors toggle their own KBs and departments in Scoped settings, while channels are Admin only.
+- **Tests.**
+  - `tests/test_release2_suggestions.py` has 20 tests. They cover parsing, the three checks, the restricted-document case, the ceiling, a failed write, toggles, second-call mode, history and expiry, clicks (replay, other person, forged, expired), key rotation, the Web API, deletion, each presenter, and the report and roles.
+  - Pinned lists updated on purpose: the Global Settings fields, and the migration head and tables.
+- **Results:**
+  - **SQLite:** 497 passed, 12 skipped and 1 failed in the full run. The failure was a test's stand-in for `chat_stream` that did not accept the new `asker` argument. After that test-only fix its file passes (14), so the expected total is 498 passed; the suite was not re-run in full.
+  - **PostgreSQL and pgvector:** not run, because Docker Desktop is not running.
+  - **Browser and chat apps:** nothing was tried live. The Web UI and admin screens were not opened, and Slack, Teams and Google Chat were checked only on the payloads they would receive.
+- **Spikes not run (R2-4):**
+  - The format spike on your preferred and fallback models needs live calls to your AI providers.
+  - The Google Chat card-click spike needs a Workspace.
+  - Teams needs the test tenant.
+  - The prompt block costs about 91 input and 30 output tokens per answer (measured offline).
+- **Still needed from people:**
+  - Slack: switch on Interactivity and reinstall.
+  - Teams: the Azure approval and the tenant.
+  - Google Chat: card clicks switched on for the app.
+  - The privacy sign-off for storing suggestions.
+
+## 25. Release 2 acceptance checklist (2026-11-02)
+
+On branch `r2/release-acceptance`, built on Phase 4.
+
+- **Combined scenarios** (`tests/test_release2_acceptance.py`).
+  - A Hindi question using an English acronym from the department glossary, across two KBs with different embedders (MiniLM and the multilingual e5), with suggestions on. It is answered in Hindi, the term is expanded in both KBs, both are searched, the restricted document stays out, and the suggestions are signed buttons.
+  - The other paths are covered by the phase tests: a French question refused by the accepted list, a Hindi upload with a Hindi summary, and a reopened conversation showing its stored suggestions.
+  - A suggestion click goes through each chat app's own handler: Slack's action handler, Teams' Action.Submit on the messages endpoint, and Google Chat's events endpoint in both formats, with signed tokens.
+- **Search budget and latency.**
+  - With all three features on, this server's own time per question is 1.2 s median and 1.4 s p95 (10 questions, instant stand-in models).
+  - The live format check adds about 0.4 s of model time with gpt-4.1, against a 1.1 s answer. Google Chat stays well under its 20-second target.
+  - The ceiling on searches per question: one per knowledge base asked (hybrid adds a keyword lookup on the same KB, and glossary expansion adds no search), plus up to `suggestions_max_searches` (3) to check suggestions.
+  - **Memory:** the app with every model loaded (MiniLM, e5-small, the personal-data detector and fastText) uses about 630 MB of Cloud Run's 2 GiB. e5 alone is about 370 MB and loads only when a KB uses it.
+- **Adversarial permissions.** Glossary expansion, suggestions and traces were checked against a document restricted to one person, on Chroma and the Azure AI Search stand-in. The asker never gets it, an Editor of another department gets 404, and the person allowed still gets it. pgvector is skipped without `TEST_PGVECTOR_URL`.
+  - Admins, and Editors of the owning department, can read every document of the KBs they manage in a trace. This is the access rule from Phase 4a, unchanged.
+- **Upgrade and data checks.**
+  - Load: 12 concurrent questions all answer, with one trace each.
+  - The upgrade from a database created before migrations runs through 0030 (`tests/test_migrations.py`).
+  - Key rotation, including the derived action key, is covered (`test_payloads_survive_key_rotation`), and so is retention (Phases 1 and 4).
+  - **PostgreSQL was not run:** Docker Desktop is off.
+- **Documentation:** `TRACEABILITY.md` (Release 2 rows R2.1 to R2.22), `PLATFORM_RUNBOOK.md` (suggestion buttons per platform), `RUNNING.md` (model files) and a new `CLAUDE.md` with the Part A rules. `ADMIN.md` and `USER_MANUAL.md` were updated in each phase.
+- **Results:** SQLite: 510 passed, 15 skipped, 2 deselected. The skips are the pgvector runs and Docker-only tests.
+
+### Prepared for the UAT push (2026-11-02, your decisions)
+
+- **Document summaries** are off by default. Turn them on in RAG settings → Document summaries, or per knowledge base in Scoped settings.
+- **Hindi system messages** are pre-written as drafts (`catalog.HINDI`). They were written by Claude and not yet checked by a native speaker. An Admin approves them with **Approve all drafts** on the Languages screen.
+- **The multilingual search model** (e5-small) is baked into the Docker image, because Cloud Run's disk does not keep a downloaded model.
+- **Starter glossaries:** `glossaries/hr.csv` (27 terms, including 7 Hindi) and `glossaries/it.csv` (7 terms). Both have no conflicts. Import them on the Glossary screen.
+- **No PostgreSQL run before the push.** By your decision, testing happens on GCP.
+
+### Still to do by people
+
+1. **Run the suite on PostgreSQL and pgvector** (`TEST_DB=postgres`, and `TEST_PGVECTOR_URL` for pgvector). This needs Docker Desktop started. It is pending for every Release 2 phase.
+2. **Privacy sign-off** for storing traces and suggestions, and for Editors reading their own departments' masked conversations (R2-1).
+3. **Customer data for the spikes:** 50 to 100 documents and the question pairs. Then re-run the detector and embedding comparisons, and set the real recall targets.
+4. **Languages:**
+   - Choose the first languages and the accepted list.
+   - A native speaker approves each language's messages and word lists.
+   - Agree that document text may be sent to the preferred model for summaries.
+5. **A seed glossary per department,** with a named owner.
+6. **Chat apps:**
+   - Slack: Interactivity on, then reinstall.
+   - Teams: the Azure approval and the tenant (resources recreated in sysfore.com).
+   - Google Chat: a Workspace check of card clicks, which records D30.
+7. **Open items:**
+   - The web chat's rating buttons, now that feedback is out of scope.
+   - Merging the branches to `main`.
+   - A UAT deploy.
+
+### Decisions still Proposed
+
+D18 to D23, D26, D29 to D31, D33, D35, D37, D39, D40, D46 and D47 are Proposed. D34 and D36 were confirmed on 2026-11-02. D20, D21 and D31 wait for customer data, and D30 waits for the Google Chat check.
+
+### Known limits
+
+- **Romanised Hindi** is not detected, so it falls back.
+- **Name masking** is English-only.
+- **Short Hindi and Marathi phrases** can be confused with each other.
+- **The fallback model** (DeepSeek) omits the suggestion block in some replies, so those answers show no suggestions.
+- **A rate-limited Web UI click** uses up the button.
+- **fastText is archived upstream.**
+- **No browser or live chat-app testing.** The admin screens, the Web UI and the chat apps were not tried in a browser or a real tenant.
+
+## 26. Phase 12 (built on main in parallel with Release 2): file storage and personal data in documents
 
 Plan: `docs/phase-12-plan.md`. Parts 12a, 12b, 12c, 12c+, 12d and 12g are built; 12f (Excel and images) is next.
 
@@ -615,6 +875,15 @@ Plan: `docs/phase-12-plan.md`. Parts 12a, 12b, 12c, 12c+, 12d and 12g are built;
   *Guardrails → PII protection → Mask stored conversations again* re-runs masking over a date range (with a reason,
   audited as `conversation.mask`).
 - Tests: 6 more in `tests/test_storage_pii.py`; the Admin-only rules in `tests/test_security_pass.py`.
+
+## 27. Release 2 re-checked on the real HR policies (2026-11-03)
+
+The results are in `DECISIONS.md` ("Re-check on the real Sysfore HR policies").
+- **Detection and search:** the multilingual model finds the right passage for 100% of English and Hindi questions; MiniLM finds it for 20% of Hindi ones. The 0.75 threshold is kept.
+- **Unsure languages:** an unsure detection of an unaccepted language now falls back instead of turning the question away (`language.REJECT_CONFIDENCE`, 0.8; a new test in `tests/test_release2_multilingual.py`).
+- **Glossary:** two terms that hurt search were removed from `glossaries/hr.csv`.
+- **Repeat check:** the suggestion repeat cut-off is now 0.95 on UAT.
+- **HR review still needed:** the 35 English and 35 Hindi questions are in `../eval/questions.csv`, outside the repository. HR should review them, especially the Hindi wording.
 
 ## How to run
 

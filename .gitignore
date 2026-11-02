@@ -31,3 +31,7 @@ models/
 
 # Teams app package (built per Azure Bot App ID)
 deploy/teams/*.zip
+
+# web chat: Chainlit writes these at start-up
+webchat/.files/
+webchat/.chainlit/translations/

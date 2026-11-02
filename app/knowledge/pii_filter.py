@@ -92,7 +92,8 @@ def clean(chunks: list[dict], db: Database | None = None) -> list[dict]:
                 hits = guardrails.detect(text, snap.masked_types, snap.mask_names, snap.allow_list, snap.keywords, snap.threshold)
                 done = text
                 if hits:
-                    kb_id, doc_id = c.get("kb_id"), documents.id_for_key(c.get("doc_id") or "")
+                    kb_id = c.get("kb_id")
+                    doc_id = c["doc_id"] if isinstance(c.get("doc_id"), int) else documents.id_for_key(c.get("doc_key") or c.get("doc_id") or "")
                     if kb_id is not None:
                         done, _ = pii.tokenise(text, kb_id, doc_id, hits, db)
                     else:                                  # no knowledge base to keep the values in: plain labels

@@ -57,7 +57,7 @@ def test_every_route_refuses_an_anonymous_request_that_arrives_through_a_tunnel(
 
 def test_the_health_check_reveals_only_a_status(tunnel):
     r = tunnel.get("/health", headers=TUNNEL)
-    assert r.status_code == 200 and set(r.json()) == {"status", "guardrails"}
+    assert r.status_code == 200 and set(r.json()) == {"status", "guardrails", "language"}
 
 
 def test_documentation_pages_are_local_only(tunnel):

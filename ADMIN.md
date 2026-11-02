@@ -60,6 +60,67 @@ On first start these are copied from the matching `.env` lines (`TOP_K`, `SCORE_
 `MEMORY_MAX_TURNS`, `CHUNK_SIZE`, `CHUNK_OVERLAP`); after that the database is the source of truth and
 the `.env` lines are ignored. More settings arrive with the features that use them.
 
+## Scoped settings and answer traces
+
+**Scoped settings** gives one knowledge base or department its own search settings. A knowledge base's value beats its
+department's, and a department's beats **RAG settings**. The match threshold can only be set per knowledge base, because scores
+from different embedding models are not comparable. **Reset** goes back to the inherited value. Changes apply within a few
+seconds and are audited. Editors can change their own departments and those departments' knowledge bases.
+
+In **Conversations**, **Why this answer?** opens an answer's trace: what was searched for, the passages found and whether they
+were used, the settings in force, the prompt versions, the model that wrote the answer and the time each stage took. A passage
+from a document you may not see shows as **Restricted**. Traces hold references only, are deleted with their conversation, and
+each view is audited. Answers given before this feature have no trace. Editors see their own departments' conversations here, read-only.
+
+## Languages and document summaries
+
+Answers are always written in the language of the question; nothing is translated. When a question is too short to tell,
+the conversation's last language is used, then the knowledge base's **Default language** (RAG settings or Scoped settings).
+**Languages questions may be asked in** limits the languages: a question in another one gets a polite reply and nothing is
+searched. A language can be added only when all its system messages are approved.
+
+**Settings → Languages** shows, for the last 30 days, the answers per language, refused questions and answers that came out in
+the wrong language. Its **Message catalogue** holds every system message per language. Add a language under RAG settings →
+Message languages, then write its messages or **Draft missing messages with AI** and approve each one (have a native speaker
+check them). A draft is never shown to anyone. The English blocked message stays on the Guardrails screen.
+
+**Guardrails → Other languages** holds injection phrases, toxic words and banned topics for each language other than English,
+and what happens to a language without lists: English checks with a warning (default), or block. Masking personal data follows
+its own switch: turning the guardrails off no longer turns masking off.
+
+For questions in several languages, switch the knowledge base to the local multilingual model in KB configuration and rebuild;
+once the new version is in use, the screen offers the model's recommended match threshold (0.75).
+
+**Document summaries:** each indexed document gets a 2 to 3 sentence summary in its own language, shown in KB documents
+(Show more, Regenerate summary in the row menu, and the search box matches it). Admins can **Summarise existing documents** after
+an estimate. Whole document text is sent to the preferred AI model. Summaries are display only and can be switched off per
+knowledge base (Scoped settings) or for all (RAG settings).
+
+## Glossary
+
+**Input → Glossary** fixes vocabulary mismatch: people ask about "PTO", and the policy says "paid time off". Choose a
+knowledge base or a department, **Start a draft**, add terms (the term, the other ways it is written, and its type), then
+**Save draft** and **Publish**. Acronyms and synonyms work both ways. A preferred term only turns its aliases into the
+preferred wording. Only the search changes: questions and answers keep their own wording, and nobody sees a document they
+could not see before.
+
+A knowledge base's terms win over its department's. **Test a question** shows the expansion without searching. Conflicts
+(the same alias on two terms, or an alias that is itself a term) must be resolved before publishing. **Roll back** restores
+an earlier version from the next question. Terms can be imported and exported as CSV.
+
+The glossary is **off** until **Glossary** is set in Scoped settings (per knowledge base or department) or RAG settings. In
+the "also add stable terms" mode, terms marked **Stable** are added to passages when they are indexed. The screen says how
+many documents to re-index after a change.
+
+## Suggested follow-up questions
+
+After an answer from the documents, up to two follow-up questions can be shown as buttons. Each is checked first: it must not repeat
+an earlier question, the person asking must be able to get it answered from documents they may see, and it must pass the
+guardrails. It is **off** until **Suggest follow-up questions** is on for the channel *and* the knowledge base (Scoped settings;
+Web UI is the channel "web"). Counts and the click rate are under **Reports → Suggested questions**. A button works only for the
+person who asked, once, for 14 days (RAG settings). Slack needs **Interactivity** switched on in the Slack app (Socket Mode, no URL).
+In Google Chat, switch **Suggestions as buttons** off on the channel to show them as text.
+
 ## LLM providers screen
 
 **LLM providers** (earlier called AI models, and before that Providers) controls which AI models answer questions.
@@ -134,7 +195,7 @@ never the message.
 | `ADMIN_EMAIL_DOMAIN` | Only this domain can be admins (empty = any) | `sysfore.com` |
 | `ADMIN_ALLOW_REMOTE` | Allow non-local admin access (see above) | `false` |
 | `CORS_ORIGINS` | Browser origins allowed to call the API | none |
-| `CHAT_API_TOKEN` | Service token for the chat API (required; the Streamlit page sends it) | none (API locked) |
+| `CHAT_API_TOKEN` | Service token for the chat API (required; for service callers) | none (API locked) |
 | `DATABASE_URL` | PostgreSQL URL instead of the SQLite file, e.g. `postgresql+psycopg://user:pass@host/db` | none |
 
 Without `APP_SECRET_KEY` the admin API answers 503 and the server runs channels from

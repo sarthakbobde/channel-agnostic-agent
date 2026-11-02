@@ -137,3 +137,28 @@ def open_document():
         gone = s.get(Document, doc_id)
         if gone is not None:
             s.delete(gone)
+
+
+class ScriptDetector:
+    """A deterministic stand-in for the language detector: the script of the text decides (Latin is English,
+    Devanagari is Hindi). Tests that need other answers install their own; the real model is not needed."""
+    name = "script"
+
+    def available(self):
+        return True
+
+    def detect(self, text):
+        import re
+        letters = re.sub(r"<[A-Z_]+>|\W|\d", "", text or "")
+        if len(letters) < 2:
+            return "", 0.0
+        deva = sum("\u0900" <= ch <= "\u097f" for ch in letters)
+        return ("hi", 0.95) if deva > len(letters) / 2 else ("en", 0.95)
+
+
+@pytest.fixture(autouse=True)
+def _script_language_detector():
+    from app import language
+    language.set_detector(ScriptDetector())
+    yield
+    language.set_detector(None)

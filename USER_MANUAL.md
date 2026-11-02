@@ -1,7 +1,7 @@
 # User manual: configuring the Channel Agnostic Agent
 
 Everything below is set on the **admin page** (`/admin`) unless it says `.env`. The side menu is grouped in the order you set things up:
-**Home**; **Settings** (Channels, LLM providers, KB configuration, RAG settings, Guardrails); **User management** (Users, Groups,
+**Home**; **Settings** (Channels, LLM providers, KB configuration, RAG settings, Scoped settings, Languages, Guardrails); **User management** (Users, Groups,
 Departments); **Input** (Prompts, KB documents); **Monitoring** (Reports, Audit log, Conversations, Usage and cost). The ☰ button
 collapses the menu to icons. Each screen's title has an (i) that explains it. Changes to providers, channels, prompts, guardrails and
 settings apply within seconds, with no restart. Secrets (keys, tokens, passwords) are stored encrypted and are **never shown again**:
@@ -378,6 +378,47 @@ Notes: the minimum match setting applies to all strategies (for keyword matches 
 
 ---
 
+### Scoped settings
+
+**Settings → Scoped settings** gives one knowledge base or department its own search settings. Choose it under **Applies to**, change a value and
+**Save**. **In use** shows the current value and where it comes from. **Reset** goes back to the inherited value. A knowledge base's value beats its
+department's, and a department's beats RAG settings.
+
+### Why an answer was given
+
+**Monitoring → Conversations**: open a conversation and choose **Why this answer?** under an answer to see what was searched for, the passages found,
+the settings and model used, and the time taken. Passages from documents you may not see show as **Restricted**.
+
+### Glossary
+
+**Input → Glossary**: pick a knowledge base or department, **Start a draft**, add each term with the other ways people write
+it (for example "paid time off": PTO, earned leave), **Save draft**, check it with **Test a question**, then **Publish**.
+Switch it on with **Glossary** in Scoped settings. **Roll back** undoes a publish. **Import CSV** and **Export CSV** move terms in
+and out (columns: canonical, aliases separated by |, kind, language, case_sensitive, enabled, stable).
+
+### Suggested follow-up questions
+
+When switched on (Scoped settings: **Suggest follow-up questions**, on for both the channel and the knowledge base), answers can
+end with up to two suggested questions. Click one to ask it; only the person who asked sees them work. Old suggestions turn into
+plain text after 14 days. **Reports → Suggested questions** shows how often they are shown and clicked.
+
+### Languages
+
+People can ask in any language (unless **Languages questions may be asked in** is set) and get the answer in that language.
+Citations keep the document's own title, and show its language, for example [EN], when it differs from the answer's.
+
+- **Settings → RAG settings → Languages:** the accepted languages, the default language, the languages of the documents, how
+  sure detection must be, and which languages get their own system messages.
+- **Settings → Languages:** answers and refusals per language, and the **Message catalogue**. Choose a language, then **Save**
+  your own text (this approves it), or **Draft missing messages with AI** and **Approve** each draft.
+- **Settings → Guardrails → Other languages:** word lists per language, and what to do with a language that has none.
+
+### Document summaries
+
+In **Input → KB documents**, each indexed file shows a short summary under its name ("Summarising…" while it is written).
+**Show more** opens it; **Regenerate summary** is in the row's ⋯ menu. Admins can **Summarise existing documents**: an
+estimate is shown first, and nothing is sent until you confirm.
+
 ## 10. Alerts and notifications
 
 Alerts always appear as banners at the top of the admin page: fallback model used, provider failing (for example no credit), a channel down,
@@ -402,7 +443,7 @@ Edited on the server, then restart. Never commit this file.
 | Name | Needed | Meaning |
 |---|---|---|
 | `APP_SECRET_KEY` | **yes** | Master key that encrypts every stored secret. Generate: `python -m app.secretstore generate`. Back it up elsewhere; lose it and every credential must be re-entered |
-| `CHAT_API_TOKEN` | **yes** | Token for the chat API and the Streamlit page. Generate: `python -c "import secrets; print(secrets.token_urlsafe(32))"` |
+| `CHAT_API_TOKEN` | **yes** | Token for service callers of the chat API. Generate: `python -c "import secrets; print(secrets.token_urlsafe(32))"` |
 | `NINEROUTER_BASE_URL`, `NINEROUTER_API_KEY`, `LLM_MODEL` | first start only | Seeds the first provider; afterwards use the LLM providers screen |
 | `SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN`, `TEAMS_*`, `GCHAT_*` | first start only | Seed the channels once; afterwards use the Channels screen |
 | `ADMIN_EMAIL_DOMAIN` | if not `sysfore.com` | Domain people's emails must be on |
@@ -410,7 +451,7 @@ Edited on the server, then restart. Never commit this file.
 | `CHROMA_PATH`, `DOCS_DIR`, `CHAT_DIR`, `MODELS_DIR` | optional | Where the vector files, uploaded documents and downloaded models live |
 | `ADMIN_PORT`, `ADMIN_HOST` | optional | Run the admin page on its own port (recommended before exposing the app) |
 | `ADMIN_ALLOW_REMOTE`, `ADMIN_REQUIRE_HTTPS` | optional | Let Editors reach the admin page from other machines, over HTTPS only (see `DEPLOYMENT.md`) |
-| `WEB_UI_URL` | optional | Where Viewers' one-time links point (the Streamlit address) |
+| `WEB_UI_URL` | optional | Where Viewers' one-time links point (the web chat address) |
 | `CORS_ORIGINS` | optional | Browser origins allowed to call the API; empty = none |
 | `MAX_UPLOAD_MB`, `GUARDRAILS_ENABLED`, `HOST_PORT` | optional | Upload limit, the guardrail master switch at start-up, Docker's published port |
 

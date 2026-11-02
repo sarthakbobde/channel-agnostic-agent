@@ -104,7 +104,7 @@ The admin page is on <http://127.0.0.1:8090/admin> in Docker (see section 4).
 
 Check it: <http://127.0.0.1:8000/health> should answer `{"status":"ok", ...}`.
 
-Web chat page (optional, a separate process): `streamlit run streamlit_app.py` then open <http://localhost:8501>.
+Web chat page (optional, a separate process): add `CHAINLIT_AUTH_SECRET` to `.env` (generate one with `chainlit create-secret`), then `cd webchat; chainlit run chat.py --port 8501` and open <http://localhost:8501>.
 
 ## 3. First use, on the admin page (<http://127.0.0.1:8000/admin>)
 
@@ -137,6 +137,13 @@ published on this machine only (see `DEPLOYMENT.md` before exposing anything).
    ```
 2. Restart (`.\start.ps1`, or `docker compose up -d --build`). New migrations apply on start.
 3. Check `/health`, sign in, and ask one question.
+
+## Model files (Release 2)
+
+- **Language detection:** `models/lid.176.ftz` (about 1 MB, CC BY-SA 3.0). The Docker image bakes it in at `/opt/langid`. Locally, run
+  `python -c "from app import language; language.download()"`, which checks its hash. Without it, every question is answered in
+  the default language, and `/health` says `language: missing`.
+- **Multilingual search:** the local e5-small model (about 129 MB) is downloaded from KB configuration when a knowledge base switches to it.
 
 ## 6. Run the tests
 

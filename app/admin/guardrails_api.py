@@ -28,8 +28,8 @@ def put_settings(body: Update, s: Session = Depends(admin_session), ctx: AdminCo
     except ValueError as e:
         raise HTTPException(422, str(e))
     changes = [f"{k}: {v} -> {asdict(after)[k]}" for k, v in asdict(before).items()
-               if asdict(after)[k] != v and k not in ("blocked_reply", "allow_list", "sensitive_keywords")]
-    for k in ("blocked_reply", "allow_list", "sensitive_keywords"):
+               if asdict(after)[k] != v and k not in ("blocked_reply", "allow_list", "sensitive_keywords", "language_lists")]
+    for k in ("blocked_reply", "allow_list", "sensitive_keywords", "language_lists"):
         if asdict(before)[k] != asdict(after)[k]:
             changes.append(f"{k} changed")
     ctx.store.record(s.email, "guardrails.update", "guardrails", "; ".join(changes) or "no changes")

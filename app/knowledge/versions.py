@@ -193,6 +193,7 @@ def estimate(db: Database, kb_id: int) -> dict:
     return {"documents": docs, "chunks": chunks, "tokens": tokens, "seconds": round(chunks / rate) if rate else None,
             "cost_usd": None if price is None else round(tokens / 1_000_000 * price, 6),
             "model": model_cls.title, "warning": model_cls.warning, "skipped_documents": problems, "target": d,
+            "recommended_threshold": model_cls.RECOMMENDED_THRESHOLD,
             "note": ("Embedding runs on this machine, so there is no charge." if price == 0 else
                      "Cost is not known for this embedding model." if price is None else "Cost uses the model's approximate list price; your plan may differ.")
                     + (" Time is measured from the last build." if last else " Time is a rough guess until a build has been measured.")}
@@ -273,8 +274,9 @@ def _build(db: Database, vid: int, actor: str) -> None:
             report: dict = {}
             ids, texts, metas = documents.prepare(d, kb, chunker, department, access.ids_for(db, d['id']),
                                                   pii_mask=v["pii_mask"], report=report, db=db)
-            documents.add_in_batches(store, ids, texts, metas)
+            signature = documents.add_in_batches(store, ids, texts, metas, kb=kb)
             documents.save_redacted(d, report)
+            documents.set_glossary_indexed(db, d["id"], signature)
             per_doc[d["id"]] = len(ids)
             pii_counts[d["id"]] = report.get("pii_counts", {})
             total_chunks += len(ids)

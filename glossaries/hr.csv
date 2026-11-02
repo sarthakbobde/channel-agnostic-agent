@@ -1,0 +1,26 @@
+canonical,aliases,kind,language,case_sensitive,enabled,stable
+earned leave,privilege leave|paid time off|PTO|annual leave,synonym,,false,true,false
+casual leave,CL,acronym,,true,true,false
+sick leave,medical leave,synonym,,false,true,false
+loss of pay,LOP|leave without pay|LWP,acronym,,false,true,false
+work from home,WFH|remote work|hybrid working,acronym,,false,true,false
+maternity leave,mat leave|pregnancy leave,synonym,,false,true,false
+paternity leave,pat leave,synonym,,false,true,false
+full and final settlement,F&F|FnF|final settlement,acronym,,false,true,false
+provident fund,PF|EPF,acronym,,false,true,false
+Employees' State Insurance,ESI|ESIC,acronym,,false,true,false
+head of department,HOD,acronym,,false,true,false
+reporting manager,line manager|supervisor|boss,preferred,,false,true,false
+performance appraisal,PMS|performance review|appraisal cycle,acronym,,false,true,false
+travel allowance,TA/DA|travel reimbursement|daily allowance,acronym,,false,true,false
+cost to company,CTC|salary package,acronym,,false,true,false
+dress code,attire|grooming,synonym,,false,true,false
+whistleblower,whistle blower|tip-off|anonymous complaint,synonym,,false,true,false
+notice period,resignation notice,synonym,,false,true,false
+छुट्टी,अवकाश|leave,synonym,hi,false,true,false
+वेतन,तनख्वाह|salary|pay,synonym,hi,false,true,false
+मातृत्व अवकाश,प्रसूति अवकाश|maternity,synonym,hi,false,true,false
+घर से काम,working from home,synonym,hi,false,true,false
+परिवीक्षा,प्रोबेशन|probation,synonym,hi,false,true,false
+यात्रा भत्ता,travel expenses,synonym,hi,false,true,false
+इस्तीफा,त्यागपत्र|resignation,synonym,hi,false,true,false

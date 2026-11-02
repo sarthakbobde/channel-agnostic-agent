@@ -19,7 +19,7 @@ from sqlalchemy.exc import IntegrityError
 
 from app import global_settings
 from app.config import settings
-from app.db import Conversation, Database, Message, get_db
+from app.db import AnswerTrace, Conversation, Database, Message, Suggestion, get_db
 
 log = logging.getLogger(__name__)
 INTERRUPTED = "[The answer was interrupted before it finished.]"
@@ -55,6 +55,8 @@ def _ensure(s, conv_id: str, who) -> Conversation:
 def _store(s, conv_id: str, who, role: str, content: str, meta: dict | None, complete: bool, ts=None) -> Message:
     conv = _ensure(s, conv_id, who)
     msg = Message(conversation_id=conv_id, role=role, content=content, meta=meta or {}, complete=complete, ts=ts or _now())
+    if role == "user":                                                    # who asked: a thread can have several askers
+        msg.author_user_id, msg.author_email = getattr(who, "user_id", None), getattr(who, "email", "") or ""
     s.add(msg)
     if role == "user" and not conv.title:
         conv.title = content.replace("\n", " ")[:50]
@@ -76,10 +78,11 @@ def _write(conv_id: str, who, db: Database | None, fn):
 
 
 # ---- saving a turn --------------------------------------------------------------------------------------
-def begin_turn(conv_id: str, question: str, who=None, db: Database | None = None) -> Turn:
-    """Store the question now, and an empty answer row marked incomplete."""
+def begin_turn(conv_id: str, question: str, who=None, db: Database | None = None, language: str = "") -> Turn:
+    """Store the question now (with its resolved language), and an empty answer row marked incomplete."""
     def go(s):
         q = _store(s, conv_id, who, "user", question, None, True)
+        q.language = language or ""
         a = _store(s, conv_id, who, "assistant", "", None, False)
         return Turn(conv_id, q.id, a.id)
     return _write(conv_id, who, db, go)
@@ -136,22 +139,37 @@ def get_context(conv_id: str, db: Database | None = None) -> tuple[str, list[tup
     return get_summary(conv_id, db), get(conv_id, db)
 
 
+def last_language(conv_id: str | None, db: Database | None = None) -> str:
+    """The language of the latest question in the conversation that has one (the D19 fallback)."""
+    if not conv_id:
+        return ""
+    with (db or get_db()).session() as s:
+        return s.scalar(select(Message.language).where(Message.conversation_id == conv_id, Message.role == "user",
+                                                        Message.language != "").order_by(Message.id.desc()).limit(1)) or ""
+
+
 def get_messages(conv_id: str, db: Database | None = None, who=None) -> list[dict]:
     """Full history for display. Vault tokens are shown as plain labels, or as the real values to `who` where they may
-    see them (the person reopening their own chat; never the Admin's conversation viewer)."""
+    see them (the person reopening their own chat; never the Admin's conversation viewer). Each answer carries the
+    suggestions it showed, as buttons until they expire."""
     from app.knowledge import pii_access
     db = db or get_db()
     with db.session() as s:
         rows = list(s.scalars(select(Message).where(Message.conversation_id == conv_id).order_by(Message.id)))
-        rows = [(m.role, m.content, dict(m.meta or {}), m.complete) for m in rows]
+        rows = [(m.id, m.role, m.content, dict(m.meta or {}), m.complete) for m in rows]
     out = []
-    for role, content, meta, complete in rows:
+    for mid, role, content, meta, complete in rows:
         ids = meta.get("kb_ids") or []
         show = lambda t: pii_access.for_viewer(t, ids, who, db, "conversation") if who is not None else pii_access.for_viewer(t, [], None, db)
         if meta.get("sources"):
             meta["sources"] = [{**src, "snippet": show(src.get("snippet", ""))} for src in meta["sources"]]
-        out.append({"role": role, "content": show(content) if (complete or content) else INTERRUPTED,
+        out.append({"id": mid, "role": role, "content": show(content) if (complete or content) else INTERRUPTED,
                     "meta": meta, **({} if complete else {"incomplete": True})})
+    from app import suggestions
+    shown = suggestions.for_history(conv_id, db)
+    for m in out:
+        if m["role"] == "assistant" and m["id"] in shown:
+            m["suggestions"] = shown[m["id"]]
     return out
 
 
@@ -161,11 +179,14 @@ def list_conversations(prefix: str = "", db: Database | None = None) -> list[dic
         q = select(Conversation).order_by(Conversation.updated_at.desc())
         if prefix:
             q = q.where(Conversation.id.like(prefix.replace("%", "").replace("_", "\\_") + "%", escape="\\"))
-        return [{"id": c.id, "title": c.title or "New chat"} for c in s.scalars(q)]
+        return [{"id": c.id, "title": c.title or "New chat", "updated_at": c.updated_at.isoformat() if c.updated_at else None}
+                for c in s.scalars(q)]
 
 
 def delete(conv_id: str, db: Database | None = None) -> bool:
     with (db or get_db()).session() as s:
+        s.execute(sql_delete(AnswerTrace).where(AnswerTrace.conversation_id == conv_id))
+        s.execute(sql_delete(Suggestion).where(Suggestion.conversation_id == conv_id))
         n = s.execute(sql_delete(Message).where(Message.conversation_id == conv_id)).rowcount
         c = s.get(Conversation, conv_id)
         if c is not None:

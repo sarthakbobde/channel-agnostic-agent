@@ -70,7 +70,7 @@ def test_chat_routes_need_the_service_token(client, method, url, body):
 
 def test_chat_routes_work_with_the_token(client, monkeypatch):
     monkeypatch.setattr(chat_service, "chat_stream",
-                        lambda m, c: (iter(["Hello ", "there"]), {"sources": [], "searched": False, "query": ""}))
+                        lambda m, c, **kw: (iter(["Hello ", "there"]), {"sources": [], "searched": False, "query": ""}))
     monkeypatch.setattr(memory, "list_conversations", lambda: [{"id": "c1", "title": "hi"}])
     monkeypatch.setattr(memory, "get_messages", lambda c, **k: [{"role": "user", "content": "hi", "meta": {}}])
     deleted = []

@@ -7,8 +7,11 @@ Output, on the finished answer: banned topics, personal-data redaction (an Admin
 details such as the HR mailbox), and a check that every [n] citation matches a returned source.
 Fail closed: if the layer itself errors, the user gets a friendly message, no model is called, and an Admin alert is raised.
 
-Models for prompt-injection and toxicity detection are the next part. Banned topics are matched by words (a phrase,
-with simple plurals), not by meaning.
+Masking follows its own switch, not the master switch (D36): turning the checks off never stores personal data unmasked.
+Questions in other languages (Phase 2): once the language is known, that language's word lists (injection phrases, toxic
+words, banned topics; Admin-edited and reviewed by a native speaker) are checked too. For a language without lists the
+Admin chooses: apply the English checks with a warning (the default) or block. Banned topics are matched by words (a
+phrase, with simple plurals), not by meaning.
 Events record which check fired, where and for which department, never the content.
 """
 import logging
@@ -65,6 +68,8 @@ class Snapshot:
     keywords_enabled: bool = True
     sensitive_keywords: tuple = ()
     pii_protection: bool = True
+    language_lists: tuple = ()          # ((lang, {"injection": [...], "toxicity": [...], "banned_topics": [...]}), ...)
+    unlisted_language: str = "english"  # english | block
 
     @property
     def keywords(self) -> tuple:
@@ -75,6 +80,11 @@ class Snapshot:
     def threshold(self) -> float:
         return self.pii_threshold / 100
 
+    def lists_for(self, lang: str) -> dict | None:
+        return dict(self.language_lists).get(lang)
+
+
+LIST_KINDS = ("injection", "toxicity", "banned_topics")
 
 SPEC = (
     {"name": "enabled", "label": "Guardrails on", "kind": "bool",
@@ -119,6 +129,11 @@ SPEC = (
      "help": "Replaces personal data found in an answer, except what is on the allow-list."},
     {"name": "allow_list", "label": "Never redact these (allow-list)", "kind": "list",
      "help": "Comma-separated exact values that may appear in answers, for example the HR mailbox hr@company.com."},
+    {"name": "unlisted_language", "label": "A language without its own word lists", "kind": "choice", "choices": ["english", "block"],
+     "choice_labels": {"english": "Apply the English checks and record a warning", "block": "Block the question"},
+     "help": "The injection, toxicity and banned-topic lists below are per language. For a language that has none, either apply the English checks only (they will miss most problems in that language) or refuse its questions."},
+    {"name": "language_lists", "label": "Word lists per language", "kind": "langlists",
+     "help": "Injection phrases, toxic words and banned topics for each language other than English, matched as words or phrases. Have a native speaker review them."},
 )
 _BY_NAME = {f["name"]: f for f in SPEC}
 _cache: dict = {}
@@ -135,13 +150,14 @@ def defaults() -> dict:
             "injection_enabled": True, "injection_sensitivity": "medium", "injection_phrases": [],
             "toxicity_enabled": True, "toxicity_sensitivity": "medium", "toxicity_words": [], "toxicity_allow": [],
             "leak_check_enabled": True, "pii_threshold": 40, "keywords_enabled": True, "sensitive_keywords": list(DEFAULT_KEYWORDS),
-            "pii_protection": True}
+            "pii_protection": True, "language_lists": {}, "unlisted_language": "english"}
 
 
 _COLUMNS = ("enabled", "max_input_tokens", "blocked_reply", "mask_enabled", "masked_types", "mask_names",
             "banned_topics_enabled", "output_checks_enabled", "output_redaction", "allow_list", "injection_enabled",
             "injection_sensitivity", "injection_phrases", "toxicity_enabled", "toxicity_sensitivity", "toxicity_words",
-            "toxicity_allow", "leak_check_enabled", "pii_threshold", "keywords_enabled", "sensitive_keywords", "pii_protection", "updated_at", "updated_by")
+            "toxicity_allow", "leak_check_enabled", "pii_threshold", "keywords_enabled", "sensitive_keywords", "pii_protection",
+            "language_lists", "unlisted_language", "updated_at", "updated_by")
 
 
 def _snapshot(row: dict) -> Snapshot:
@@ -151,7 +167,8 @@ def _snapshot(row: dict) -> Snapshot:
                     row["injection_enabled"], row["injection_sensitivity"], tuple(row["injection_phrases"] or ()),
                     row["toxicity_enabled"], row["toxicity_sensitivity"], tuple(row["toxicity_words"] or ()),
                     tuple(row["toxicity_allow"] or ()), row["leak_check_enabled"], row["pii_threshold"], row["keywords_enabled"],
-                    tuple(row["sensitive_keywords"] or ()), row["pii_protection"])
+                    tuple(row["sensitive_keywords"] or ()), row["pii_protection"],
+                    tuple(sorted((k, v) for k, v in (row["language_lists"] or {}).items())), row["unlisted_language"] or "english")
 
 
 def _row(db: Database) -> dict:
@@ -198,6 +215,8 @@ def view(db: Database | None = None) -> dict:
     custom = [t["name"] for t in pii.list_custom(db)]
     for f in SPEC:
         value = getattr(snap, f["name"])
+        if f["name"] == "language_lists":
+            value = dict(value)
         extra = {"choices": ALLOWED_TYPES + custom} if f["name"] == "masked_types" else {}
         fields.append({**f, **extra, "value": list(value) if isinstance(value, tuple) else value})
     return {"fields": fields, "updated_at": row["updated_at"], "updated_by": row["updated_by"]}
@@ -222,6 +241,8 @@ def validate(values: dict, db: Database | None = None) -> dict:
             if raw not in f["choices"]:
                 raise ValueError(f"{f['label']} must be one of: {', '.join(f['choices'])}.")
             clean[name] = raw
+        elif f["kind"] == "langlists":
+            clean[name] = _clean_lists(raw)
         elif f["kind"] == "text":
             if not isinstance(raw, str) or not raw.strip() or len(raw.strip()) > 500:
                 raise ValueError(f"{f['label']} must be between 1 and 500 characters.")
@@ -241,6 +262,31 @@ def validate(values: dict, db: Database | None = None) -> dict:
                     raise ValueError(f"{f['label']} can hold up to 100 values of up to 200 characters.")
             clean[name] = items
     return clean
+
+
+def _clean_lists(raw) -> dict:
+    from app import language
+    if not isinstance(raw, dict):
+        raise ValueError("Word lists per language must be given per language.")
+    out = {}
+    for lang, lists in raw.items():
+        lang = str(lang).strip().lower()
+        if not language.valid(lang) or lang == "en":
+            raise ValueError(f"Word lists: '{lang}' is not a language code other than en.")
+        if not isinstance(lists, dict) or set(lists) - set(LIST_KINDS):
+            raise ValueError("Word lists: each language has injection, toxicity and banned_topics lists.")
+        clean = {}
+        for kind in LIST_KINDS:
+            items = lists.get(kind) or []
+            if not isinstance(items, list) or not all(isinstance(x, str) for x in items):
+                raise ValueError("Word lists must be lists of words or phrases.")
+            items = list(dict.fromkeys(x.strip() for x in items if x.strip()))
+            if len(items) > 300 or any(len(x) > 200 for x in items):
+                raise ValueError("Each word list can hold up to 300 entries of up to 200 characters.")
+            clean[kind] = items
+        if any(clean.values()):
+            out[lang] = clean
+    return out
 
 
 def update(values: dict, actor: str, db: Database | None = None) -> tuple[Snapshot, Snapshot]:
@@ -311,7 +357,8 @@ def _get_analyzer():
 def warm_up() -> None:
     """Load the detection model once at start-up so the first question does not wait for it."""
     try:
-        if current().enabled:
+        s = current()
+        if s.enabled or s.mask_enabled:
             started = time.time()
             _get_analyzer().analyze(text="warm up test@example.com", language="en", entities=["EMAIL_ADDRESS"])
             log.info("personal-data detection ready in %.1f s", time.time() - started)
@@ -322,7 +369,8 @@ def warm_up() -> None:
 def status() -> str:
     """For the health endpoint: off | ready | loading | error."""
     try:
-        if not current().enabled:
+        s = current()
+        if not (s.enabled or s.mask_enabled):
             return "off"
     except Exception:
         return "error"
@@ -405,11 +453,11 @@ def topic_hit(text: str, topics: list[str]) -> str | None:
 
 
 # ---- events and alerts -----------------------------------------------------------------------------------------------
-def record(db: Database, check: str, direction: str, action: str, count: int = 1) -> None:
+def record(db: Database, check: str, direction: str, action: str, count: int = 1, language: str = "") -> None:
     try:
         with db.session() as s:
             s.add(GuardrailEvent(check=check, direction=direction, action=action, count=count,
-                                 department=(identity.current().department or "")[:80]))
+                                 department=(identity.current().department or "")[:80], language=(language or "")[:16]))
     except Exception:
         log.warning("could not record a guardrail event", exc_info=True)
 
@@ -430,10 +478,13 @@ def _fail(db: Database, exc: Exception, direction: str) -> None:
 class Decision:
     text: str                 # the question to use from here on (masked)
     blocked: bool = False
-    reply: str = ""           # what to send back when blocked or failed
+    reply: str = ""           # what to send back when blocked or failed (English)
+    key: str = "blocked"      # the message catalogue entry for that reply, so it can be sent in the asker's language
 
 
-def guard_input(message: str, db: Database | None = None, mask: bool = True) -> Decision:
+def check_input(message: str, db: Database | None = None) -> Decision:
+    """The blocking checks on a question (length, injection, toxicity, banned topics). The text is returned unchanged:
+    masking is the separate next step (`mask_input`), so later steps such as language detection only see its output."""
     db = db or get_db()
     try:
         s = current(db)
@@ -452,15 +503,69 @@ def guard_input(message: str, db: Database | None = None, mask: bool = True) -> 
         if s.banned_topics_enabled and topic_hit(message, banned_topics_for(db, who.department_id)):
             record(db, "banned_topic", "input", "blocked")
             return Decision("", True, s.blocked_reply)
-        if s.mask_enabled and mask:
-            masked, counts = mask_with(message, s)
-            if counts:
-                record(db, "personal_data", "input", "masked", sum(counts.values()))
-            return Decision(masked)
         return Decision(message)
     except Exception as e:
         _fail(db, e, "question")
-        return Decision("", True, FRIENDLY_ERROR)
+        return Decision("", True, FRIENDLY_ERROR, "friendly_error")
+
+
+def mask_input(message: str, db: Database | None = None, mask: bool = True) -> Decision:
+    """Personal-data masking of a question. Everything after this step (detection, storage, logs, models) sees only its
+    output. Fails closed: if masking breaks, the question is refused rather than passed on unmasked.
+    It follows its own switch, not the master switch (D36). `mask` False: every knowledge base asked has PII protection
+    off (12g)."""
+    db = db or get_db()
+    try:
+        s = current(db)
+        if not (s.mask_enabled and mask):
+            return Decision(message)
+        masked, counts = mask_with(message, s)
+        if counts:
+            record(db, "personal_data", "input", "masked", sum(counts.values()))
+        return Decision(masked)
+    except Exception as e:
+        _fail(db, e, "question")
+        return Decision("", True, FRIENDLY_ERROR, "friendly_error")
+
+
+def _phrase_hit(text: str, phrases) -> bool:
+    low = " ".join(text.lower().split())
+    return any(p and " ".join(p.lower().split()) in low for p in phrases)
+
+
+def check_language(message: str, lang: str, db: Database | None = None) -> Decision:
+    """The checks for the question's own language, once it is known (on masked text). English is covered by `check_input`."""
+    db = db or get_db()
+    try:
+        s = current(db)
+        if not s.enabled or not lang or lang == "en":
+            return Decision(message)
+        lists = s.lists_for(lang)
+        if lists is None:
+            if s.unlisted_language == "block":
+                record(db, "language_checks", "input", "blocked", language=lang)
+                return Decision("", True, s.blocked_reply)
+            record(db, "language_checks", "input", "english", language=lang)
+            return Decision(message)
+        if s.injection_enabled and _phrase_hit(message, lists.get("injection", ())):
+            record(db, "injection", "input", "blocked", language=lang)
+            return Decision("", True, s.blocked_reply)
+        if s.toxicity_enabled and _phrase_hit(message, lists.get("toxicity", ())):
+            record(db, "toxicity", "input", "blocked", language=lang)
+            return Decision("", True, s.blocked_reply)
+        if s.banned_topics_enabled and _phrase_hit(message, lists.get("banned_topics", ())):
+            record(db, "banned_topic", "input", "blocked", language=lang)
+            return Decision("", True, s.blocked_reply)
+        return Decision(message)
+    except Exception as e:
+        _fail(db, e, "question")
+        return Decision("", True, FRIENDLY_ERROR, "friendly_error")
+
+
+def guard_input(message: str, db: Database | None = None, mask: bool = True) -> Decision:
+    """Both input steps: the checks, then masking."""
+    gate = check_input(message, db)
+    return gate if gate.blocked else mask_input(gate.text, db, mask)
 
 
 def output_active(db: Database | None = None) -> bool:
@@ -489,22 +594,29 @@ def canary_line() -> str:
 _CITE = re.compile(r"\[(\d+)\]")
 
 
-def guard_output(answer: str, n_sources: int, searched: bool, db: Database | None = None, redact: bool = True) -> str:
+def guard_output(answer: str, n_sources: int, searched: bool, db: Database | None = None, lang: str = "", redact: bool = True) -> str:
+    """`lang` is the answer's language: its own word lists are checked too, and a blocked answer is replaced in that language.
+    `redact` False: every knowledge base asked has PII protection off (12g), so personal data is not redacted."""
+    from app import catalog
     db = db or get_db()
     try:
         s = current(db)
         if not (s.enabled and s.output_checks_enabled):
             return answer
         who = identity.current()
+        blocked = catalog.t("blocked", lang, db=db)
+        lists = s.lists_for(lang) or {}
         if s.leak_check_enabled and CANARY.lower() in answer.lower():
             record(db, "prompt_leak", "output", "blocked")
-            return s.blocked_reply
-        if s.toxicity_enabled and guardrail_rules.toxicity_hit(answer, s.toxicity_sensitivity, s.toxicity_words, s.toxicity_allow):
-            record(db, "toxicity", "output", "blocked")
-            return s.blocked_reply
-        if s.banned_topics_enabled and topic_hit(answer, banned_topics_for(db, who.department_id)):
-            record(db, "banned_topic", "output", "blocked")
-            return s.blocked_reply
+            return blocked
+        if s.toxicity_enabled and (guardrail_rules.toxicity_hit(answer, s.toxicity_sensitivity, s.toxicity_words, s.toxicity_allow)
+                                   or _phrase_hit(answer, lists.get("toxicity", ()))):
+            record(db, "toxicity", "output", "blocked", language=lang)
+            return blocked
+        if s.banned_topics_enabled and (topic_hit(answer, banned_topics_for(db, who.department_id))
+                                        or _phrase_hit(answer, lists.get("banned_topics", ()))):
+            record(db, "banned_topic", "output", "blocked", language=lang)
+            return blocked
         if s.output_redaction and redact and (s.masked_types or s.keywords):
             answer, counts = mask_with(answer, s, s.allow_list)
             if counts:
@@ -517,4 +629,7 @@ def guard_output(answer: str, n_sources: int, searched: bool, db: Database | Non
         return answer
     except Exception as e:
         _fail(db, e, "answer")
-        return FRIENDLY_ERROR
+        try:
+            return catalog.t("friendly_error", lang, db=db)
+        except Exception:
+            return FRIENDLY_ERROR
