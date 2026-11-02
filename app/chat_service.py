@@ -129,6 +129,14 @@ def chat_stream(message: str, conv_id: str | None, kb_ids=None, preview: bool = 
         if gate.blocked:
             return _refusal(catalog.t(gate.key, ctx.resolved, default), ctx.resolved)
         kept = _accepting(targets, ctx)
+        if targets and not kept and ctx.source == "detected" and ctx.confidence < language.REJECT_CONFIDENCE:
+            # not sure enough to turn the question away: fall back as D19 says, then check that language instead
+            ctx = language.resolve(message, last="" if preview else memory.last_language(conv_id), default=default, threshold=1.01)
+            rec.language = ctx
+            gate = guardrails.check_language(message, ctx.resolved)
+            if gate.blocked:
+                return _refusal(catalog.t(gate.key, ctx.resolved, default), ctx.resolved)
+            kept = _accepting(targets, ctx)
         if targets and not kept:                               # D39: polite reply, nothing searched, no model, no trace
             from app.db import get_db
             guardrails.record(get_db(), "language", "input", "rejected", language=ctx.resolved)

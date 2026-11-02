@@ -587,3 +587,17 @@ def test_the_recommended_threshold_is_offered_for_the_model_in_use(world):
     assert (k["recommended_threshold"], k["threshold"]) == (0.35, 0.0)
     e = world.admin.get(f"{P}/kbs/{world.kb_en['id']}/index/estimate", headers=world.ah).json()
     assert e["recommended_threshold"] == 0.35
+
+
+def test_an_unsure_detection_of_an_unaccepted_language_falls_back_instead_of_turning_the_question_away(world, monkeypatch):
+    """Found on the real policies: a Hindi question was detected as Marathi at 0.54. With English and Hindi accepted it must
+    not get the "not supported" reply; only a sure detection (>= 0.8) of an unaccepted language does."""
+    approve_all("hi")
+    global_settings.update({"accepted_languages": ["en", "hi"]}, "t", world.db)
+    scoped_settings.put("kb", world.kb_en["id"], {"default_language": "hi"}, "t", world.db)
+    language.set_detector(Fixed({"वापस": ("mr", 0.54), "परत": ("mr", 0.95)}, language.detector()))
+    models(monkeypatch, ["कंपनी पहले से सूचना देगी [1]।"])
+    r = ask(world, "अगर कंपनी ऑफिस वापस बुलाए तो क्या होगा?", conv="web-ml-mr1")
+    assert r.get("rejected") is None and r["language"] == "hi"
+    r = ask(world, "कंपनीने ऑफिसला परत बोलावले तर काय?", conv="web-ml-mr2")
+    assert r["rejected"] == "language"

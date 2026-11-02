@@ -78,8 +78,9 @@ def main() -> None:
         step(f"Hindi messages: {r['approved']} drafts approved")
     else:
         step("Hindi messages: already approved")
-    a.call("PUT", "/settings", {"values": {"catalog_languages": ["hi"], "accepted_languages": ["en", "hi"]}})
-    step("Message languages: hi; questions accepted in: en, hi")
+    a.call("PUT", "/settings", {"values": {"catalog_languages": ["hi"], "accepted_languages": ["en", "hi"],
+                                           "suggestions_dedup_threshold": 0.95}})
+    step("Message languages: hi; questions accepted in: en, hi; suggestion repeat cut-off 0.95 (measured on the policies)")
 
     # 2. The HR knowledge base on the multilingual model -------------------------------------------------------------
     kb = pick(a.call("GET", "/kbs")["kbs"], args.kb, "knowledge base kb")
@@ -109,10 +110,12 @@ def main() -> None:
     # by default, the department that owns the knowledge base: its glossary is the one that applies to it
     dept = pick(departments, args.department, "department") if args.department or not owner else owner[0]
     g = a.call("GET", f"/glossaries/department/{dept['id']}")
-    if g["published"] and g["published"]["terms"]:
-        step(f"Glossary of {dept['name']}: already published (v{g['published']['version']}, {len(g['published']['terms'])} terms)")
+    csv_text = (Path(__file__).resolve().parents[2] / "glossaries" / "hr.csv").read_text(encoding="utf-8")
+    wanted = {line.split(",", 1)[0].strip().lower() for line in csv_text.splitlines()[1:] if line.strip()}
+    have = {t["canonical"].strip().lower() for t in (g["published"] or {}).get("terms", [])}
+    if g["published"] and have == wanted:
+        step(f"Glossary of {dept['name']}: already published and up to date (v{g['published']['version']}, {len(have)} terms)")
     else:
-        csv_text = (Path(__file__).resolve().parents[2] / "glossaries" / "hr.csv").read_text(encoding="utf-8")
         g = a.call("POST", f"/glossaries/department/{dept['id']}/import", {"csv": csv_text})
         if g["draft"]["conflicts"]:
             sys.exit("The glossary has conflicts; open Input > Glossary to resolve them.")

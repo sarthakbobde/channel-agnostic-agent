@@ -34,14 +34,14 @@ From `docs/development-plan-v4_3-release-2 1.md` (section A5), which has the ful
 |---|---|---|---|---|
 | D18 | Release 2 scope | As in plan section A1 | n/a | Proposed |
 | D19 | Answer language | Always the question's language. Low-confidence detection falls back to the conversation's last language, then the KB default | Phase 2 | Proposed |
-| D20 | Embedding model | Per KB. Existing KBs stay on MiniLM until an Admin switches. **Recommended for multilingual KBs: the local multilingual e5-small** (spike below) | Phase 2 | Proposed; re-run on customer data |
-| D21 | Language detection and normalization | A local detector behind an adapter: **fastText lid.176**, confidence threshold **0.5** (spike below). Clean-up only, never translation | Phase 2 | Proposed; re-run on customer data |
+| D20 | Embedding model | Per KB. Existing KBs stay on MiniLM until an Admin switches. **Recommended for multilingual KBs: the local multilingual e5-small** (spike below) | Phase 2 | **Confirmed on the real policies 2026-11-03** |
+| D21 | Language detection and normalization | A local detector behind an adapter: **fastText lid.176**, confidence threshold **0.5** (spike below). Clean-up only, never translation | Phase 2 | **Confirmed on the real policies 2026-11-03** |
 | D22 | Glossary | Query-time expansion of the search text, as **one combined search string** (the Phase 3 comparison below). Index-time is optional per KB, for terms marked stable. Off by default | Phase 3 | Proposed |
 | D23 | Trace | `answer_id` is the assistant Message id. References only, not the rendered prompt or passage text. Passage text is fetched when viewed, only for viewers who may see the document. Retention follows the conversation | Phase 1 | Proposed |
 | D26 | Suggestions | Generated in the same call, 3 asked for and 2 shown, each through the D40 checks. Off by default | Phase 4 | Proposed |
 | D29 | Message catalogue | English is byte-identical to today. Other languages need Admin approval | Phase 2 | Proposed |
 | D30 | Google Chat buttons | In the synchronous reply (cardsV2), with clicks on the same endpoint in both event formats. A per-channel switch shows suggestions as text instead. **Not yet verified in a real Workspace** (spike pending) | Phase 4 | Proposed; spike pending |
-| D31 | Per-KB retrieval settings | Threshold, top-k and strategy can be overridden per KB (threshold: KB or global only). The threshold applies per KB before the merge. **Recommended thresholds: MiniLM 0.35, e5-small 0.75** | Groundwork (per KB); Phase 1 (settable); Phase 2 (calibration) | Proposed; re-run on customer data |
+| D31 | Per-KB retrieval settings | Threshold, top-k and strategy can be overridden per KB (threshold: KB or global only). The threshold applies per KB before the merge. **Recommended thresholds: MiniLM 0.35, e5-small 0.75** | Groundwork (per KB); Phase 1 (settable); Phase 2 (calibration) | **e5 threshold 0.75 confirmed on the real policies 2026-11-03** |
 | D33 | Not found | A code-owned marker that the code replaces with the not-found text. Answers carry `found` | Groundwork; Phase 2 (catalogue) | Proposed |
 | D34 | Language through the router | The router keeps the user's language. The answer step receives the original masked question, and the router's standalone meaning in brackets when it differs (a confirmed deviation from v4.3; see R2-0 below) | Groundwork | **Confirmed 2026-11-02** |
 | D35 | Keyword search and languages | Words keep their combining marks. Cross-language questions skip keyword search | Groundwork (words); Phase 2 (cross-language) | Proposed |
@@ -51,6 +51,25 @@ From `docs/development-plan-v4_3-release-2 1.md` (section A5), which has the ful
 | D40 | Suggestion validation | Not a duplicate, can be answered, passes checks; the best 2 are shown | Phase 4 | Proposed |
 | D46 | Document summary | A background job writes a short summary in the document's language. Display only. **Off by default** (your decision, 2026-11-02): it sends whole document text to the AI model. Switch it on in RAG settings, or per KB in Scoped settings | Phase 2 | Confirmed off by default |
 | D47 | Stored suggestions | Every candidate is stored, masked, with its outcome. Deleted with the conversation | Phase 4 | Proposed |
+
+### Re-check on the real Sysfore HR policies (2026-11-03)
+
+The documents are the 4 policies in UAT's HR Documents (WFH, PoSH, Clear Desk / Clear Screen, Best Practices: about 2,800
+words, 26 passages). The question set has 30 answerable questions in English and the same 30 in Hindi, plus 5 per language
+that the policies do not cover. The questions were drafted by Claude for HR to review. The files stay outside the
+repository (`../eval/`), and everything ran locally with no AI provider called.
+
+| Check | Result | Decision |
+|---|---|---|
+| Language detection (fastText) | English 35/35. Hindi 34/35: one short question was detected as Marathi at 0.54 | **D21 confirmed** (threshold 0.5). New rule: a question is turned away for its language only when detection is at least 0.8 sure; below that it falls back (D19), so this question is answered in Hindi |
+| Search, MiniLM | Right passage in the top 5: English 97%, **Hindi 20%** | - |
+| Search, multilingual e5-small | Right passage in the top 5: **English 100%, Hindi 100%** (MRR 0.78 both); right document first 93% | **D20 confirmed**: multilingual KBs use e5 |
+| Match threshold, e5 | Right passages score 0.78 to 0.89. Questions the policies do not cover score up to 0.83. At 0.75 all 60 right passages are kept; at 0.80, 7 are lost | **D31: keep 0.75.** Unanswerable questions rely on the model's not-found reply, as the spike found |
+| Glossary | The POSH and ICC terms hurt: the policy is about them, so expanding added only general words (one passage fell out of the top 5). Without those two, the glossary is neutral to slightly positive | Removed from `glossaries/hr.csv` (25 terms) |
+| Suggestion repeat check, e5 | Different questions about the same policy reach 0.94 similarity; at 0.9, 11 of 186 pairs counted as repeats, at 0.95 none | `suggestions_dedup_threshold` 0.95 for e5 KBs (set on UAT by the setup script) |
+
+Caveat: with only 4 documents, finding the right document is easy; the passage scores matter more. Re-run
+`../eval/run_eval.py` when more policies (leave, payroll) are added.
 
 ### Phase 4 format check on the configured models (2026-11-02)
 
@@ -219,7 +238,8 @@ Embedding models (recall at 5 = the answering section is among the top 5 passage
 | R2-0 | D36: masking follows the masking switch, not the guardrails master switch | Masking is its own step (`guardrails.mask_input`), but it still runs only when the guardrails master switch **and** masking are on, as before. | Running it with the master switch off would change what "guardrails off" means for every Admin, and would load the personal-data model in setups that switched it off. Confirm whether "off" should still mask. **Superseded in Phase 2:** masking now follows its own switch only, as v4.3 says (see D36). |
 | R2-0 | Answers stream token by token when output checks are off | Every answer is now collected whole before it is handed over. | The not-found marker must never reach a person. Every caller (API, chat apps, preview) already joined the answer, so nothing visible changes. |
 | R2-0 | The editable base prompt says to reply "I couldn't find this…" | It is left unchanged. A code-owned reply rule after it asks for the marker, and both are recognised. | Admins may have published their own base prompt, and the code must not rewrite it. |
-| R2-0 | Sources gain `doc_language` | Not yet. `doc_id`, `kb_id`, `chunk_id` and `title` are added now. | Document languages are only known after Phase 3. |
+| R2-0 | Sources gain `doc_language` | Not yet. `doc_id`, `kb_id`, `chunk_id` and `title` are added now. | Document languages are only known after Phase 3. |
+
 | R2-0 | v4.3 D34: the answer step receives the original masked question; the standalone query is only for search | The original question is sent, and the router's standalone meaning is added in brackets when it differs | Built under v4.1, which asked for this. Without it, a follow-up such as "what about contractors?" reaches the answer step with no history. **Confirmed 2026-11-02:** kept. The answer step sees no conversation history, so a follow-up needs the router's reading; the trace records it |
 | R2-1 | Editors open a trace "from Conversations", but that screen and its API were Admin only | Editors get a read-only view through the new `/admin/api/traces` routes, limited to their own departments. The Admin `/conversations` routes (delete, export, retention) stay Admin only. Stored source snippets are left out of the Editor's view | The default-deny role map stays meaningful. Snippets are passage text from documents the Editor may not be allowed to see. **An Editor can now read the masked questions and answers of their own departments, which they could not before. This belongs in the privacy sign-off** |
 | R2-1 | Precedence is channel, KB, department, global | Built and tested, but none of the five first keys allows the channel scope, so the screen offers no channels yet | D31 names KB and global for the threshold, and top-k and strategy per KB. The first channel-scoped keys are the suggestion switches in Phase 4 |

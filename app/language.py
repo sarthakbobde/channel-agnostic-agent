@@ -28,6 +28,9 @@ NAMES = {
     "pl": ("Polish", "Polski"), "sw": ("Swahili", "Kiswahili"),
 }
 CODE = re.compile(r"^[a-z]{2,3}$")
+# A question is turned away for its language (D39) only when detection is at least this sure. Below it, an unaccepted
+# language is treated as unsure and falls back (D19): Hindi and Marathi share a script and short questions get mixed up.
+REJECT_CONFIDENCE = 0.8
 MODEL_FILE = "lid.176.ftz"
 MODEL_SHA256 = "8f3472cfe8738a7b6099e8e999c3cbfae0dcd15696aac7d7738a8039db603e83"
 MODEL_URL = "https://dl.fbaipublicfiles.com/fasttext/supervised-models/lid.176.ftz"

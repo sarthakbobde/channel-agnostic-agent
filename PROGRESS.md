@@ -876,6 +876,15 @@ Plan: `docs/phase-12-plan.md`. Parts 12a, 12b, 12c, 12c+, 12d and 12g are built;
   audited as `conversation.mask`).
 - Tests: 6 more in `tests/test_storage_pii.py`; the Admin-only rules in `tests/test_security_pass.py`.
 
+## 27. Release 2 re-checked on the real HR policies (2026-11-03)
+
+The results are in `DECISIONS.md` ("Re-check on the real Sysfore HR policies").
+- **Detection and search:** the multilingual model finds the right passage for 100% of English and Hindi questions; MiniLM finds it for 20% of Hindi ones. The 0.75 threshold is kept.
+- **Unsure languages:** an unsure detection of an unaccepted language now falls back instead of turning the question away (`language.REJECT_CONFIDENCE`, 0.8; a new test in `tests/test_release2_multilingual.py`).
+- **Glossary:** two terms that hurt search were removed from `glossaries/hr.csv`.
+- **Repeat check:** the suggestion repeat cut-off is now 0.95 on UAT.
+- **HR review still needed:** the 35 English and 35 Hindi questions are in `../eval/questions.csv`, outside the repository. HR should review them, especially the Hindi wording.
+
 ## How to run
 
 ```powershell
