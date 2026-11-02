@@ -147,6 +147,17 @@ class PgVectorStore(VectorStore):
             rows = conn.execute(stmt, [qv, *params, qv, int(k)]).fetchall()
         return [{"id": r[0], "text": r[1], "metadata": r[2] or {}, "score": round(float(r[3]), 3)} for r in rows]
 
+    def get(self, ids):
+        from psycopg import sql
+        if not ids:
+            return []
+        with self._connect() as conn:
+            if not self._exists(conn):
+                return []
+            rows = conn.execute(sql.SQL("SELECT id, content, metadata FROM {} WHERE id = ANY(%s)").format(self._t()), (list(ids),)).fetchall()
+        found = {r[0]: {"id": r[0], "text": r[1], "metadata": r[2] or {}} for r in rows}
+        return [found[i] for i in ids if i in found]
+
     def _run(self, template: str, params, create=False):
         from psycopg import sql
         with self._connect() as conn:
@@ -362,6 +373,16 @@ class AzureSearchStore(VectorStore):
             return []
         return [{"id": r["id"], "text": r["content"], "metadata": json.loads(r.get("metadata") or "{}"),
                  "score": round(2 * float(r["@search.score"]) - 1, 3)} for r in (res or {}).get("value", [])]      # cosine: score = (1 + similarity) / 2
+
+    def get(self, ids):
+        if not ids:
+            return []
+        body = {"search": "*", "select": "id,content,metadata", "top": len(ids),
+                "filter": "search.in(id, '" + "|".join(i.replace("'", "''") for i in ids) + "', '|')"}
+        status, res = self._call("POST", f"/indexes/{self.index}/docs/search", body)
+        rows = (res or {}).get("value", []) if status != 404 else []
+        found = {r["id"]: {"id": r["id"], "text": r["content"], "metadata": json.loads(r.get("metadata") or "{}")} for r in rows}
+        return [found[i] for i in ids if i in found]
 
     def _docs(self, flt=None, ids=None):
         out, skip = [], 0

@@ -3,7 +3,7 @@ import logging
 import re
 from typing import Iterator
 from langchain_core.messages import HumanMessage, SystemMessage
-from app import guardrails, identity, memory, rag, summaries, usage
+from app import guardrails, identity, memory, rag, summaries, trace, usage
 from app.llm import get_chat_model
 
 log = logging.getLogger(__name__)
@@ -59,9 +59,11 @@ def chat_stream(message: str, conv_id: str | None, kb_ids=None, preview: bool = 
     The question is saved before any model runs; the answer is saved as soon as it is complete (or kept, marked
     incomplete, if it never finishes). A blocked question is not stored.
     meta = {searched, query, sources, found, answer_id}; answer_id is None for a preview."""
-    gate = guardrails.check_input(message)
-    if not gate.blocked:
-        gate = guardrails.mask_input(gate.text)                # personal data is masked from here on: model, history, logs
+    rec = trace.Recorder()
+    with rec.stage("input_checks"):
+        gate = guardrails.check_input(message)
+        if not gate.blocked:
+            gate = guardrails.mask_input(gate.text)            # personal data is masked from here on: model, history, logs
     if gate.blocked:                                           # no model is called, and nothing is stored
         return iter([gate.reply]), {"searched": False, "query": "", "sources": [], "blocked": True, "found": False,
                                     "answer_id": None}
@@ -71,10 +73,13 @@ def chat_stream(message: str, conv_id: str | None, kb_ids=None, preview: bool = 
     answer_id = turn.answer_id if turn else None
     purpose = {"purpose": "preview-answer"} if preview else {}
     try:
-        with usage.for_answer(answer_id):
-            decision = _decide(message, history, "preview-router" if preview else "router", **({"summary": summary} if summary else {}))
+        with usage.for_answer(answer_id), trace.recording(rec):
+            with rec.stage("routing"):
+                decision = _decide(message, history, "preview-router" if preview else "router", **({"summary": summary} if summary else {}))
+            rec.standalone_query = rec.search_text = decision["query"]
             if decision["search"]:
-                chunks = rag.search(decision["query"], kb_ids) if kb_ids else rag.search(decision["query"])
+                with rec.stage("retrieval"):
+                    chunks = rag.search(decision["query"], kb_ids) if kb_ids else rag.search(decision["query"])
                 sources = rag.format_sources(chunks)
                 tokens = rag.stream_grounded(message, chunks, **purpose, standalone=decision["query"])
             else:
@@ -83,6 +88,7 @@ def chat_stream(message: str, conv_id: str | None, kb_ids=None, preview: bool = 
     except Exception:
         if turn:
             memory.fail_turn(turn)
+            trace.save(rec, turn, complete=False, found=False, searched=False)
         raise
 
     meta = {"searched": decision["search"], "query": decision["query"], "sources": sources}
@@ -99,7 +105,7 @@ def chat_stream(message: str, conv_id: str | None, kb_ids=None, preview: bool = 
         # output checks need the complete text. Every caller joins the answer anyway.
         collected: list[str] = []
         try:
-            with usage.for_answer(answer_id):
+            with usage.for_answer(answer_id), trace.recording(rec), rec.stage("generation"):
                 for tok in tokens:
                     collected.append(tok)
             final = "".join(collected)
@@ -107,15 +113,18 @@ def chat_stream(message: str, conv_id: str | None, kb_ids=None, preview: bool = 
             if not found:
                 final = rag.FALLBACK
             if checked:
-                final = guardrails.guard_output(final, len(sources), decision["search"])
+                with rec.stage("output_checks"):
+                    final = guardrails.guard_output(final, len(sources), decision["search"])
             trim_sources(final, sources)
             meta["found"] = found
             if turn:
                 memory.finish_turn(turn, final, {k: v for k, v in meta.items() if k != "answer_id"})   # saved before it is handed over
+                trace.save(rec, turn, complete=True, found=found, searched=decision["search"])
                 summaries.schedule(conv_id, identity.current().department)
         except BaseException:
             if turn:                       # the model failed or the caller went away: keep what arrived, marked incomplete
                 memory.fail_turn(turn, "" if checked else "".join(collected))   # unchecked text only when checks are off
+                trace.save(rec, turn, complete=False, found=False, searched=decision["search"])
             raise
         yield final
 

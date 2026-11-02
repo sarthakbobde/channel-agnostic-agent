@@ -19,7 +19,7 @@ from datetime import datetime, timezone
 
 from sqlalchemy import func, select
 
-from app import global_settings
+from app import global_settings, trace
 from app.db import Database, Department, Prompt, get_db
 
 log = logging.getLogger(__name__)
@@ -114,6 +114,8 @@ def text_for(scope: str, department_id: int = 0, db: Database | None = None) -> 
     except Exception:
         log.warning("could not read prompt %s; using the built-in text", scope, exc_info=True)
         pub = None
+    if pub:
+        trace.note_prompt(scope, pub)
     return pub["text"] if pub else builtin(scope)
 
 

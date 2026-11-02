@@ -561,6 +561,33 @@ This follows `docs/development-plan-v4.1-release-2.md`, on branch `r2/phase-0-gr
   - **PostgreSQL:** still to run. Docker Desktop was not running.
   - **Flaky check:** `check_3b` failed once in one full run, then passed alone, in its group, and in the next full run. It looks like an existing timing wait.
 
+## 21. Release 2, Phase 1: trace and scoped settings (2026-11-02)
+
+This follows `docs/development-plan-v4_3-release-2 1.md`, on branch `r2/phase-1-trace-settings`, which is built on `r2/phase-0-groundwork`. Deviations are marked R2-1 in `DECISIONS.md`, whose Release 2 table now follows v4.3.
+
+- **Scoped settings (D31).**
+  - `app/scoped_settings.py` holds a typed registry and the resolver (channel, KB, department, global, cached for 2 seconds). Overrides live in `scoped_settings`; the Global Settings row is unchanged.
+  - The first keys are `score_threshold` (KB only), `top_k`, `retrieval_strategy`, `hybrid_keyword_weight` and `diversity` (KB and department). Validation and labels come from the Global Settings definitions.
+  - `app/retriever.py` now reads them for each KB it searches.
+  - **Scoped settings** is a new admin screen: inherited or overridden values per scope, with Save and Reset. Changes are audited with old and new values. Editors are limited to their own departments and those departments' KBs; channel scope is Admin only.
+  - Overrides are removed when their KB or department is deleted.
+- **Answer trace (D23).**
+  - `app/trace.py` collects references through the turn and writes one `answer_traces` row per answer that is not a preview: hits per KB, the settings and index version per KB, prompt version ids, the model that wrote the answer and whether a fallback was used, timing per stage and `config_snapshot_id`. Usage rows link by answer id.
+  - It stores no passage text and no rendered prompt. A failed write is logged by error type only and never touches the answer.
+  - Deleting a conversation, by hand or by retention, deletes its traces.
+- **`VectorStore.get(ids)`** on Chroma, pgvector and Azure AI Search, covered by the store contract test.
+- **Trace API and screen.** `app/admin/traces_api.py`, and a **Why this answer?** button on each answer in Conversations.
+  - Passage text is fetched when the trace is opened, checking the KB permission, the document's visibility and the chunk's own access. Anything else shows as restricted, with no title, ids or text.
+  - Every view is audited, without text. Answers given before this release have no trace.
+- **Editors** gain the Conversations screen, read-only and limited to their own departments (see R2-1).
+- **Migration 0027.** Its PostgreSQL SQL was rendered offline and read through.
+- **Tests.** `tests/test_release2_trace_settings.py` has 27 new tests, and the store contract gains `get`. These pinned lists were updated on purpose: the Editor route list, the Editor screens, and the migration head and tables.
+- **Results:**
+  - **SQLite:** 424 passed, 13 skipped, 2 deselected.
+  - **PostgreSQL and pgvector:** not run, because Docker Desktop is not running. So "no passage text from the trace API on pgvector" is not yet verified against a real pgvector server; only Chroma and the Azure stand-in were exercised. The Phase 0 run is still pending for the same reason.
+  - **Browser:** the admin page script passes a syntax check, and its API calls are tested, but the two screens have not been opened in a browser.
+- **Prerequisite still open:** the privacy sign-off for storing traces (plan, section 0).
+
 ## How to run
 
 ```powershell

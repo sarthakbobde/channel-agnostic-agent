@@ -1,6 +1,6 @@
 """Vector stores behind one interface.
 
-Operations: add, search(filter), delete_by_document, delete, update_metadata, count, health, stats.
+Operations: add, search(filter), get(ids), delete_by_document, delete, update_metadata, count, health, stats.
 One filter format for every store: {"field": value} (equals) or {"field": {"in": [...]}}; several keys
 are ANDed. Each adapter translates it (Chroma `where` today; SQL WHERE / OData for later stores).
 """
@@ -31,6 +31,10 @@ class VectorStore(ABC):
     @abstractmethod
     def search(self, query: str, k: int, flt: dict | None = None) -> list[dict]:
         """-> [{id, text, metadata, score}], best first; score = similarity (1 = identical)."""
+
+    @abstractmethod
+    def get(self, ids: list[str]) -> list[dict]:
+        """-> [{id, text, metadata}] for the ids that exist, in the order asked. The caller checks access."""
 
     @abstractmethod
     def delete_by_document(self, doc_id: str) -> None: ...
@@ -101,6 +105,13 @@ class ChromaStore(VectorStore):
         ids = (res.get("ids") or [[None] * len(res["documents"][0])])[0]
         return [{"id": i, "text": d, "metadata": m or {}, "score": round(1 - dist, 3)}
                 for i, d, m, dist in zip(ids, res["documents"][0], res["metadatas"][0], res["distances"][0])]
+
+    def get(self, ids):
+        if not ids:
+            return []
+        got = self._col().get(ids=list(ids), include=["documents", "metadatas"])
+        found = {i: {"id": i, "text": d, "metadata": m or {}} for i, d, m in zip(got["ids"], got["documents"], got["metadatas"])}
+        return [found[i] for i in ids if i in found]
 
     def delete_by_document(self, doc_id):
         self._col().delete(where={"doc_id": doc_id})

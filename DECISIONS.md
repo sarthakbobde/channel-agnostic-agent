@@ -28,31 +28,29 @@ this file.
 
 ## Release 2 decisions
 
-From `docs/development-plan-v4.1-release-2.md` (section A5), which has the full wording. They are all **Proposed** until confirmed. "Built" says which phase implemented the decision.
+From `docs/development-plan-v4_3-release-2 1.md` (section A5), which has the full wording and replaces v4.1. They are all **Proposed** until confirmed. "Built" says which v4.3 phase implements each one; "Groundwork" is the delivered Phase 0 of v4.1. D24, D25, D27, D28, D32, D38 and D41 to D45 belonged to the feedback feature, which v4.3 removes. Their IDs are not reused.
 
 | ID | Question | Default taken | Built | Status |
 |---|---|---|---|---|
 | D18 | Release 2 scope | As in plan section A1 | n/a | Proposed |
-| D19 | Answer language | The question's language. Per-KB Admin policy. Low-confidence detection falls back to the conversation's last language, then the KB default | Phase 3 | Proposed |
-| D20 | Embedding model | Per KB. Existing KBs stay on MiniLM until an Admin switches. The recommended model comes from the Phase 2 comparison | Phase 3 | Proposed |
-| D21 | Language detection and normalization | A local detector behind an adapter, chosen in the Phase 2 spike. Clean-up only, never translation | Phase 3 | Proposed |
-| D22 | Glossary | Query-time expansion of the search text by default, used by both vector and keyword search. Index-time is optional per KB | Phase 4 | Proposed |
-| D23 | Trace | References only, not the rendered prompt. Passage text is shown only to viewers allowed to see the document | Phase 1 | Proposed |
-| D24 | Feedback | Only the asker may rate. One rating per person per answer. Comments are always masked | Phase 1 (asker recorded in Phase 0) | Proposed |
-| D25 | Classification and review | The button reason sets the category first, then an LLM classifies the comment, and an Admin can overwrite | Phases 1 and 6 | Proposed |
-| D26 | Suggestions | Generated in the same call, then validated by a search under the asker's access. Off by default | Phase 5 | Proposed |
-| D27 | Alerts and quarantine | Rolling windows with minimum counts and distinct users. Quarantine is only suggested, never automatic by default | Phase 6 | Proposed |
-| D28 | Roll-ups | Counts only. Kept longer than raw feedback | Phase 6 | Proposed |
-| D29 | Message catalogue | English is byte-identical to today. Other languages need Admin approval | Phase 3 | Proposed |
-| D30 | Google Chat buttons | In the synchronous reply. Verified in the Phase 2 spike, with text only as the fallback | Phase 2 | Proposed |
-| D31 | Per-KB retrieval settings | The threshold applies per KB before the merge, and per-KB values come with scoped settings | Phase 0 (applied per KB); Phase 2 (settings) | Proposed |
-| D32 | Quarantine mechanism | Quarantined documents are removed from the document allow-list, so it works on every store | Phase 6 | Proposed |
-| D33 | Not found | A code-owned marker that the code replaces with the not-found text. Answers carry `found` | Phase 0 | Proposed |
-| D34 | Language through the router | The router keeps the user's language. The answer step receives the original question, plus its standalone meaning when that differs | Phase 0 | Proposed |
-| D35 | Keyword search and languages | Words keep their combining marks. Cross-language questions skip keyword search | Phase 0 (words); Phase 3 (cross-language) | Proposed |
-| D36 | Masking step | Masking is its own step after the input checks, and everything after it sees only masked text. **Changed in Phase 0:** it still follows the guardrails master switch (see Deviations) | Phase 0 | Proposed |
-| D37 | Interactive payloads | Signed, with an expiry. Every action is idempotent, so there is no nonce store | Phase 2 | Proposed |
-| D38 | Change events | Derived from the audit log and index versions. No table | Phase 6 | Proposed |
+| D19 | Answer language | Always the question's language. Low-confidence detection falls back to the conversation's last language, then the KB default | Phase 2 | Proposed |
+| D20 | Embedding model | Per KB. Existing KBs stay on MiniLM until an Admin switches | Phase 2 | Proposed |
+| D21 | Language detection and normalization | A local detector behind an adapter, chosen in the Phase 2 spike. Clean-up only, never translation | Phase 2 | Proposed |
+| D22 | Glossary | Query-time expansion of the search text by default. Index-time is optional per KB | Phase 3 | Proposed |
+| D23 | Trace | `answer_id` is the assistant Message id. References only, not the rendered prompt or passage text. Passage text is fetched when viewed, only for viewers who may see the document. Retention follows the conversation | Phase 1 | Proposed |
+| D26 | Suggestions | Generated in the same call, 3 asked for and 2 shown, each through the D40 checks. Off by default | Phase 4 | Proposed |
+| D29 | Message catalogue | English is byte-identical to today. Other languages need Admin approval | Phase 2 | Proposed |
+| D30 | Google Chat buttons | In the synchronous reply. Verified in the Phase 4 spike, with text only as the fallback | Phase 4 | Proposed |
+| D31 | Per-KB retrieval settings | Threshold, top-k and strategy can be overridden per KB (threshold: KB or global only). The threshold applies per KB before the merge | Groundwork (per KB); Phase 1 (settable); Phase 2 (calibration) | Proposed |
+| D33 | Not found | A code-owned marker that the code replaces with the not-found text. Answers carry `found` | Groundwork; Phase 2 (catalogue) | Proposed |
+| D34 | Language through the router | The router keeps the user's language. The answer step receives the original masked question. See the R2-0 row below on the standalone meaning | Groundwork | Proposed |
+| D35 | Keyword search and languages | Words keep their combining marks. Cross-language questions skip keyword search | Groundwork (words); Phase 2 (cross-language) | Proposed |
+| D36 | Masking step | Masking is its own step after the input checks. v4.3 says it follows the masking switch, not the master switch; **the code still follows both, see R2-0 below. Needs a decision** | Groundwork | Proposed |
+| D37 | Interactive payloads | HMAC-signed with an expiry. A click is de-duplicated per person, and only the asker may click | Phase 4 | Proposed |
+| D39 | Accepted languages | A scoped setting, default all. A language outside the list gets a polite reply, with no search and no model call | Phase 2 | Proposed |
+| D40 | Suggestion validation | Not a duplicate, can be answered, passes checks; the best 2 are shown | Phase 4 | Proposed |
+| D46 | Document summary | A background job writes a short summary in the document's language. Display only | Phase 2 | Proposed |
+| D47 | Stored suggestions | Every candidate is stored, masked, with its outcome. Deleted with the conversation | Phase 4 | Proposed |
 
 ## Deviations from the plan, recorded as they happen
 
@@ -135,4 +133,10 @@ From `docs/development-plan-v4.1-release-2.md` (section A5), which has the full 
 | R2-0 | D36: masking follows the masking switch, not the guardrails master switch | Masking is its own step (`guardrails.mask_input`), but it still runs only when the guardrails master switch **and** masking are on, as before. | Running it with the master switch off would change what "guardrails off" means for every Admin, and would load the personal-data model in setups that switched it off. Confirm whether "off" should still mask. |
 | R2-0 | Answers stream token by token when output checks are off | Every answer is now collected whole before it is handed over. | The not-found marker must never reach a person. Every caller (API, chat apps, preview) already joined the answer, so nothing visible changes. |
 | R2-0 | The editable base prompt says to reply "I couldn't find this…" | It is left unchanged. A code-owned reply rule after it asks for the marker, and both are recognised. | Admins may have published their own base prompt, and the code must not rewrite it. |
-| R2-0 | Sources gain `doc_language` | Not yet. `doc_id`, `kb_id`, `chunk_id` and `title` are added now. | Document languages are only known after Phase 3. |
+| R2-0 | Sources gain `doc_language` | Not yet. `doc_id`, `kb_id`, `chunk_id` and `title` are added now. | Document languages are only known after Phase 3. |
+| R2-0 | v4.3 D34: the answer step receives the original masked question; the standalone query is only for search | The original question is sent, and the router's standalone meaning is added in brackets when it differs | Built under v4.1, which asked for this. Without it, a follow-up such as "what about contractors?" reaches the answer step with no history. Needs a decision before Phase 2 |
+| R2-1 | Editors open a trace "from Conversations", but that screen and its API were Admin only | Editors get a read-only view through the new `/admin/api/traces` routes, limited to their own departments. The Admin `/conversations` routes (delete, export, retention) stay Admin only. Stored source snippets are left out of the Editor's view | The default-deny role map stays meaningful. Snippets are passage text from documents the Editor may not be allowed to see. **An Editor can now read the masked questions and answers of their own departments, which they could not before. This belongs in the privacy sign-off** |
+| R2-1 | Precedence is channel, KB, department, global | Built and tested, but none of the five first keys allows the channel scope, so the screen offers no channels yet | D31 names KB and global for the threshold, and top-k and strategy per KB. The first channel-scoped keys are the suggestion switches in Phase 4 |
+| R2-1 | The department in the precedence chain is not defined for retrieval | For retrieval settings it is the department that owns the knowledge base, not the asker's | Search tuning belongs to the index. Everyone asking one KB gets the same behaviour. Keys about the asker can pass their own department later |
+| R2-1 | One `top_k` per question | Each KB searches with its own value. When several are merged, the merged list keeps the largest | Otherwise a KB's override could be cut off by another KB's smaller value |
+| R2-1 | Trace hits per KB | Hits below the threshold are recorded too, marked `above_threshold: false`, along with whether each was used. A turn that fails also gets a trace, with `complete: false` | "Not found" is the answer that most needs explaining. These are references only, and only passages the asker could see |

@@ -19,7 +19,7 @@ from sqlalchemy.exc import IntegrityError
 
 from app import global_settings
 from app.config import settings
-from app.db import Conversation, Database, Message, get_db
+from app.db import AnswerTrace, Conversation, Database, Message, get_db
 
 log = logging.getLogger(__name__)
 INTERRUPTED = "[The answer was interrupted before it finished.]"
@@ -158,6 +158,7 @@ def list_conversations(prefix: str = "", db: Database | None = None) -> list[dic
 
 def delete(conv_id: str, db: Database | None = None) -> bool:
     with (db or get_db()).session() as s:
+        s.execute(sql_delete(AnswerTrace).where(AnswerTrace.conversation_id == conv_id))
         n = s.execute(sql_delete(Message).where(Message.conversation_id == conv_id)).rowcount
         c = s.get(Conversation, conv_id)
         if c is not None:

@@ -1,7 +1,7 @@
 # User manual: configuring the Channel Agnostic Agent
 
 Everything below is set on the **admin page** (`/admin`) unless it says `.env`. The side menu is grouped in the order you set things up:
-**Home**; **Settings** (Channels, LLM providers, KB configuration, RAG settings, Guardrails); **User management** (Users, Groups,
+**Home**; **Settings** (Channels, LLM providers, KB configuration, RAG settings, Scoped settings, Guardrails); **User management** (Users, Groups,
 Departments); **Input** (Prompts, KB documents); **Monitoring** (Reports, Audit log, Conversations, Usage and cost). The ☰ button
 collapses the menu to icons. Each screen's title has an (i) that explains it. Changes to providers, channels, prompts, guardrails and
 settings apply within seconds, with no restart. Secrets (keys, tokens, passwords) are stored encrypted and are **never shown again**:
@@ -363,6 +363,17 @@ The injection and toxicity checks are rules, not an AI model: they catch known w
 Notes: the minimum match setting applies to all strategies (for keyword matches a strong match scores about 0.5 or more, a single common word under 0.3). Who may see which document is checked inside every strategy, so a restricted document is never found by keyword either. Each source shown in the chat says whether it was found by meaning, keywords or both. Keyword search is built in memory from the indexed passages, so it works with Chroma, pgvector and Azure AI Search.
 
 ---
+
+### Scoped settings
+
+**Settings → Scoped settings** gives one knowledge base or department its own search settings. Choose it under **Applies to**, change a value and
+**Save**. **In use** shows the current value and where it comes from. **Reset** goes back to the inherited value. A knowledge base's value beats its
+department's, and a department's beats RAG settings.
+
+### Why an answer was given
+
+**Monitoring → Conversations**: open a conversation and choose **Why this answer?** under an answer to see what was searched for, the passages found,
+the settings and model used, and the time taken. Passages from documents you may not see show as **Restricted**.
 
 ## 10. Alerts and notifications
 

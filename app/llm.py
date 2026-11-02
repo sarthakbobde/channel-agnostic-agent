@@ -16,7 +16,7 @@ import logging
 import threading
 import time
 
-from app import alerts, identity, usage
+from app import alerts, identity, trace, usage
 from app.config import settings
 from app.db import Database
 
@@ -163,6 +163,7 @@ class ModelChain:
 
     def _succeeded(self, slot: Slot, index: int, purpose: str, department: str | None,
                    tokens_in, tokens_out) -> None:
+        trace.note_model(slot.provider_name, slot.model, purpose, index > 0)
         if self.db is None:
             return
         usage.record(self.db, provider=slot.provider_name, provider_type=slot.provider_type, model=slot.model,

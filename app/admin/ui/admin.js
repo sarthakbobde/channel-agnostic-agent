@@ -347,6 +347,7 @@
     users: "M16 21v-2a4 4 0 0 0-8 0v2M12 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8z",
     groups: "M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM23 21v-2a4 4 0 0 0-3-3.9M16 3.1a4 4 0 0 1 0 7.8",
     departments: "M3 21h18M5 21V7l7-4 7 4v14M9 21v-6h6v6",
+    scoped: "M4 6h10M18 6h2M4 12h2M10 12h10M4 18h8M16 18h4M14 4v4M6 10v4M12 16v4",
     conversations: "M8 10h8M8 14h5M21 12a9 9 0 0 1-13.3 7.9L3 21l1.1-4.7A9 9 0 1 1 21 12z",
     usage: "M4 20V10M10 20V4M16 20v-8M22 20H2",
     reports: "M14 3H6v18h12V7zM14 3v4h4M9 13h6M9 17h6",
@@ -501,14 +502,14 @@
 
   // ---- shell ----------------------------------------------------------------------
   // [screen, menu label, permission the server grants for it (defaults to the screen name)]
-  var TABS = [["home", "Home"], ["channels", "Channels"], ["providers", "LLM providers"], ["kbconfig", "KB configuration", "knowledge"], ["settings", "RAG settings"], ["guardrails", "Guardrails"], ["signin", "Sign-in"],
+  var TABS = [["home", "Home"], ["channels", "Channels"], ["providers", "LLM providers"], ["kbconfig", "KB configuration", "knowledge"], ["settings", "RAG settings"], ["scoped", "Scoped settings"], ["guardrails", "Guardrails"], ["signin", "Sign-in"],
               ["users", "Users"], ["groups", "Groups"], ["departments", "Departments"],
               ["prompts", "Prompts"], ["kbdocs", "KB documents", "knowledge"],
               ["reports", "Reports"], ["audit", "Audit log"], ["conversations", "Conversations"], ["usage", "Usage and cost"],
               ["account", "Account"]];
   // The side menu, in the order an admin works: configure the assistant, add people, give it content, then watch it run.
   var NAV_GROUPS = [["", ["home"]],
-                    ["Settings", ["channels", "providers", "kbconfig", "settings", "guardrails", "signin"]],
+                    ["Settings", ["channels", "providers", "kbconfig", "settings", "scoped", "guardrails", "signin"]],
                     ["User management", ["users", "groups", "departments"]],
                     ["Input", ["prompts", "kbdocs"]],
                     ["Monitoring", ["reports", "audit", "conversations", "usage"]]];
@@ -621,7 +622,7 @@
     var scrim = h("div", { class: "scrim", "aria-hidden": "true", onclick: function () { app.classList.remove("nav-open"); sync(); } });
     app.append(top, nav, scrim, main);
     mount(app);
-    var view = { home: viewHome, channels: viewChannels, settings: viewSettings, providers: viewProviders,
+    var view = { home: viewHome, channels: viewChannels, settings: viewSettings, scoped: viewScoped, providers: viewProviders,
       kbconfig: viewKnowledge, kbdocs: viewKbDocs,
       groups: viewGroups, prompts: viewPrompts, guardrails: viewGuardrails, conversations: viewConversations, usage: viewUsage, reports: viewReports,
       departments: viewDepartments, users: viewUsers, audit: viewAudit, account: viewAccount, signin: viewSignin }[state.tab] || viewAccount;
@@ -908,6 +909,64 @@
     loadSinks();
   }
 
+  // ---- settings per scope ---------------------------------------------------------------
+  var SCOPE_SOURCE = { kb: "this knowledge base", department: "the department", channel: "the channel", global: "RAG settings" };
+  async function viewScoped(main) {
+    pageHead(main, "Scoped settings", "Give one knowledge base or department its own search settings. A knowledge base's value beats its department's, and a department's beats RAG settings. Changes apply within seconds, with no restart.");
+    var holder = h("div", {}, msg("wait", "Loading…"));
+    var out = h("div", { "aria-live": "polite" });
+    var scope;
+    function labelOf(f, value) { return f.choice_labels ? f.choice_labels[value] || value : String(value); }
+    function path() { return "/scoped-settings/" + scope.value.split(":").map(encodeURIComponent).join("/"); }
+    function render(data) {
+      var byKey = {}; data.fields.forEach(function (f) { byKey[f.key] = f; });
+      var body = h("tbody", {});
+      data.fields.filter(function (f) {
+        return !f.show_when || !byKey[f.show_when.field] || f.show_when.values.indexOf(byKey[f.show_when.field].value) >= 0;
+      }).forEach(function (f) {
+        var id = "ss_" + f.key;
+        var input = f.kind === "choice"
+          ? selectOf(f.choices.map(function (c) { return [c, f.choice_labels[c]]; }), f.value, null, f.label)
+          : h("input", { type: "number", id: id, min: f.min, max: f.max, step: f.step, value: String(f.value), "aria-label": f.label });
+        body.appendChild(h("tr", {},
+          h("td", { class: "wrap", "data-label": "Setting" }, h("b", {}, f.label, tip(f.help))),
+          h("td", { "data-label": "In use" }, labelOf(f, f.value), h("div", { class: "meta" }, f.overridden ? "Set here by " + f.updated_by : "Inherited from " + SCOPE_SOURCE[f.inherited_from])),
+          h("td", { "data-label": "Change" }, input),
+          h("td", { class: "act" },
+            h("button", { type: "button", class: "btn small", onclick: async function () {
+              var values = {}; values[f.key] = f.kind === "choice" ? input.value : Number(input.value);
+              out.replaceChildren(msg("wait", "Saving…"));
+              try { render(await api("PUT", path(), { values: values })); out.replaceChildren(msg("ok", "Saved. In use within a few seconds.")); }
+              catch (err) { if (me) out.replaceChildren(msg("bad", err.message)); }
+            } }, "Save"),
+            f.overridden ? h("button", { type: "button", class: "btn small", onclick: async function () {
+              out.replaceChildren(msg("wait", "Resetting…"));
+              try { render(await api("DELETE", path() + "/" + encodeURIComponent(f.key))); out.replaceChildren(msg("ok", "Back to the inherited value.")); }
+              catch (err) { if (me) out.replaceChildren(msg("bad", err.message)); }
+            } }, "Reset") : null)));
+      });
+      holder.replaceChildren(h("div", { class: "tablewrap" }, h("table", {}, h("thead", {}, h("tr", {},
+        ["Setting", "In use", "Change", ""].map(function (t) { return h("th", {}, t); }))), body)));
+    }
+    async function load() {
+      out.replaceChildren();
+      try { render(await api("GET", path())); }
+      catch (err) { if (me) holder.replaceChildren(msg("bad", err.message)); }
+    }
+    try {
+      var c = await api("GET", "/scoped-settings/scopes");
+      var options = c.kbs.map(function (k) { return ["kb:" + k.id, "Knowledge base: " + k.name]; })
+        .concat(c.departments.map(function (d) { return ["department:" + d.id, "Department: " + d.name]; }))
+        .concat(c.channels.map(function (t) { return ["channel:" + t, "Channel: " + channelName(t)]; }));
+      if (!options.length) { holder.replaceChildren(h("p", { class: "empty" }, "You have no departments or knowledge bases to manage.")); main.appendChild(holder); return; }
+      scope = selectOf(options, options[0][0], load, "Applies to");
+      scope.id = "ss_scope";
+      main.appendChild(h("section", { class: "panel filterbar" }, h("div", { class: "filters" }, h("div", { class: "field wide" }, fieldLabel("ss_scope", "Applies to"), scope))));
+      main.appendChild(h("section", { class: "panel" }, holder, out));
+      load();
+    } catch (err) { if (me) { holder.replaceChildren(msg("bad", err.message)); main.appendChild(holder); } }
+  }
+
   function flash(el, kind, text) { el.replaceChildren(msg(kind, text)); }
 
   // two-step button: first click arms it for 5 seconds (no browser dialogs)
@@ -1163,7 +1222,7 @@
     "kb.reindex": "Reprocessed a knowledge base", "kb.rollback": "Rolled back a knowledge base", "kb.rebuild.start": "Started a rebuild", "kb.rebuild.finish": "Finished a rebuild",
     "kb.rebuild.fail": "A rebuild failed", "kb.rebuild.cancel": "Cancelled a rebuild", "document.upload": "Uploaded a document", "document.replace": "Replaced a document",
     "document.delete": "Deleted a document", "document.move": "Moved a document", "document.reindex": "Reprocessed a document", "document.access": "Changed who can read a document",
-    "embedding.download": "Downloaded a search model", "conversation.view": "Opened a conversation", "conversation.delete": "Deleted a conversation",
+    "embedding.download": "Downloaded a search model", "conversation.view": "Opened a conversation", "trace.view": "Opened an answer trace", "scoped_setting.update": "Changed a scoped setting", "scoped_setting.reset": "Reset a scoped setting", "conversation.delete": "Deleted a conversation",
     "conversation.export": "Started an export", "conversation.export.done": "Finished an export", "retention.run": "Ran automatic deletion", "alert.resolve": "Dismissed an alert",
     "alert_sinks.update": "Changed alert notifications", "alert_sinks.test": "Tested alert notifications", "price.set": "Set a price", "price.delete": "Removed a price",
     "import": "Imported settings", "audit.cleanup": "Cleaned up the audit log"
@@ -2717,9 +2776,40 @@
     catch (err) { if (me) holder.replaceChildren(msg("bad", err.message)); }
   }
 
-  // ---- conversations (Admin) -------------------------------------------------------------
+  // ---- answer trace -----------------------------------------------------------------------
+  var STAGE_NAMES = { input_checks: "Input checks", routing: "Routing", retrieval: "Search", generation: "Writing the answer", output_checks: "Output checks" };
+  function traceView(t) {
+    function rows(cols, list) {
+      return h("div", { class: "tablewrap" }, h("table", {}, h("thead", {}, h("tr", {}, cols.map(function (c) { return h("th", {}, c); }))),
+        h("tbody", {}, list.map(function (r) { return h("tr", {}, r.map(function (cell, i) { return h("td", { class: "wrap", "data-label": cols[i] }, cell); })); }))));
+    }
+    var outcome = !t.complete ? ["bad", "Did not finish"] : !t.searched ? ["off", "No search needed"] : t.found ? ["ok", "Answered from documents"] : ["warn", "Not found"];
+    var parts = [
+      h("div", { class: "chips-static" }, h("span", { class: "pill " + outcome[0] }, outcome[1]), t.fallback_used ? h("span", { class: "pill warn" }, "Fallback model used") : null),
+      h("div", { class: "meta" }, (t.model ? "Written by " + t.provider + " / " + t.model + " · " : "No model wrote this answer · ") + "Configuration " + (t.config_snapshot_id || "–")),
+      t.standalone_query ? h("p", {}, h("b", {}, "Searched for: "), t.search_text) : null,
+      h("p", { class: "meta" }, Object.keys(STAGE_NAMES).filter(function (k) { return k in t.timings; }).map(function (k) { return STAGE_NAMES[k] + " " + t.timings[k] + " ms"; }).join(" · ")),
+      t.prompts.length ? h("p", { class: "meta" }, "Prompts: " + t.prompts.map(function (p) { return p.scope + " v" + p.version + " (" + p.status + ")"; }).join(", ")) : null
+    ];
+    if (t.retrieval.length) parts.push(h("h4", {}, "Search settings"), rows(["Knowledge base", "Index version", "How", "Passages", "Lowest match"], t.retrieval.map(function (r) {
+      return [r.kb, r.index_version == null ? "–" : String(r.index_version), r.retrieval_strategy, String(r.top_k), r.threshold == null ? "–" : String(r.threshold)];
+    })));
+    if (t.hits.length) parts.push(h("h4", {}, "Passages found"), rows(["#", "Knowledge base", "Match", "Used", "Passage"], t.hits.map(function (x) {
+      return [String(x.rank), x.kb, x.score + (x.above_threshold ? "" : " (below the lowest match)"), x.used ? "Yes" : "No",
+        x.status === "visible" ? h("div", {}, h("b", {}, x.title), h("div", { class: "meta" }, x.text))
+          : h("span", { class: "pill off" }, x.status === "restricted" ? "Restricted" : "No longer available")];
+    })));
+    if (t.usage.length) parts.push(h("h4", {}, "Model calls"), rows(["Purpose", "Model", "Tokens in", "Tokens out", "Status"], t.usage.map(function (u) {
+      return [u.purpose, u.provider + " / " + u.model, u.input_tokens == null ? "–" : String(u.input_tokens), u.output_tokens == null ? "–" : String(u.output_tokens), u.status];
+    })));
+    return h("div", { class: "stack" }, parts);
+  }
+
+  // ---- conversations (Admin; an Editor reads their own departments') ------------------------
   async function viewConversations(main) {
-    pageHead(main, "Conversations", "Every stored conversation from every channel. Personal data is masked before storage. Opening or deleting a conversation is recorded in the audit log.");
+    var isAdmin = state.perm && state.perm.can_manage_all;
+    var base = isAdmin ? "/conversations" : "/traces/conversations";
+    pageHead(main, "Conversations", (isAdmin ? "Every stored conversation from every channel." : "Conversations from your departments.") + " Personal data is masked before storage. Opening a conversation or an answer trace is recorded in the audit log.");
     var filters = h("div", { class: "filters" });
     var dept = h("select", { id: "cv_dept", "aria-label": "Department" }, h("option", { value: "", text: "All departments" }));
     var chan = selectOf([["", "All channels"], ["web", "Web UI"], ["slack", "Slack"], ["teams", "Teams"], ["gchat", "Google Chat"], ["other", "Other"]], "", null, "Channel");
@@ -2735,7 +2825,7 @@
       var q = "?limit=" + size + "&offset=" + (page * size) + "&department=" + encodeURIComponent(dept.value) + "&channel=" + encodeURIComponent(chan.value)
         + "&person=" + encodeURIComponent(person.value) + "&date_from=" + from.value + "&date_to=" + to.value;
       try {
-        var r = await api("GET", "/conversations" + q);
+        var r = await api("GET", base + q);
         if (dept.options.length === 1) r.departments.forEach(function (d) { dept.appendChild(h("option", { value: d, text: d })); });
         var body = h("tbody", {});
         r.conversations.forEach(function (c) {
@@ -2747,10 +2837,10 @@
             h("td", { class: "nw", "data-label": "Last activity" }, when(c.updated_at)),
             h("td", { class: "act" },
               h("button", { type: "button", class: "btn small", onclick: function () { open(c.id); } }, "Open"),
-              confirmButton("Delete", "Confirm delete", async function () {
+              isAdmin ? confirmButton("Delete", "Confirm delete", async function () {
                 try { await api("DELETE", "/conversations/" + encodeURIComponent(c.id)); detail.replaceChildren(msg("ok", "Deleted.")); load(); }
                 catch (err) { if (me) detail.replaceChildren(msg("bad", err.message)); }
-              }, true))));
+              }, true) : null)));
         });
         var pages = Math.max(1, Math.ceil(r.total / size));
         list.replaceChildren(
@@ -2767,14 +2857,21 @@
     async function open(id) {
       detail.replaceChildren(msg("wait", "Loading…"));
       try {
-        var r = await api("GET", "/conversations/" + encodeURIComponent(id));
+        var r = await api("GET", base + "/" + encodeURIComponent(id));
         detail.replaceChildren(panel(r.title || "Conversation", null,
           h("button", { type: "button", class: "btn small", onclick: function () { detail.replaceChildren(); } }, "Close"),
           h("div", { class: "meta" }, r.person + " · " + r.channel + (r.department ? " · " + r.department : "")),
           h("div", { class: "thread" }, r.messages.map(function (m) {
+            var why = h("div", {});
             return h("div", { class: "turn " + (m.role === "user" ? "q" : "a") },
               h("span", { class: "l" }, m.role === "user" ? "Question" : "Answer" + (m.incomplete ? " (interrupted)" : "")),
-              h("div", { class: "bubble" }, m.content));
+              h("div", { class: "bubble" }, m.content),
+              m.role === "user" ? null : h("div", { class: "actions" }, h("button", { type: "button", class: "btn small", onclick: async function () {
+                why.replaceChildren(msg("wait", "Loading…"));
+                try { why.replaceChildren(traceView(await api("GET", "/traces/" + m.id))); }
+                catch (err) { if (me) why.replaceChildren(msg("bad", err.message)); }
+              } }, "Why this answer?")),
+              why);
           }))));
       } catch (err) { if (me) detail.replaceChildren(msg("bad", err.message)); }
     }
@@ -2839,8 +2936,9 @@
     main.appendChild(h("section", { class: "panel filterbar" }, filters, h("div", { class: "filterrow" }, dr.el, go)));
     main.appendChild(detail);
     main.appendChild(h("section", { class: "panel" }, list));
-    main.appendChild(h("div", { class: "cols" }, retBox, exBox));
     load();
+    if (!isAdmin) return;
+    main.appendChild(h("div", { class: "cols" }, retBox, exBox));
     loadRetention();
     loadExport();
   }

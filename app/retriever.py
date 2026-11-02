@@ -1,7 +1,7 @@
 import logging
 from functools import lru_cache
 import chromadb
-from app import global_settings, keyword_search
+from app import global_settings, keyword_search, scoped_settings, trace
 from app.config import settings
 
 log = logging.getLogger(__name__)
@@ -68,8 +68,15 @@ def _diverse(hits: list[dict], k: int, diversity: float) -> list[dict]:
 
 def threshold_for(kb: dict) -> float:
     """The lowest similarity a passage from this knowledge base may have. Scores from different embedding models are not
-    comparable, so it is applied per knowledge base, before several are merged. (Per-KB values come with scoped settings.)"""
-    return global_settings.current().score_threshold
+    comparable, so it is applied per knowledge base, before several are merged. A knowledge base may set its own (D31)."""
+    return scoped_settings.get("score_threshold", kb_id=kb.get("id"))
+
+
+def _active_version(kb: dict):
+    from app.db import get_db
+    from app.knowledge import versions
+    v = versions.active(get_db(), kb["id"]) if kb.get("id") else None
+    return v and v["version"]
 
 
 def _search_kb(kb: dict, query: str, k: int, who, min_score: float | None = None) -> list[dict]:
@@ -84,8 +91,8 @@ def _search_kb(kb: dict, query: str, k: int, who, min_score: float | None = None
     keys = list(docs)
     if not keys:
         return []
-    snap = global_settings.current()
-    strategy = snap.retrieval_strategy
+    conf = {key: scoped_settings.for_kb(kb, key) for key in scoped_settings.RETRIEVAL_KEYS}
+    strategy = conf["retrieval_strategy"]
     flt = {"doc_id": {"in": keys}}
     try:
         if strategy == "keyword":
@@ -93,9 +100,9 @@ def _search_kb(kb: dict, query: str, k: int, who, min_score: float | None = None
         elif strategy == "hybrid":
             n = max(k * 3, 20)
             vector = kbs.store_for(kb).search(query, n, flt)
-            hits = _fuse(vector, _keyword_hits(kb, query, n, keys), snap.hybrid_keyword_weight)[:k]
+            hits = _fuse(vector, _keyword_hits(kb, query, n, keys), conf["hybrid_keyword_weight"])[:k]
         elif strategy == "mmr":
-            hits = _diverse([{**h, "via": "meaning"} for h in kbs.store_for(kb).search(query, max(k * 4, 20), flt)], k, snap.diversity)
+            hits = _diverse([{**h, "via": "meaning"} for h in kbs.store_for(kb).search(query, max(k * 4, 20), flt)], k, conf["diversity"])
         else:
             hits = [{**h, "via": "meaning"} for h in kbs.store_for(kb).search(query, k, flt)]
     except NotImplementedError:
@@ -104,9 +111,9 @@ def _search_kb(kb: dict, query: str, k: int, who, min_score: float | None = None
     safe = [h for h in hits if access.permits(h["metadata"], who, kb)]
     if len(safe) != len(hits):
         log.error("access filter let through %d passage(s) the chunk metadata does not permit; dropped", len(hits) - len(safe))
-    if min_score is not None:
-        safe = [h for h in safe if h["score"] >= min_score]
-    return [{**h, "kb_id": kb.get("id"), "doc_pk": docs.get(h["metadata"].get("doc_id"))} for h in safe]
+    safe = [{**h, "kb_id": kb.get("id"), "doc_pk": docs.get(h["metadata"].get("doc_id"))} for h in safe]
+    trace.note_search(kb, {**conf, "top_k": k}, min_score, safe, lambda: _active_version(kb))
+    return [h for h in safe if min_score is None or h["score"] >= min_score]
 
 
 def retrieve_scored(query: str, top_k: int | None = None, kb_ids=None, apply_threshold: bool = False) -> list[dict]:
@@ -115,8 +122,9 @@ def retrieve_scored(query: str, top_k: int | None = None, kb_ids=None, apply_thr
     Several knowledge bases are searched separately and merged by reciprocal rank fusion (D5)."""
     from app import identity
     who = identity.current()
-    k = top_k or global_settings.current().top_k
-    lists = [_search_kb(kb, query, k, who, threshold_for(kb) if apply_threshold else None) for kb in _targets(kb_ids)]
+    targets = [(kb, top_k or scoped_settings.for_kb(kb, "top_k")) for kb in _targets(kb_ids)]
+    k = max((n for _, n in targets), default=0)                  # several knowledge bases: the merged list keeps the largest
+    lists = [_search_kb(kb, query, n, who, threshold_for(kb) if apply_threshold else None) for kb, n in targets]
     lists = [l for l in lists if l]
     if len(lists) > 1:
         fused: dict[tuple, list] = {}
@@ -127,6 +135,7 @@ def retrieve_scored(query: str, top_k: int | None = None, kb_ids=None, apply_thr
         merged = [h for _, h in sorted(fused.values(), key=lambda e: -e[0])][:k]
     else:
         merged = lists[0] if lists else []
+    trace.note_used([{"kb_id": h.get("kb_id"), "chunk_id": h.get("id")} for h in merged])
     return [{"text": h["text"], "source": h["metadata"].get("source"),
              "page": h["metadata"].get("page") or None, "score": h["score"], "via": h.get("via", "meaning"),
              "doc_id": h.get("doc_pk"), "kb_id": h.get("kb_id"), "chunk_id": h.get("id"),

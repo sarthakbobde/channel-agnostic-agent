@@ -399,6 +399,44 @@ class UsageRecord(Base):
     error: Mapped[str] = mapped_column(Text, default="")
 
 
+class ScopedSetting(Base):
+    """An override of one setting for a channel, knowledge base or department. See app/scoped_settings.py."""
+    __tablename__ = "scoped_settings"
+    __table_args__ = (UniqueConstraint("scope_type", "scope_id", "key", name="uq_scoped_settings"),)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    scope_type: Mapped[str] = mapped_column(String(16))                # channel | kb | department
+    scope_id: Mapped[str] = mapped_column(String(64))
+    key: Mapped[str] = mapped_column(String(64))
+    value: Mapped[object] = mapped_column(JSON)
+    updated_by: Mapped[str] = mapped_column(String(254), default="")
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)
+
+
+class AnswerTrace(Base):
+    """How one answer came about (one row per assistant Message). References only: no rendered prompt, no passage text. See app/trace.py."""
+    __tablename__ = "answer_traces"
+    answer_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=False)
+    question_id: Mapped[int] = mapped_column(Integer)
+    conversation_id: Mapped[str] = mapped_column(String(200), index=True)
+    complete: Mapped[bool] = mapped_column(Boolean)
+    found: Mapped[bool] = mapped_column(Boolean)
+    searched: Mapped[bool] = mapped_column(Boolean)
+    language: Mapped[str] = mapped_column(String(16), default="")      # filled from Phase 2
+    language_confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
+    standalone_query: Mapped[str] = mapped_column(Text, default="")
+    search_text: Mapped[str] = mapped_column(Text, default="")         # differs from the query once the glossary expands it
+    hits: Mapped[list] = mapped_column(JSON, default=list)             # [{kb_id, doc_id, chunk_id, score, rank, via, above_threshold, used}]
+    retrieval: Mapped[list] = mapped_column(JSON, default=list)        # per KB: index version and the settings in effect
+    prompt_versions: Mapped[dict] = mapped_column(JSON, default=dict)
+    provider: Mapped[str] = mapped_column(String(64), default="")      # what wrote the answer, after any fallback
+    model: Mapped[str] = mapped_column(String(200), default="")
+    fallback_used: Mapped[bool] = mapped_column(Boolean, default=False)
+    timings: Mapped[dict] = mapped_column(JSON, default=dict)          # milliseconds per stage
+    glossary: Mapped[dict] = mapped_column(JSON, default=dict)         # applied terms and version, filled from Phase 3
+    config_snapshot_id: Mapped[str] = mapped_column(String(32), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
 class Alert(Base):
     """A condition an admin should know about. Repeats of the same `key` update one row."""
     __tablename__ = "alerts"

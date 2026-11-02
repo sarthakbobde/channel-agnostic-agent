@@ -60,6 +60,18 @@ On first start these are copied from the matching `.env` lines (`TOP_K`, `SCORE_
 `MEMORY_MAX_TURNS`, `CHUNK_SIZE`, `CHUNK_OVERLAP`); after that the database is the source of truth and
 the `.env` lines are ignored. More settings arrive with the features that use them.
 
+## Scoped settings and answer traces
+
+**Scoped settings** gives one knowledge base or department its own search settings. A knowledge base's value beats its
+department's, and a department's beats **RAG settings**. The match threshold can only be set per knowledge base, because scores
+from different embedding models are not comparable. **Reset** goes back to the inherited value. Changes apply within a few
+seconds and are audited. Editors can change their own departments and those departments' knowledge bases.
+
+In **Conversations**, **Why this answer?** opens an answer's trace: what was searched for, the passages found and whether they
+were used, the settings in force, the prompt versions, the model that wrote the answer and the time each stage took. A passage
+from a document you may not see shows as **Restricted**. Traces hold references only, are deleted with their conversation, and
+each view is audited. Answers given before this feature have no trace. Editors see their own departments' conversations here, read-only.
+
 ## LLM providers screen
 
 **LLM providers** (earlier called AI models, and before that Providers) controls which AI models answer questions.
