@@ -34,10 +34,11 @@ async def sign_in(username: str, password: str):
     return await backend.sign_in(username, password)
 
 
-def _buttons(items: list[dict]) -> list:
-    """Suggested questions with a live payload become action buttons; the API checks the payload when one is clicked."""
-    return [cl.Action(name="caa_suggest", payload={"payload": s["payload"], "text": s["text"]}, label=s["text"])
-            for s in items if s.get("payload")]
+def _suggestions(items: list[dict], title: str) -> list:
+    """Suggested questions with a live payload, shown under the answer as full-width rows (public/elements/Suggestions.jsx).
+    A click calls the "caa_suggest" action below; the API checks the signed payload."""
+    live = [{"text": s["text"], "payload": s["payload"]} for s in items if s.get("payload")]
+    return [cl.CustomElement(name="Suggestions", props={"title": title, "items": live}, display="inline")] if live else []
 
 
 @cl.on_chat_resume
@@ -47,12 +48,11 @@ async def resume(thread):
     if live:
         token = backend.token_for(cl.user_session.get("user"))
         texts = await backend.texts(token, cl.user_session.get("lang") or "")
-        await cl.Message(content=texts["suggested"], actions=_buttons(live)).send()
+        await cl.Message(content="", elements=_suggestions(live, texts["suggested"])).send()
 
 
 @cl.action_callback("caa_suggest")
 async def suggestion_clicked(action: cl.Action):
-    await action.remove()
     await cl.Message(content=action.payload.get("text", ""), type="user_message").send()
     token = backend.token_for(cl.user_session.get("user"))
     status, body = await backend.act(token, cl.context.session.thread_id, action.payload.get("payload", ""))
@@ -74,7 +74,7 @@ async def _show(token: str, status: int, body: dict) -> None:
         items = body.get("suggestions") or []
         content = (backend.with_sources(body.get("answer", ""), body.get("sources", []), body.get("language", ""), texts["sources"])
                    + backend.suggestions_text([s for s in items if not s.get("payload")], texts["suggested"]))
-        await cl.Message(content=content, actions=_buttons(items),
+        await cl.Message(content=content, elements=_suggestions(items, texts["suggested"]),
                          **({"id": backend.step_id(body["answer_id"], "")} if body.get("answer_id") else {})).send()
     elif status in (400, 403, 409, 410):                     # a suggestion button that is not valid, not yours, used or expired
         await cl.ErrorMessage(content=body.get("detail", texts["web_try_again"])).send()
