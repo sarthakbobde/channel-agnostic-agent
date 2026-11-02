@@ -26,7 +26,9 @@ class VectorStore(ABC):
     name: str
 
     @abstractmethod
-    def add(self, ids: list[str], texts: list[str], metadatas: list[dict]) -> None: ...
+    def add(self, ids: list[str], texts: list[str], metadatas: list[dict], embed_texts: list[str] | None = None) -> None:
+        """Store the passages. `embed_texts`, when given, is what is embedded instead (glossary terms added at index
+        time); the stored and displayed text is always `texts`."""
 
     @abstractmethod
     def search(self, query: str, k: int, flt: dict | None = None) -> list[dict]:
@@ -79,12 +81,15 @@ class ChromaStore(VectorStore):
         self._col, self._drop = get_collection, delete_collection
         self.embeddings = embeddings if embeddings is not None and not embeddings.builtin else None
 
-    def add(self, ids, texts, metadatas):
+    def add(self, ids, texts, metadatas, embed_texts=None):
         if not ids:
             return
         kw = {"ids": ids, "documents": texts, "metadatas": metadatas}
         if self.embeddings is not None:
-            kw["embeddings"] = self.embeddings.embed_documents(texts)
+            kw["embeddings"] = self.embeddings.embed_documents(embed_texts or texts)
+        elif embed_texts is not None:                  # the built-in model, run here so Chroma stores the original text
+            from app.knowledge import embeddings
+            kw["embeddings"] = embeddings.get(embeddings.DEFAULT).embed_documents(embed_texts)
         self._col().upsert(**kw)
 
     def search(self, query, k, flt=None):

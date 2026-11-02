@@ -33,10 +33,11 @@ from app.admin.scoped_settings_api import router as scoped_settings_router
 from app.admin.sso_api import router as sso_router
 from app.admin.traces_api import router as traces_router
 from app.admin.languages_api import router as languages_router
+from app.admin.glossary_api import router as glossary_router
 from app.config import settings
 
 log = logging.getLogger(__name__)
-ROUTERS = (admin_router, providers_router, users_router, departments_router, kbs_router, documents_router, groups_router, prompts_router, guardrails_router, conversations_router, usage_router, alerts_router, reports_router, profile_router, sso_router, scoped_settings_router, traces_router, languages_router, ui_router)
+ROUTERS = (admin_router, providers_router, users_router, departments_router, kbs_router, documents_router, groups_router, prompts_router, guardrails_router, conversations_router, usage_router, alerts_router, reports_router, profile_router, sso_router, scoped_settings_router, traces_router, languages_router, glossary_router, ui_router)
 
 
 def include_admin(app: FastAPI) -> None:

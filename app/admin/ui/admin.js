@@ -361,6 +361,7 @@
     copy: "M9 9h11v11H9zM5 15H4V4h11v1",
     kbconfig: "M12 8c4.4 0 8-1.3 8-3s-3.6-3-8-3-8 1.3-8 3 3.6 3 8 3zM4 5v14c0 1.7 3.6 3 8 3s8-1.3 8-3V5M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3",
     kbdocs: "M14 3H6v18h12V7zM14 3v4h4M12 17v-6M9.5 13.5L12 11l2.5 2.5",
+    glossary: "M5 4h11a3 3 0 013 3v13H8a3 3 0 01-3-3zM5 17a3 3 0 013-3h11M9 8h6",
     moon: "M20 14.5A8 8 0 0 1 9.5 4 8 8 0 1 0 20 14.5z",
     sun: "M12 16a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4",
     arrow: "M5 12h14M13 6l6 6-6 6",
@@ -505,14 +506,14 @@
   // [screen, menu label, permission the server grants for it (defaults to the screen name)]
   var TABS = [["home", "Home"], ["channels", "Channels"], ["providers", "LLM providers"], ["kbconfig", "KB configuration", "knowledge"], ["settings", "RAG settings"], ["scoped", "Scoped settings"], ["languages", "Languages"], ["guardrails", "Guardrails"], ["signin", "Sign-in"],
               ["users", "Users"], ["groups", "Groups"], ["departments", "Departments"],
-              ["prompts", "Prompts"], ["kbdocs", "KB documents", "knowledge"],
+              ["prompts", "Prompts"], ["glossary", "Glossary"], ["kbdocs", "KB documents", "knowledge"],
               ["reports", "Reports"], ["audit", "Audit log"], ["conversations", "Conversations"], ["usage", "Usage and cost"],
               ["account", "Account"]];
   // The side menu, in the order an admin works: configure the assistant, add people, give it content, then watch it run.
   var NAV_GROUPS = [["", ["home"]],
                     ["Settings", ["channels", "providers", "kbconfig", "settings", "scoped", "languages", "guardrails", "signin"]],
                     ["User management", ["users", "groups", "departments"]],
-                    ["Input", ["prompts", "kbdocs"]],
+                    ["Input", ["prompts", "glossary", "kbdocs"]],
                     ["Monitoring", ["reports", "audit", "conversations", "usage"]]];
   function tabLabel(k) { var t = TABS.filter(function (x) { return x[0] === k; })[0]; return t ? t[1] : k; }
   function canSee(k) {
@@ -625,7 +626,7 @@
     mount(app);
     var view = { home: viewHome, channels: viewChannels, settings: viewSettings, scoped: viewScoped, languages: viewLanguages, providers: viewProviders,
       kbconfig: viewKnowledge, kbdocs: viewKbDocs,
-      groups: viewGroups, prompts: viewPrompts, guardrails: viewGuardrails, conversations: viewConversations, usage: viewUsage, reports: viewReports,
+      groups: viewGroups, prompts: viewPrompts, glossary: viewGlossary, guardrails: viewGuardrails, conversations: viewConversations, usage: viewUsage, reports: viewReports,
       departments: viewDepartments, users: viewUsers, audit: viewAudit, account: viewAccount, signin: viewSignin }[state.tab] || viewAccount;
     view(main);
     loadAlerts(main);
@@ -830,7 +831,8 @@
       ["Conversations and privacy", "How long conversations are kept, when long chats are summarised, and whether they can be exported.", ["max_retention_days", "retention_job_enabled", "summarise_after_turns", "export_enabled"]],
       ["Limits", "Caps on question length and on how fast one person can ask.", ["prompt_max_chars", "chat_rate_per_minute"]],
       ["Languages", "Answers are always written in the language of the question. Language codes are two letters, for example en or hi.", ["accepted_languages", "default_language", "document_languages", "language_confidence", "catalog_languages"]],
-      ["Document summaries", "A short summary of each document, shown in KB documents. Display only: never used to answer.", ["summary_enabled", "summary_max_input_tokens"]]
+      ["Document summaries", "A short summary of each document, shown in KB documents. Display only: never used to answer.", ["summary_enabled", "summary_max_input_tokens"]],
+      ["Glossary", "Expand searches with the terms in Input > Glossary. Off by default.", ["glossary_mode", "glossary_max_terms", "glossary_max_aliases"]]
     ];
 
     function show(data, notice) {
@@ -980,6 +982,144 @@
       scope.id = "ss_scope";
       main.appendChild(h("section", { class: "panel filterbar" }, h("div", { class: "filters" }, h("div", { class: "field wide" }, fieldLabel("ss_scope", "Applies to"), scope))));
       main.appendChild(h("section", { class: "panel" }, holder, out));
+      load();
+    } catch (err) { if (me) { holder.replaceChildren(msg("bad", err.message)); main.appendChild(holder); } }
+  }
+
+  // ---- glossary: acronyms and synonyms per knowledge base or department ---------------------------------------
+  var KIND_LABELS = { acronym: "Acronym", synonym: "Synonym", preferred: "Preferred term" };
+  var CONFLICTS = { repeated_term: "is listed twice", alias_is_a_term: "is also a term of its own", alias_on_two_terms: "is an alias of two terms" };
+  async function viewGlossary(main) {
+    pageHead(main, "Glossary", "Acronyms and synonyms your people use that the documents spell differently. Only the search changes: questions and answers keep their own wording. A knowledge base's terms win over its department's. Changes are drafts until you publish them.");
+    var holder = h("div", { class: "stack" }, msg("wait", "Loading…"));
+    var out = h("div", { "aria-live": "polite" });
+    var scope;
+    function path() { return "/glossaries/" + scope.value.split(":").map(encodeURIComponent).join("/"); }
+    async function call(method, suffix, body, okText) {
+      out.replaceChildren(msg("wait", "Working…"));
+      try { render(await api(method, suffix, body)); out.replaceChildren(okText ? msg("ok", okText) : ""); }
+      catch (err) { if (me) out.replaceChildren(msg("bad", err.message)); }
+    }
+    function termsTable(terms, editable) {
+      var rows = terms.map(function (t) { return Object.assign({}, t); });
+      var body = h("tbody", {});
+      function draw() {
+        body.replaceChildren.apply(body, rows.map(function (t, i) {
+          if (!editable) return h("tr", {}, h("td", { "data-label": "Term" }, h("b", {}, t.canonical)), h("td", { class: "wrap", "data-label": "Also written as" }, t.aliases.join(", ")),
+            h("td", { "data-label": "Type" }, KIND_LABELS[t.kind]), h("td", { "data-label": "Language" }, t.language || "Any"),
+            h("td", { "data-label": "Options" }, [t.case_sensitive ? "Exact case" : "", t.stable ? "Stable" : "", t.enabled ? "" : "Off"].filter(Boolean).join(", ") || "–"));
+          function inp(field, attrs) {
+            var el = h("input", Object.assign({ type: "text", autocomplete: "off" }, attrs));
+            el.value = field === "aliases" ? t.aliases.join(", ") : t[field] || "";
+            el.addEventListener("change", function () { t[field] = field === "aliases" ? el.value.split(",").map(function (s) { return s.trim(); }).filter(Boolean) : el.value.trim(); });
+            return el;
+          }
+          function box(field, label) {
+            var cb = h("input", { type: "checkbox", checked: !!t[field], "aria-label": label + " (" + (t.canonical || "new term") + ")", onchange: function () { t[field] = cb.checked; } });
+            return h("label", { class: "check" }, cb, label);
+          }
+          var kind = selectOf(Object.keys(KIND_LABELS).map(function (k) { return [k, KIND_LABELS[k]]; }), t.kind || "synonym", function () { t.kind = kind.value; }, "Type");
+          return h("tr", {},
+            h("td", { "data-label": "Term" }, inp("canonical", { "aria-label": "Term", placeholder: "e.g. paid time off" })),
+            h("td", { class: "wrap", "data-label": "Also written as" }, inp("aliases", { "aria-label": "Also written as", placeholder: "e.g. PTO, earned leave" })),
+            h("td", { "data-label": "Type" }, kind),
+            h("td", { "data-label": "Language" }, inp("language", { "aria-label": "Language", placeholder: "any", maxlength: "3", size: "3" })),
+            h("td", { "data-label": "Options" }, box("case_sensitive", "Exact case"), box("stable", "Stable"), box("enabled", "On")),
+            h("td", { class: "act" }, h("button", { type: "button", class: "btn small", onclick: function () { rows.splice(i, 1); draw(); } }, "Remove")));
+        }));
+      }
+      draw();
+      var table = h("div", { class: "tablewrap" }, h("table", {}, h("thead", {}, h("tr", {}, ["Term", "Also written as", "Type", "Language", "Options", ""].slice(0, editable ? 6 : 5)
+        .map(function (c) { return h("th", {}, c); }))), body));
+      return { el: table, rows: rows, add: function () { rows.push({ canonical: "", aliases: [], kind: "synonym", language: "", case_sensitive: false, enabled: true, stable: false }); draw(); } };
+    }
+    async function download(versionId) {
+      try {
+        var res = await fetch(API + path() + "/export" + (versionId ? "?version_id=" + versionId : ""), { credentials: "same-origin" });
+        if (!res.ok) throw new Error((await res.json()).detail || "Export failed.");
+        var a = h("a", {}); a.href = URL.createObjectURL(await res.blob()); a.download = "glossary.csv"; document.body.appendChild(a); a.click(); a.remove();
+      } catch (err) { out.replaceChildren(msg("bad", err.message)); }
+    }
+    function conflictList(list) {
+      if (!list || !list.length) return null;
+      return h("div", { class: "msg warn" }, h("div", {}, h("b", {}, "Conflicts: resolve these before publishing."),
+        h("ul", {}, list.map(function (c) { return h("li", {}, "“" + c.form + "” " + CONFLICTS[c.kind] + " (" + c.terms.join(", ") + ")"); }))));
+    }
+    function render(g) {
+      var parts = [];
+      var modeText = g.mode === "off" ? "The glossary is off here, so these terms are not used yet. Turn it on with “Glossary” in Scoped settings (or RAG settings for all)."
+        : g.mode === "index" ? "In use: questions are expanded, and stable terms are added to passages when they are indexed." : "In use: questions are expanded with these terms.";
+      parts.push(h("div", { class: "msg " + (g.mode === "off" ? "warn" : "ok") }, modeText, g.mode === "off" ? goLink("scoped", "Scoped settings") : null));
+      if (g.reindex) parts.push(h("div", { class: "msg warn" }, g.reindex + (g.reindex === 1 ? " document was" : " documents were") + " indexed with other stable terms. Re-index them in KB documents (Re-index all) to use the published terms.", goLink("kbdocs")));
+      // versions
+      parts.push(panel("Versions", "Publishing makes a draft live and archives the version before it. Roll back puts an archived version back in one step.", null,
+        g.versions.length ? h("div", { class: "tablewrap" }, h("table", {}, h("thead", {}, h("tr", {}, ["Version", "Status", "Terms", "Published", ""].map(function (c) { return h("th", {}, c); }))),
+          h("tbody", {}, g.versions.map(function (v) {
+            return h("tr", {}, h("td", { "data-label": "Version" }, "v" + v.version), h("td", { "data-label": "Status" }, h("span", { class: "pill " + (v.status === "Published" ? "ok" : v.status === "Draft" ? "warn" : "off") }, v.status)),
+              h("td", { class: "num", "data-label": "Terms" }, String(v.terms)), h("td", { "data-label": "Published" }, v.published_at ? when(v.published_at) + " by " + v.published_by : "–"),
+              h("td", { class: "act" },
+                v.status === "Draft" ? h("button", { type: "button", class: "btn small primary", onclick: function () { call("POST", "/glossaries/versions/" + v.id + "/publish", {}, "Published. In use from the next question."); } }, "Publish") : null,
+                v.status === "Archived" ? confirmButton("Roll back", "Confirm roll back", function () { call("POST", "/glossaries/versions/" + v.id + "/rollback", {}, "Rolled back. In use from the next question."); }, true) : null,
+                h("button", { type: "button", class: "btn small", onclick: function () { download(v.id); } }, "Export CSV")));
+          })))) : h("p", { class: "empty" }, "No glossary yet. Start a draft below.")));
+      // the draft
+      if (g.draft) {
+        var tt = termsTable(g.draft.terms, true);
+        var file = h("input", { type: "file", accept: ".csv,text/csv", class: "hidden", "aria-label": "CSV file", onchange: async function () {
+          var f = file.files[0]; if (!f) return;
+          call("POST", path() + "/import", { csv: await f.text() }, "Imported into the draft. Publish it to use it.");
+        } });
+        parts.push(panel("Draft v" + g.draft.version, "Edit, then Save draft. Nothing changes for users until you publish. CSV columns: canonical, aliases (separated by |), kind, language, case_sensitive, enabled, stable.", null,
+          conflictList(g.draft.conflicts), tt.el,
+          h("div", { class: "actions" },
+            h("button", { type: "button", class: "btn", onclick: tt.add }, "Add term"),
+            h("button", { type: "button", class: "btn primary", onclick: function () { call("PUT", path() + "/draft", { terms: tt.rows }, "Draft saved."); } }, "Save draft"),
+            h("button", { type: "button", class: "btn", onclick: function () { file.click(); } }, "Import CSV"), file,
+            confirmButton("Discard draft", "Click again to discard", function () { call("DELETE", path() + "/draft", undefined, "Draft discarded."); }, true))));
+      } else {
+        parts.push(panel(g.published ? "Published v" + g.published.version : "Terms", g.published ? "Start a draft to change these terms." : null, null,
+          g.published ? termsTable(g.published.terms, false).el : null,
+          h("div", { class: "actions" }, h("button", { type: "button", class: "btn primary", onclick: function () { call("POST", path() + "/draft", {}, "Draft started from the published terms."); } }, "Start a draft"))));
+      }
+      // test a question
+      if (g.kbs.length) {
+        var kbPick = selectOf(g.kbs.map(function (k) { return [String(k.id), k.name]; }), String(g.kbs[0].id), null, "Knowledge base");
+        var q = h("input", { type: "text", id: "gl_q", autocomplete: "off", placeholder: "e.g. How many PTO days do I get?" });
+        var lang = h("input", { type: "text", id: "gl_lang", autocomplete: "off", placeholder: "any", maxlength: "3", size: "3", "aria-label": "Question language" });
+        var useDraft = h("input", { type: "checkbox", id: "gl_draft", checked: !!g.draft });
+        var result = h("div", { "aria-live": "polite" });
+        parts.push(panel("Test a question", "Shows how a question would be expanded. Nothing is searched and no AI model is called.", null,
+          h("div", { class: "form" },
+            h("div", { class: "field" }, h("span", { class: "l" }, "Knowledge base"), kbPick),
+            h("div", { class: "field wide" }, fieldLabel("gl_q", "Question"), q),
+            h("div", { class: "field" }, fieldLabel("gl_lang", "Language"), lang),
+            g.draft ? h("div", { class: "field" }, h("label", { class: "check", for: "gl_draft" }, useDraft, "Use the draft")) : null),
+          h("div", { class: "actions" }, h("button", { type: "button", class: "btn", onclick: async function () {
+            try {
+              var r = await api("POST", "/glossaries/test", { kb_id: Number(kbPick.value), question: q.value, language: lang.value,
+                draft_scope_type: g.draft && useDraft.checked ? g.scope_type : null, draft_scope_id: g.draft && useDraft.checked ? g.scope_id : null });
+              result.replaceChildren(h("p", {}, h("b", {}, "Searched for: "), r.search_text),
+                r.applied.length ? h("ul", {}, r.applied.map(function (a) { return h("li", {}, "“" + a.matched + "” adds " + a.added.join(", ") + " (" + (a.source === "kb" ? "knowledge base" : "department") + " term)"); }))
+                  : h("p", { class: "meta" }, "No term matched."), r.mode === "off" ? h("div", { class: "meta" }, "The glossary is off for this knowledge base, so real questions are not expanded yet.") : null);
+            } catch (err) { if (me) result.replaceChildren(msg("bad", err.message)); }
+          } }, "Test")), result));
+      }
+      holder.replaceChildren.apply(holder, parts);
+    }
+    async function load() {
+      out.replaceChildren();
+      try { render(await api("GET", path())); }
+      catch (err) { if (me) holder.replaceChildren(msg("bad", err.message)); }
+    }
+    try {
+      var c = await api("GET", "/glossaries/scopes");
+      var options = c.kbs.map(function (k) { return ["kb:" + k.id, "Knowledge base: " + k.name]; })
+        .concat(c.departments.map(function (d) { return ["department:" + d.id, "Department: " + d.name]; }));
+      if (!options.length) { holder.replaceChildren(h("p", { class: "empty" }, "You have no departments or knowledge bases to manage.")); main.appendChild(holder); return; }
+      scope = selectOf(options, options[0][0], load, "Glossary of");
+      scope.id = "gl_scope";
+      main.appendChild(h("section", { class: "panel filterbar" }, h("div", { class: "filters" }, h("div", { class: "field wide" }, fieldLabel("gl_scope", "Glossary of"), scope))));
+      main.append(holder, out);
       load();
     } catch (err) { if (me) { holder.replaceChildren(msg("bad", err.message)); main.appendChild(holder); } }
   }
@@ -1299,7 +1439,9 @@
     "kb.rebuild.fail": "A rebuild failed", "kb.rebuild.cancel": "Cancelled a rebuild", "document.upload": "Uploaded a document", "document.replace": "Replaced a document",
     "document.delete": "Deleted a document", "document.move": "Moved a document", "document.reindex": "Reprocessed a document", "document.access": "Changed who can read a document",
     "embedding.download": "Downloaded a search model", "conversation.view": "Opened a conversation", "trace.view": "Opened an answer trace", "scoped_setting.update": "Changed a scoped setting", "catalog.update": "Changed a system message", "catalog.approve": "Approved a system message",
-    "catalog.draft": "Drafted system messages with AI", "document.summary": "Asked for document summaries", "scoped_setting.reset": "Reset a scoped setting", "conversation.delete": "Deleted a conversation",
+    "catalog.draft": "Drafted system messages with AI", "document.summary": "Asked for document summaries",
+    "glossary.draft": "Changed a glossary draft", "glossary.import": "Imported glossary terms", "glossary.discard": "Discarded a glossary draft",
+    "glossary.publish": "Published a glossary", "glossary.rollback": "Rolled back a glossary", "scoped_setting.reset": "Reset a scoped setting", "conversation.delete": "Deleted a conversation",
     "conversation.export": "Started an export", "conversation.export.done": "Finished an export", "retention.run": "Ran automatic deletion", "alert.resolve": "Dismissed an alert",
     "alert_sinks.update": "Changed alert notifications", "alert_sinks.test": "Tested alert notifications", "price.set": "Set a price", "price.delete": "Removed a price",
     "import": "Imported settings", "audit.cleanup": "Cleaned up the audit log"
@@ -2954,6 +3096,9 @@
       h("div", { class: "meta" }, (t.model ? "Written by " + t.provider + " / " + t.model + " · " : "No model wrote this answer · ") + "Configuration " + (t.config_snapshot_id || "–")),
       t.standalone_query ? h("p", {}, h("b", {}, "Searched for: "), t.search_text) : null,
       t.language_detail ? h("p", { class: "meta" }, languageLine(t.language_detail)) : null,
+      Object.keys(t.glossary || {}).some(function (k) { return t.glossary[k].applied.length; }) ? h("p", { class: "meta" }, "Glossary: " + Object.keys(t.glossary).map(function (k) {
+        return t.glossary[k].applied.map(function (a) { return a.matched + " → " + a.added.join(", "); }).join("; ");
+      }).filter(Boolean).join(" · ")) : null,
       h("p", { class: "meta" }, Object.keys(STAGE_NAMES).filter(function (k) { return k in t.timings; }).map(function (k) { return STAGE_NAMES[k] + " " + t.timings[k] + " ms"; }).join(" · ")),
       t.prompts.length ? h("p", { class: "meta" }, "Prompts: " + t.prompts.map(function (p) { return p.scope + " v" + p.version + " (" + p.status + ")"; }).join(", ")) : null
     ];

@@ -1,7 +1,7 @@
 import logging
 from functools import lru_cache
 import chromadb
-from app import global_settings, keyword_search, scoped_settings, trace
+from app import global_settings, glossary, keyword_search, scoped_settings, trace
 from app.config import settings
 
 log = logging.getLogger(__name__)
@@ -106,6 +106,16 @@ def _search_kb(kb: dict, query: str, k: int, who, min_score: float | None = None
     conf = {key: scoped_settings.for_kb(kb, key) for key in scoped_settings.RETRIEVAL_KEYS}
     strategy = conf["retrieval_strategy"]
     turn = language.current()
+    lang = turn.resolved if turn is not None else ""
+    vector_q = keyword_q = query
+    gmode = glossary.mode(kb)
+    if gmode != "off":
+        # D22: only the search text changes. Index mode: stable terms are already in the passages, so the meaning search adds
+        # only the others; keywords are matched literally, so the keyword search gets every term.
+        every = glossary.expand(query, kb, lang)
+        keyword_q = every.search_text
+        vector_q = keyword_q if gmode == "query" else glossary.expand(query, kb, lang, stable=False).search_text
+        trace.note_glossary(kb, gmode, every, vector_q)
     if turn is not None:
         langs = document_languages(kb)
         turn.doc_languages[str(kb.get("id"))] = langs
@@ -117,18 +127,18 @@ def _search_kb(kb: dict, query: str, k: int, who, min_score: float | None = None
     flt = {"doc_id": {"in": keys}}
     try:
         if strategy == "keyword":
-            hits = [{**h, "via": "keywords"} for h in _keyword_hits(kb, query, k, keys)]
+            hits = [{**h, "via": "keywords"} for h in _keyword_hits(kb, keyword_q, k, keys)]
         elif strategy == "hybrid":
             n = max(k * 3, 20)
-            vector = kbs.store_for(kb).search(query, n, flt)
-            hits = _fuse(vector, _keyword_hits(kb, query, n, keys), conf["hybrid_keyword_weight"])[:k]
+            vector = kbs.store_for(kb).search(vector_q, n, flt)
+            hits = _fuse(vector, _keyword_hits(kb, keyword_q, n, keys), conf["hybrid_keyword_weight"])[:k]
         elif strategy == "mmr":
-            hits = _diverse([{**h, "via": "meaning"} for h in kbs.store_for(kb).search(query, max(k * 4, 20), flt)], k, conf["diversity"])
+            hits = _diverse([{**h, "via": "meaning"} for h in kbs.store_for(kb).search(vector_q, max(k * 4, 20), flt)], k, conf["diversity"])
         else:
-            hits = [{**h, "via": "meaning"} for h in kbs.store_for(kb).search(query, k, flt)]
+            hits = [{**h, "via": "meaning"} for h in kbs.store_for(kb).search(vector_q, k, flt)]
     except NotImplementedError:
         log.warning("%s search is not available for this store; using similarity", strategy)
-        hits = [{**h, "via": "meaning"} for h in kbs.store_for(kb).search(query, k, flt)]
+        hits = [{**h, "via": "meaning"} for h in kbs.store_for(kb).search(vector_q, k, flt)]
     safe = [h for h in hits if access.permits(h["metadata"], who, kb)]
     if len(safe) != len(hits):
         log.error("access filter let through %d passage(s) the chunk metadata does not permit; dropped", len(hits) - len(safe))

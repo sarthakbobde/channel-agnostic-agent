@@ -375,6 +375,13 @@ department's, and a department's beats RAG settings.
 **Monitoring → Conversations**: open a conversation and choose **Why this answer?** under an answer to see what was searched for, the passages found,
 the settings and model used, and the time taken. Passages from documents you may not see show as **Restricted**.
 
+### Glossary
+
+**Input → Glossary**: pick a knowledge base or department, **Start a draft**, add each term with the other ways people write
+it (for example "paid time off": PTO, earned leave), **Save draft**, check it with **Test a question**, then **Publish**.
+Switch it on with **Glossary** in Scoped settings. **Roll back** undoes a publish. **Import CSV** and **Export CSV** move terms in
+and out (columns: canonical, aliases separated by |, kind, language, case_sensitive, enabled, stable).
+
 ### Languages
 
 People can ask in any language (unless **Languages questions may be asked in** is set) and get the answer in that language.

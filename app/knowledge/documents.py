@@ -37,7 +37,8 @@ def _view(d: Document) -> dict:
             "chunks": d.chunks, "uploaded_by": d.uploaded_by, "created_at": d.created_at,
             "updated_at": d.updated_at, "indexed_at": d.indexed_at, "doc_key": d.doc_key, "language": d.language or "",
             "summary": d.summary or "", "summary_lang": d.summary_lang or "", "summary_status": d.summary_status or "",
-            "summary_updated_at": d.summary_updated_at, "content_hash": d.content_hash or "", "summary_hash": d.summary_hash or ""}
+            "summary_updated_at": d.summary_updated_at, "content_hash": d.content_hash or "", "summary_hash": d.summary_hash or "",
+            "glossary_indexed": d.glossary_indexed or ""}
 
 
 def _not_rebuilding(db: Database, kb_id: int) -> None:
@@ -250,18 +251,33 @@ def _retryable(exc: BaseException) -> bool:
     return not isinstance(exc, (ValueError, TypeError, KeyError))     # bad input never gets better by retrying
 
 
-def _add_with_retry(store, ids, texts, metas) -> None:
+def _add_with_retry(store, ids, texts, metas, embed=None) -> None:
     @retry(stop=stop_after_attempt(RETRY_ATTEMPTS), wait=wait_exponential(multiplier=RETRY_WAIT[0], max=RETRY_WAIT[1]),
            retry=retry_if_exception(_retryable), reraise=True)
     def go():
-        store.add(ids, texts, metas)
+        if embed is None:
+            store.add(ids, texts, metas)
+        else:
+            store.add(ids, texts, metas, embed_texts=embed)
     go()
 
 
-def add_in_batches(store, ids, texts, metas, size: int = BATCH) -> None:
-    """Embed and store in batches, retrying a failed batch with backoff (rate limits, brief outages)."""
+def add_in_batches(store, ids, texts, metas, size: int = BATCH, kb: dict | None = None) -> str:
+    """Embed and store in batches, retrying a failed batch with backoff (rate limits, brief outages). With the knowledge base
+    given, passages are embedded with its stable glossary terms when its glossary mode is index (D22). Returns the glossary
+    signature used ("" = none)."""
+    embed, signature = None, ""
+    if kb is not None:
+        from app import glossary
+        try:
+            signature = glossary.index_signature(kb)
+            embed = glossary.index_texts(kb, texts, [m.get("lang", "") for m in metas]) if signature else None
+        except Exception:
+            log.warning("glossary unavailable while indexing; passages are embedded as written", exc_info=True)
+            embed, signature = None, ""
     for i in range(0, len(ids), size):
-        _add_with_retry(store, ids[i:i + size], texts[i:i + size], metas[i:i + size])
+        _add_with_retry(store, ids[i:i + size], texts[i:i + size], metas[i:i + size], embed[i:i + size] if embed else None)
+    return signature
 
 
 def prepare(d: dict, kb: dict, chunker, department: str, access=((), ())) -> tuple[list, list, list]:
@@ -302,11 +318,11 @@ def index_document(db: Database, doc_id: int) -> None:
         n = len(ids)
         store = kbs.store_for(kb)
         store.delete_by_document(d["doc_key"])
-        add_in_batches(store, ids, texts, metas)
+        signature = add_in_batches(store, ids, texts, metas, kb=kb)
         access.sync_chunks(db, d)
         from app.knowledge import doc_summary
         _set(db, doc_id, status="Indexed", error="", chunks=n, indexed_at=_now(), language=metas[0].get("doc_lang", "") if metas else "",
-             content_hash=doc_summary.file_hash(file_path(d).read_bytes()))
+             content_hash=doc_summary.file_hash(file_path(d).read_bytes()), glossary_indexed=signature)
         _clear_failed(db, doc_id)
         log.info("indexed document %s (%s): %d chunks", doc_id, d["name"], n)
         doc_summary.schedule(db, doc_id)          # in the background: indexing never waits for it
@@ -390,6 +406,19 @@ def import_existing(db: Database | None = None) -> int:
         names.add(name.lower())
         made += 1
     return made
+
+
+def set_glossary_indexed(db: Database, doc_id: int, signature: str) -> None:
+    _set(db, doc_id, glossary_indexed=signature)
+
+
+def glossary_stale(db: Database, kb: dict) -> int:
+    """How many indexed documents were embedded with other glossary terms than the knowledge base has now (re-index them)."""
+    from app import glossary
+    want = glossary.index_signature(kb, db).split(" ")[0]
+    with db.session() as s:
+        have = list(s.scalars(select(Document.glossary_indexed).where(Document.kb_id == kb["id"], Document.status == "Indexed")))
+    return sum(1 for h in have if (h or "").split(" ")[0] != want)
 
 
 def backfill_languages(db: Database, kb_id: int) -> int:

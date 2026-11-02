@@ -38,6 +38,7 @@ REGISTRY = {k.name: k for k in (
     Key("default_language", (KB, DEPARTMENT)),
     Key("language_confidence", (KB, DEPARTMENT)),
     Key("summary_enabled", (KB,)),                    # D46
+    Key("glossary_mode", (KB, DEPARTMENT)),           # D22
 )}
 RETRIEVAL_KEYS = ("retrieval_strategy", "hybrid_keyword_weight", "diversity", "top_k")
 

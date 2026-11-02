@@ -232,6 +232,8 @@ def delete_kb(db: Database, kb_id: int) -> dict:
     embeddings.clear_kb_secrets(db, kb_id, STORE_SECRET_OWNER)
     from app import scoped_settings
     scoped_settings.purge(scoped_settings.KB, kb_id, db)
+    from app import glossary
+    glossary.purge(glossary.KB, kb_id, db)
     unbound = []
     with db.session() as s:
         for c in s.scalars(select(Channel)):

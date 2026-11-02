@@ -9,14 +9,14 @@ COMMON = (f"{API}/auth", f"{API}/me")
 # Extra path prefixes an Editor may use. Finer rules (only their own departments) live in departments_api.
 PREFIXES = {
     "admin": (API,),
-    "editor": COMMON + (f"{API}/departments", f"{API}/kbs", f"{API}/documents", f"{API}/groups", f"{API}/directory", f"{API}/prompts", f"{API}/usage", f"{API}/scoped-settings", f"{API}/traces"),
+    "editor": COMMON + (f"{API}/departments", f"{API}/kbs", f"{API}/documents", f"{API}/groups", f"{API}/directory", f"{API}/prompts", f"{API}/usage", f"{API}/scoped-settings", f"{API}/traces", f"{API}/glossaries"),
     "viewer": (),                      # Viewers are people the assistant answers; they have no panel
 }
 
 # Screens (tabs) shown in the panel for each role.
 SCREENS = {
-    "admin": ("channels", "settings", "scoped", "languages", "providers", "signin", "knowledge", "groups", "prompts", "guardrails", "conversations", "usage", "reports", "departments", "users", "audit", "account"),
-    "editor": ("knowledge", "groups", "prompts", "conversations", "scoped", "usage", "departments", "account"),
+    "admin": ("channels", "settings", "scoped", "languages", "providers", "signin", "knowledge", "groups", "prompts", "glossary", "guardrails", "conversations", "usage", "reports", "departments", "users", "audit", "account"),
+    "editor": ("knowledge", "groups", "prompts", "glossary", "conversations", "scoped", "usage", "departments", "account"),
     "viewer": (),
 }
 

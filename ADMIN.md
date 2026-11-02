@@ -96,6 +96,22 @@ once the new version is in use, the screen offers the model's recommended match 
 an estimate. Whole document text is sent to the preferred AI model. Summaries are display only and can be switched off per
 knowledge base (Scoped settings) or for all (RAG settings).
 
+## Glossary
+
+**Input → Glossary** fixes vocabulary mismatch: people ask about "PTO", and the policy says "paid time off". Choose a
+knowledge base or a department, **Start a draft**, add terms (the term, the other ways it is written, and its type), then
+**Save draft** and **Publish**. Acronyms and synonyms work both ways. A preferred term only turns its aliases into the
+preferred wording. Only the search changes: questions and answers keep their own wording, and nobody sees a document they
+could not see before.
+
+A knowledge base's terms win over its department's. **Test a question** shows the expansion without searching. Conflicts
+(the same alias on two terms, or an alias that is itself a term) must be resolved before publishing. **Roll back** restores
+an earlier version from the next question. Terms can be imported and exported as CSV.
+
+The glossary is **off** until **Glossary** is set in Scoped settings (per knowledge base or department) or RAG settings. In
+the "also add stable terms" mode, terms marked **Stable** are added to passages when they are indexed. The screen says how
+many documents to re-index after a change.
+
 ## LLM providers screen
 
 **LLM providers** (earlier called AI models, and before that Providers) controls which AI models answer questions.

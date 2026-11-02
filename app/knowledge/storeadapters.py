@@ -108,11 +108,11 @@ class PgVectorStore(VectorStore):
         return self.embedder.embed_documents(texts)
 
     # ---- interface ----------------------------------------------------------------------------------------------------------------
-    def add(self, ids, texts, metadatas):
+    def add(self, ids, texts, metadatas, embed_texts=None):
         if not ids:
             return
         from psycopg import sql
-        vectors = self._embed_docs(texts)
+        vectors = self._embed_docs(embed_texts or texts)
         with self._connect() as conn:
             self._ensure(conn, len(vectors[0]))
             stmt = sql.SQL("INSERT INTO {} (id, doc_id, content, metadata, embedding) VALUES (%s, %s, %s, %s::jsonb, %s::vector) "
@@ -352,10 +352,10 @@ class AzureSearchStore(VectorStore):
                          else "search.in(doc_id, '" + "|".join(v.replace("'", "''") for v in values) + "', '|')")
         return " and ".join(parts) or None
 
-    def add(self, ids, texts, metadatas):
+    def add(self, ids, texts, metadatas, embed_texts=None):
         if not ids:
             return
-        vectors = self.embedder.embed_documents(texts)
+        vectors = self.embedder.embed_documents(embed_texts or texts)
         self._ensure(len(vectors[0]))
         for i in range(0, len(ids), 100):
             docs = [{"@search.action": "mergeOrUpload", "id": ids[j], "doc_id": str(metadatas[j].get("doc_id", "")), "content": texts[j],

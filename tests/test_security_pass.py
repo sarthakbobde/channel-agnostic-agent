@@ -123,7 +123,7 @@ def test_an_editor_is_refused_on_every_route_their_role_does_not_list(world):
 
 def test_the_editor_and_viewer_route_lists_are_exactly_what_was_approved():
     """Pinned on purpose: widening an Editor's reach must be a visible change to this test, not a quiet edit to the map."""
-    assert roles.PREFIXES["editor"] == tuple(P + x for x in ("/auth", "/me", "/departments", "/kbs", "/documents", "/groups", "/directory", "/prompts", "/usage", "/scoped-settings", "/traces"))
+    assert roles.PREFIXES["editor"] == tuple(P + x for x in ("/auth", "/me", "/departments", "/kbs", "/documents", "/groups", "/directory", "/prompts", "/usage", "/scoped-settings", "/traces", "/glossaries"))
     assert roles.PREFIXES["viewer"] == ()
     assert roles.PREFIXES["admin"] == (P,)
     assert not roles.allowed("editor", P + "/providers") and not roles.allowed("editor", P + "/users") and not roles.allowed("editor", P + "/reports/guardrails")

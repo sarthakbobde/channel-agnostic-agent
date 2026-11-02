@@ -36,7 +36,7 @@ From `docs/development-plan-v4_3-release-2 1.md` (section A5), which has the ful
 | D19 | Answer language | Always the question's language. Low-confidence detection falls back to the conversation's last language, then the KB default | Phase 2 | Proposed |
 | D20 | Embedding model | Per KB. Existing KBs stay on MiniLM until an Admin switches. **Recommended for multilingual KBs: the local multilingual e5-small** (spike below) | Phase 2 | Proposed; re-run on customer data |
 | D21 | Language detection and normalization | A local detector behind an adapter: **fastText lid.176**, confidence threshold **0.5** (spike below). Clean-up only, never translation | Phase 2 | Proposed; re-run on customer data |
-| D22 | Glossary | Query-time expansion of the search text by default. Index-time is optional per KB | Phase 3 | Proposed |
+| D22 | Glossary | Query-time expansion of the search text, as **one combined search string** (the Phase 3 comparison below). Index-time is optional per KB, for terms marked stable. Off by default | Phase 3 | Proposed |
 | D23 | Trace | `answer_id` is the assistant Message id. References only, not the rendered prompt or passage text. Passage text is fetched when viewed, only for viewers who may see the document. Retention follows the conversation | Phase 1 | Proposed |
 | D26 | Suggestions | Generated in the same call, 3 asked for and 2 shown, each through the D40 checks. Off by default | Phase 4 | Proposed |
 | D29 | Message catalogue | English is byte-identical to today. Other languages need Admin approval | Phase 2 | Proposed |
@@ -51,6 +51,20 @@ From `docs/development-plan-v4_3-release-2 1.md` (section A5), which has the ful
 | D40 | Suggestion validation | Not a duplicate, can be answered, passes checks; the best 2 are shown | Phase 4 | Proposed |
 | D46 | Document summary | A background job writes a short summary in the document's language. Display only | Phase 2 | Proposed |
 | D47 | Stored suggestions | Every candidate is stored, masked, with its outcome. Deleted with the conversation | Phase 4 | Proposed |
+
+### Phase 3 comparison: one search string or two searches merged (2026-11-02)
+
+The sample is the repo's `HR-Policy.pdf` (44 passages), 15 questions written by Claude with vocabulary the policy does
+not use (PTO, WFH, POSH, PF, ESI, TA/DA, PMS, "boss", "attire", "quit" and others), and a 15-term glossary. It is a
+stand-in, not customer data.
+
+| Model | No glossary: recall@5 / MRR | One combined string | Two searches merged by rank (RRF) |
+|---|---|---|---|
+| MiniLM | 0.87 / 0.72 | **1.00 / 0.97** | 1.00 / 0.88 |
+| e5-small | 0.80 / 0.63 | **1.00 / 0.92** | 0.93 / 0.74 |
+
+**The single string wins on both models, so it is the default and the only mode built.** The RRF variant was spike code
+only.
 
 ### Phase 2 spike results (2026-11-02)
 
@@ -192,3 +206,12 @@ Embedding models (recall at 5 = the answering section is among the top 5 passage
 | R2-2 | The recommended threshold is offered when switching models | Shown with the rebuild estimate, and offered as a one-click KB override once the new version is in use, not before | Setting e5's 0.75 while the MiniLM index still answers would drop every passage |
 | R2-2 | Polite reply names the accepted languages | Each language is named in its own script (for example "English, हिन्दी") | The person may not read the reply's language |
 | R2-2 | Spikes on the customer sample | Run on stand-in samples (see "Phase 2 spike results"). Numbers must be re-run on customer data | The sample has not arrived |
+| R2-3 | Glossaries per KB or department | One glossary per scope, holding versions. Only one Draft at a time, copied from the Published version when it is started. Prompts allow several drafts | A term list is edited as a whole, so one Draft avoids merging two |
+| R2-3 | Which department's terms apply | The department that owns the knowledge base, as for the other KB settings (R2-1). A department term is left out when any of its forms is already a form of a KB term | One department's terms can never reach another's knowledge bases |
+| R2-3 | Term types | Acronym and synonym expand both ways. Preferred expands one way only: an alias adds the canonical term, and the canonical term adds nothing | Lets a department steer old wording to the current term without diluting searches |
+| R2-3 | Matching | Whole words, using the keyword search's word pattern (combining marks kept). Case is folded unless a term is marked exact case. Simple plurals are folded ("leaves" matches "leave"). A form already in the question is not added again. Longer matches are tried first | D35 word rules. The keyword search's own plural rule turns "leaves" into "leav"; the glossary uses a corrected rule. The keyword search is unchanged |
+| R2-3 | Index-time | Terms marked stable are added to a passage's embedded text when that passage uses them. The stored and displayed text is the original. `VectorStore.add` gains an optional `embed_texts`, and the built-in model is run in the app for it. In index mode, the meaning search adds only the non-stable terms at question time, and the keyword search adds every term | Keywords are matched against the stored text, which has no aliases |
+| R2-3 | The indexed glossary is recorded, and a change flags a re-index | Each document records `<hash> kb@vN department@vN` of the stable terms it was embedded with. The Glossary screen counts documents indexed with other terms and points to Re-index all in KB documents. The existing re-index is used; there is no separate estimate | A per-document record survives partial re-indexing. Re-indexing with the same embedding model costs only the embedding |
+| R2-3 | Publishing with conflicts | Refused (409) until the conflicts listed under the Draft are resolved | An ambiguous alias would expand unpredictably |
+| R2-3 | Trace | `glossary` holds, per KB: the mode, the versions, the terms applied and the texts searched. `search_text` is the expanded meaning-search text. The versions are part of `config_snapshot_id` | Rollback shows up as a different snapshot |
+| R2-3 | Audit | Records counts and version numbers, never the terms | Same rule as the other audit entries |

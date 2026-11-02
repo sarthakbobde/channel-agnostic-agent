@@ -271,7 +271,8 @@ def _build(db: Database, vid: int, actor: str) -> None:
                 if vid in _cancel:
                     raise _Cancelled()
             ids, texts, metas = documents.prepare(d, kb, chunker, department, access.ids_for(db, d['id']))
-            documents.add_in_batches(store, ids, texts, metas)
+            signature = documents.add_in_batches(store, ids, texts, metas, kb=kb)
+            documents.set_glossary_indexed(db, d["id"], signature)
             per_doc[d["id"]] = len(ids)
             total_chunks += len(ids)
             _progress(db, vid, progress_done=i, chunks=total_chunks, documents=i)

@@ -646,6 +646,37 @@ This follows `docs/development-plan-v4_3-release-2 1.md`, on branch `r2/phase-2-
   - Name masking stays English-only.
   - Romanised Hindi is not detected, so it falls back.
 
+## 23. Release 2, Phase 3: glossary of acronyms and synonyms (2026-11-02)
+
+This follows `docs/development-plan-v4_3-release-2 1.md`, on branch `r2/phase-3-glossary`, which is built on Phase 2. Deviations are marked R2-3 in `DECISIONS.md`.
+
+- **Data.** `glossaries`, `glossary_versions` and `glossary_terms` (migration 0029).
+  - One glossary per knowledge base or department. Versions are Draft, Published or Archived, like prompts.
+  - Each term has its canonical form, its aliases, a type (acronym, synonym or preferred), an optional language, exact case, on/off, and stable.
+  - `glossary_mode` (off, query or index; off by default) is a scoped setting for a KB or department. The caps (5 terms and 3 forms per question) are in Global Settings.
+  - A deleted KB or department takes its glossary with it.
+- **Resolver** (`app/glossary.py`).
+  - A KB's terms beat its department's. Matching is on whole words, multi-word terms included, with the keyword search's word rules.
+  - A term with a language applies only to questions in that language.
+  - Results are cached for 2 seconds, and publishing or rolling back clears the cache.
+- **Query time.** Each KB's search text is the standalone query plus the other forms of the matched terms, and it feeds both the meaning and the keyword search. The question in the prompt, the memory and the answer are unchanged, and the asker's allow-list applies as before. The terms applied, the versions and the texts searched go into the trace and the snapshot.
+- **Choosing the default.** One combined search string beat two searches merged by rank on both models: recall at 5 1.00 and MRR 0.97 against 0.88 with MiniLM, and 1.00/0.92 against 0.93/0.74 with e5. See `DECISIONS.md`.
+- **Index time.**
+  - Terms marked stable are added to a passage's embedded text, while the stored and displayed text stays the original (`VectorStore.add(..., embed_texts=)` on Chroma, pgvector and Azure).
+  - Each document records the glossary it was indexed with. The Glossary screen counts the documents to re-index after a change.
+- **Glossary screen** (Input → Glossary), for Admins and for Editors in their own departments:
+  - the versions, with Publish, Roll back and Export CSV;
+  - a draft term editor, with Add term, Save draft, Import CSV and Discard;
+  - a conflicts report, and publishing is refused while there are conflicts;
+  - a "Test a question" view that shows the expansion, with or without the draft, and searches nothing.
+  - The trace view lists the terms applied. Every change is audited, with counts and versions only.
+- **Tests.** `tests/test_release2_glossary.py` has 16 tests. These pinned lists were updated on purpose: the Editor route list (`/glossaries`), the Editor screens, the Global Settings fields, and the migration head and tables.
+- **Results:**
+  - **SQLite:** 478 passed, 12 skipped, 2 deselected.
+  - **PostgreSQL and pgvector:** not run, because Docker Desktop is not running. The pgvector and Azure `embed_texts` paths are covered only by reading the code; no test exercises them.
+  - **Browser:** the admin page script passes a syntax check, and its API calls are tested, but the Glossary screen has not been opened in a browser.
+- **Still needed from people:** a seed glossary per department, and a named owner who approves changes (plan, section 0).
+
 ## How to run
 
 ```powershell

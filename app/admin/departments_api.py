@@ -172,5 +172,7 @@ def delete_department(did: int, sess: Session = Depends(admin_session), ctx: Adm
         s.execute(delete(DepartmentEditor).where(DepartmentEditor.department_id == did))
         s.delete(d)
     scoped_settings.purge(scoped_settings.DEPARTMENT, did, ctx.db)
+    from app import glossary
+    glossary.purge(glossary.DEPARTMENT, did, ctx.db)
     ctx.store.record(sess.email, "department.delete", name)
     return {"ok": True}

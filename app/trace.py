@@ -38,6 +38,7 @@ class Recorder:
         self.models: list[dict] = []
         self.timings: dict[str, int] = {}
         self.language = None               # the turn's LanguageContext (Phase 2)
+        self.glossary: dict = {}           # kb id -> {mode, versions, applied, search_text} (Phase 3)
         self.saved = False
 
     @contextlib.contextmanager
@@ -59,6 +60,8 @@ class Recorder:
                   "prompts": {k: v["id"] for k, v in self.prompts.items()}, "retrieval": self.retrieval}
         if self.language is not None:
             config["language"] = {"resolved": self.language.resolved, "accepted": self.language.accepted}
+        if self.glossary:
+            config["glossary"] = {k: {"mode": v["mode"], "versions": v["versions"]} for k, v in self.glossary.items()}
         return hashlib.sha256(json.dumps(config, sort_keys=True, default=str).encode()).hexdigest()[:16]
 
 
@@ -81,6 +84,18 @@ def note_search(kb: dict, conf: dict, threshold: float | None, hits: list[dict],
     rec.hits += [{"kb_id": kb.get("id"), "doc_id": h.get("doc_pk"), "chunk_id": h.get("id"), "score": h.get("score"), "rank": rank,
                   "via": h.get("via", "meaning"), "above_threshold": threshold is None or h.get("score", 0) >= threshold, "used": False}
                  for rank, h in enumerate(hits, 1)]
+
+
+@_safe
+def note_glossary(kb: dict, mode: str, expansion, vector_text: str) -> None:
+    """The glossary terms applied to one knowledge base's search, and the text each search used."""
+    rec = _recorder.get()
+    if rec is None:
+        return
+    rec.glossary[str(kb.get("id"))] = {"mode": mode, "versions": expansion.versions, "applied": expansion.applied,
+                                       "search_text": expansion.search_text, "vector_text": vector_text}
+    if expansion.applied and rec.search_text == rec.standalone_query:
+        rec.search_text = vector_text
 
 
 @_safe
@@ -120,6 +135,6 @@ def save(rec: Recorder, turn, *, complete: bool, found: bool, searched: bool, db
                           found=found, searched=searched, standalone_query=rec.standalone_query, search_text=rec.search_text,
                           hits=rec.hits, retrieval=rec.retrieval, prompt_versions=rec.prompts, provider=used.get("provider", ""),
                           model=used.get("model", ""), fallback_used=any(m["fallback"] for m in rec.models), timings=rec.timings,
-                          glossary={}, config_snapshot_id=rec.snapshot_id(), language=lang.resolved if lang else "",
+                          glossary=rec.glossary, config_snapshot_id=rec.snapshot_id(), language=lang.resolved if lang else "",
                           language_confidence=lang.confidence if lang else None, language_detail=lang.as_dict() if lang else None))
     rec.saved = True

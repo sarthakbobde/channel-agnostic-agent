@@ -141,6 +141,7 @@ class Document(Base):
     summary_status: Mapped[str] = mapped_column(String(12), default="")       # "" | Pending | Ready | Failed
     summary_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     summary_hash: Mapped[str] = mapped_column(String(64), default="")         # content_hash the summary was written from
+    glossary_indexed: Mapped[str] = mapped_column(String(120), default="")    # "<hash> <versions>" of index-time glossary terms
     __table_args__ = (UniqueConstraint("kb_id", "name", name="uq_documents_kb_name"),)
 
 
@@ -347,6 +348,9 @@ class GlobalSettings(Base):
     catalog_languages: Mapped[list | None] = mapped_column(JSON, nullable=True)    # languages with system texts besides English
     summary_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     summary_max_input_tokens: Mapped[int] = mapped_column(Integer, default=6000)
+    glossary_mode: Mapped[str] = mapped_column(String(8), default="off")        # off | query | index (Phase 3)
+    glossary_max_terms: Mapped[int] = mapped_column(Integer, default=5)
+    glossary_max_aliases: Mapped[int] = mapped_column(Integer, default=3)
 
 
 class JobLock(Base):
@@ -454,6 +458,42 @@ class AnswerTrace(Base):
     config_snapshot_id: Mapped[str] = mapped_column(String(32), default="")
     language_detail: Mapped[dict | None] = mapped_column(JSON, nullable=True)   # detection, fallback, accepted list, retry
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class Glossary(Base):
+    """A knowledge base's or a department's glossary (D22). Its terms live in versions."""
+    __tablename__ = "glossaries"
+    __table_args__ = (UniqueConstraint("scope_type", "scope_id", name="uq_glossaries_scope"),)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    scope_type: Mapped[str] = mapped_column(String(16))                    # kb | department
+    scope_id: Mapped[int] = mapped_column(Integer)
+    created_by: Mapped[str] = mapped_column(String(254), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class GlossaryVersion(Base):
+    __tablename__ = "glossary_versions"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    glossary_id: Mapped[int] = mapped_column(Integer, index=True)
+    version: Mapped[int] = mapped_column(Integer)
+    status: Mapped[str] = mapped_column(String(12), default="Draft")      # Draft | Published | Archived
+    created_by: Mapped[str] = mapped_column(String(254), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    published_by: Mapped[str] = mapped_column(String(254), default="")
+    published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class GlossaryTerm(Base):
+    __tablename__ = "glossary_terms"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    version_id: Mapped[int] = mapped_column(Integer, index=True)
+    canonical: Mapped[str] = mapped_column(String(200))
+    aliases: Mapped[list] = mapped_column(JSON, default=list)
+    kind: Mapped[str] = mapped_column(String(12), default="synonym")      # acronym | synonym | preferred
+    language: Mapped[str] = mapped_column(String(16), default="")         # "" = any language
+    case_sensitive: Mapped[bool] = mapped_column(Boolean, default=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    stable: Mapped[bool] = mapped_column(Boolean, default=False)          # may be added to passages at index time
 
 
 class MessageCatalogEntry(Base):

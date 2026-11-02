@@ -42,8 +42,12 @@ class Snapshot:
     catalog_languages: tuple = ()
     summary_enabled: bool = True
     summary_max_input_tokens: int = 6000
+    glossary_mode: str = "off"
+    glossary_max_terms: int = 5
+    glossary_max_aliases: int = 3
 
 
+GLOSSARY_MODES = {"off": "Off", "query": "Expand questions (recommended)", "index": "Also add stable terms to passages when indexing"}
 LIST_FIELDS = ("accepted_languages", "document_languages", "catalog_languages")
 
 STRATEGIES = {
@@ -96,6 +100,12 @@ SPEC = (
      "help": "Two-letter codes, comma-separated, of the languages that get their own system messages besides English. Add one here, then write or draft its messages in the Message catalogue."},
     {"name": "summary_enabled", "label": "Write a summary of each document", "kind": "bool",
      "help": "When a document is indexed, the preferred AI model writes a 2 to 3 sentence summary in the document's language, shown in the documents table. Display only: never used to answer."},
+    {"name": "glossary_mode", "label": "Glossary", "kind": "choice", "choices": list(GLOSSARY_MODES), "choice_labels": GLOSSARY_MODES,
+     "help": "Off by default. Expand questions: a question that uses a term or one of its aliases is also searched with the other forms (only the search changes, never the question or the answer). Also add stable terms: terms marked stable are added to passages when they are indexed, which needs a re-index after each change."},
+    {"name": "glossary_max_terms", "label": "Glossary: most terms applied per question", "min": 1, "max": 20, "step": 1, "integer": True,
+     "help": "How many glossary terms one question can be expanded with. Default 5."},
+    {"name": "glossary_max_aliases", "label": "Glossary: most forms added per term", "min": 1, "max": 10, "step": 1, "integer": True,
+     "help": "How many other forms of one term are added. Default 3."},
     {"name": "summary_max_input_tokens", "label": "Longest text read for a summary (tokens)", "min": 500, "max": 50000, "step": 500, "integer": True,
      "help": "A longer document is summarised section by section, and only this much of it is read. A token is about four characters. Default 6000."},
 )
@@ -114,7 +124,7 @@ def defaults() -> Snapshot:
                     summarise_after_turns=env.summarise_after_turns, retention_job_enabled=True, export_enabled=False,
                     chat_rate_per_minute=20, retrieval_strategy="similarity", hybrid_keyword_weight=0.5, diversity=0.3,
                     accepted_languages=(), document_languages=(), default_language="en", language_confidence=0.5, catalog_languages=(),
-                    summary_enabled=True, summary_max_input_tokens=6000)
+                    summary_enabled=True, summary_max_input_tokens=6000, glossary_mode="off", glossary_max_terms=5, glossary_max_aliases=3)
 
 
 def _snapshot(row: GlobalSettings) -> Snapshot:
@@ -123,7 +133,8 @@ def _snapshot(row: GlobalSettings) -> Snapshot:
                     row.export_enabled, row.chat_rate_per_minute, row.retrieval_strategy, row.hybrid_keyword_weight, row.diversity,
                     tuple(row.accepted_languages or ()), tuple(row.document_languages or ()), row.default_language or "en",
                     row.language_confidence if row.language_confidence is not None else 0.5, tuple(row.catalog_languages or ()),
-                    row.summary_enabled if row.summary_enabled is not None else True, row.summary_max_input_tokens or 6000)
+                    row.summary_enabled if row.summary_enabled is not None else True, row.summary_max_input_tokens or 6000,
+                    row.glossary_mode or "off", row.glossary_max_terms or 5, row.glossary_max_aliases or 3)
 
 
 def _read(db: Database) -> tuple[Snapshot, GlobalSettings]:
