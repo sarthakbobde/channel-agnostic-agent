@@ -40,7 +40,7 @@ class Snapshot:
     default_language: str = "en"
     language_confidence: float = 0.5
     catalog_languages: tuple = ()
-    summary_enabled: bool = True
+    summary_enabled: bool = False
     summary_max_input_tokens: int = 6000
     glossary_mode: str = "off"
     glossary_max_terms: int = 5
@@ -107,7 +107,7 @@ SPEC = (
     {"name": "catalog_languages", "label": "Message languages", "kind": "list",
      "help": "Two-letter codes, comma-separated, of the languages that get their own system messages besides English. Add one here, then write or draft its messages in the Message catalogue."},
     {"name": "summary_enabled", "label": "Write a summary of each document", "kind": "bool",
-     "help": "When a document is indexed, the preferred AI model writes a 2 to 3 sentence summary in the document's language, shown in the documents table. Display only: never used to answer."},
+     "help": "Off by default. When a document is indexed, the preferred AI model writes a 2 to 3 sentence summary in the document's language, shown in the documents table. Whole document text is sent to that model. Display only: never used to answer."},
     {"name": "glossary_mode", "label": "Glossary", "kind": "choice", "choices": list(GLOSSARY_MODES), "choice_labels": GLOSSARY_MODES,
      "help": "Off by default. Expand questions: a question that uses a term or one of its aliases is also searched with the other forms (only the search changes, never the question or the answer). Also add stable terms: terms marked stable are added to passages when they are indexed, which needs a re-index after each change."},
     {"name": "glossary_max_terms", "label": "Glossary: most terms applied per question", "min": 1, "max": 20, "step": 1, "integer": True,
@@ -146,7 +146,7 @@ def defaults() -> Snapshot:
                     summarise_after_turns=env.summarise_after_turns, retention_job_enabled=True, export_enabled=False,
                     chat_rate_per_minute=20, retrieval_strategy="similarity", hybrid_keyword_weight=0.5, diversity=0.3,
                     accepted_languages=(), document_languages=(), default_language="en", language_confidence=0.5, catalog_languages=(),
-                    summary_enabled=True, summary_max_input_tokens=6000, glossary_mode="off", glossary_max_terms=5, glossary_max_aliases=3,
+                    summary_enabled=False, summary_max_input_tokens=6000, glossary_mode="off", glossary_max_terms=5, glossary_max_aliases=3,
                     suggestions_enabled=False, suggestions_requested=3, suggestions_shown=2, suggestions_dedup_threshold=0.9,
                     suggestions_mode="same_call", suggestions_max_searches=3, suggestions_payload_days=14)
 
@@ -157,7 +157,7 @@ def _snapshot(row: GlobalSettings) -> Snapshot:
                     row.export_enabled, row.chat_rate_per_minute, row.retrieval_strategy, row.hybrid_keyword_weight, row.diversity,
                     tuple(row.accepted_languages or ()), tuple(row.document_languages or ()), row.default_language or "en",
                     row.language_confidence if row.language_confidence is not None else 0.5, tuple(row.catalog_languages or ()),
-                    row.summary_enabled if row.summary_enabled is not None else True, row.summary_max_input_tokens or 6000,
+                    bool(row.summary_enabled), row.summary_max_input_tokens or 6000,
                     row.glossary_mode or "off", row.glossary_max_terms or 5, row.glossary_max_aliases or 3,
                     bool(row.suggestions_enabled), row.suggestions_requested or 3, row.suggestions_shown or 2,
                     row.suggestions_dedup_threshold or 0.9, row.suggestions_mode or "same_call", row.suggestions_max_searches or 3,

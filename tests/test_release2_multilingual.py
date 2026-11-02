@@ -71,6 +71,7 @@ def world():
     kbs.ensure_default(db)
     prompts.seed(db)
     catalog.seed(db)
+    global_settings.update({"summary_enabled": True}, "t", db)          # off by default; these tests are about summaries
     w = types.SimpleNamespace(db=db)
     with db.session() as s:
         s.add(Department(name="MlHR", retention_days=30, banned_topics="", is_default=False))

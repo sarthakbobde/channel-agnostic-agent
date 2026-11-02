@@ -1,0 +1,8 @@
+canonical,aliases,kind,language,case_sensitive,enabled,stable
+virtual private network,VPN,acronym,,false,true,false
+multi-factor authentication,MFA|2FA|two-factor authentication,acronym,,false,true,false
+single sign-on,SSO,acronym,,false,true,false
+password reset,forgot password|reset my password|locked out,synonym,,false,true,false
+laptop,notebook|PC|computer,synonym,,false,true,false
+IT service desk,helpdesk|help desk|support ticket,synonym,,false,true,false
+bring your own device,BYOD|personal device,acronym,,false,true,false

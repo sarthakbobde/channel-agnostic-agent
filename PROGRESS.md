@@ -719,6 +719,70 @@ This follows `docs/development-plan-v4_3-release-2 1.md`, on branch `r2/phase-4-
   - Google Chat: card clicks switched on for the app.
   - The privacy sign-off for storing suggestions.
 
+## 25. Release 2 acceptance checklist (2026-11-02)
+
+On branch `r2/release-acceptance`, built on Phase 4.
+
+- **Combined scenarios** (`tests/test_release2_acceptance.py`).
+  - A Hindi question using an English acronym from the department glossary, across two KBs with different embedders (MiniLM and the multilingual e5), with suggestions on. It is answered in Hindi, the term is expanded in both KBs, both are searched, the restricted document stays out, and the suggestions are signed buttons.
+  - The other paths are covered by the phase tests: a French question refused by the accepted list, a Hindi upload with a Hindi summary, and a reopened conversation showing its stored suggestions.
+  - A suggestion click goes through each chat app's own handler: Slack's action handler, Teams' Action.Submit on the messages endpoint, and Google Chat's events endpoint in both formats, with signed tokens.
+- **Search budget and latency.**
+  - With all three features on, this server's own time per question is 1.2 s median and 1.4 s p95 (10 questions, instant stand-in models).
+  - The live format check adds about 0.4 s of model time with gpt-4.1, against a 1.1 s answer. Google Chat stays well under its 20-second target.
+  - The ceiling on searches per question: one per knowledge base asked (hybrid adds a keyword lookup on the same KB, and glossary expansion adds no search), plus up to `suggestions_max_searches` (3) to check suggestions.
+  - **Memory:** the app with every model loaded (MiniLM, e5-small, the personal-data detector and fastText) uses about 630 MB of Cloud Run's 2 GiB. e5 alone is about 370 MB and loads only when a KB uses it.
+- **Adversarial permissions.** Glossary expansion, suggestions and traces were checked against a document restricted to one person, on Chroma and the Azure AI Search stand-in. The asker never gets it, an Editor of another department gets 404, and the person allowed still gets it. pgvector is skipped without `TEST_PGVECTOR_URL`.
+  - Admins, and Editors of the owning department, can read every document of the KBs they manage in a trace. This is the access rule from Phase 4a, unchanged.
+- **Upgrade and data checks.**
+  - Load: 12 concurrent questions all answer, with one trace each.
+  - The upgrade from a database created before migrations runs through 0030 (`tests/test_migrations.py`).
+  - Key rotation, including the derived action key, is covered (`test_payloads_survive_key_rotation`), and so is retention (Phases 1 and 4).
+  - **PostgreSQL was not run:** Docker Desktop is off.
+- **Documentation:** `TRACEABILITY.md` (Release 2 rows R2.1 to R2.22), `PLATFORM_RUNBOOK.md` (suggestion buttons per platform), `RUNNING.md` (model files) and a new `CLAUDE.md` with the Part A rules. `ADMIN.md` and `USER_MANUAL.md` were updated in each phase.
+- **Results:** SQLite: 510 passed, 15 skipped, 2 deselected. The skips are the pgvector runs and Docker-only tests.
+
+### Prepared for the UAT push (2026-11-02, your decisions)
+
+- **Document summaries** are off by default. Turn them on in RAG settings → Document summaries, or per knowledge base in Scoped settings.
+- **Hindi system messages** are pre-written as drafts (`catalog.HINDI`). They were written by Claude and not yet checked by a native speaker. An Admin approves them with **Approve all drafts** on the Languages screen.
+- **The multilingual search model** (e5-small) is baked into the Docker image, because Cloud Run's disk does not keep a downloaded model.
+- **Starter glossaries:** `glossaries/hr.csv` (27 terms, including 7 Hindi) and `glossaries/it.csv` (7 terms). Both have no conflicts. Import them on the Glossary screen.
+- **No PostgreSQL run before the push.** By your decision, testing happens on GCP.
+
+### Still to do by people
+
+1. **Run the suite on PostgreSQL and pgvector** (`TEST_DB=postgres`, and `TEST_PGVECTOR_URL` for pgvector). This needs Docker Desktop started. It is pending for every Release 2 phase.
+2. **Privacy sign-off** for storing traces and suggestions, and for Editors reading their own departments' masked conversations (R2-1).
+3. **Customer data for the spikes:** 50 to 100 documents and the question pairs. Then re-run the detector and embedding comparisons, and set the real recall targets.
+4. **Languages:**
+   - Choose the first languages and the accepted list.
+   - A native speaker approves each language's messages and word lists.
+   - Agree that document text may be sent to the preferred model for summaries.
+5. **A seed glossary per department,** with a named owner.
+6. **Chat apps:**
+   - Slack: Interactivity on, then reinstall.
+   - Teams: the Azure approval and the tenant (resources recreated in sysfore.com).
+   - Google Chat: a Workspace check of card clicks, which records D30.
+7. **Open items:**
+   - The web chat's rating buttons, now that feedback is out of scope.
+   - Merging the branches to `main`.
+   - A UAT deploy.
+
+### Decisions still Proposed
+
+D18 to D23, D26, D29 to D31, D33, D35, D37, D39, D40, D46 and D47 are Proposed. D34 and D36 were confirmed on 2026-11-02. D20, D21 and D31 wait for customer data, and D30 waits for the Google Chat check.
+
+### Known limits
+
+- **Romanised Hindi** is not detected, so it falls back.
+- **Name masking** is English-only.
+- **Short Hindi and Marathi phrases** can be confused with each other.
+- **The fallback model** (DeepSeek) omits the suggestion block in some replies, so those answers show no suggestions.
+- **A rate-limited Web UI click** uses up the button.
+- **fastText is archived upstream.**
+- **No browser or live chat-app testing.** The admin screens, the Web UI and the chat apps were not tried in a browser or a real tenant.
+
 ## How to run
 
 ```powershell

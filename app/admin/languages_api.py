@@ -50,6 +50,13 @@ def approve_entry(key: str, lang: str, s: Session = Depends(admin_session), ctx:
     return catalog.view(ctx.db)
 
 
+@router.post("/catalog/{lang}/approve-all")
+def approve_language(lang: str, s: Session = Depends(admin_session), ctx: AdminContext = Depends(get_ctx)):
+    n = catalog.approve_all(lang, s.email, ctx.db)
+    ctx.store.record(s.email, "catalog.approve", lang, f"{n} drafts approved")
+    return {**catalog.view(ctx.db), "approved": n}
+
+
 @router.post("/catalog/{lang}/draft")
 def draft_language(lang: str, s: Session = Depends(admin_session), ctx: AdminContext = Depends(get_ctx)):
     """Draft the missing messages of a language with the preferred AI model. Drafts are not used until approved."""

@@ -346,7 +346,7 @@ class GlobalSettings(Base):
     default_language: Mapped[str] = mapped_column(String(16), default="en")        # last fallback when detection is unsure
     language_confidence: Mapped[float] = mapped_column(Float, default=0.5)
     catalog_languages: Mapped[list | None] = mapped_column(JSON, nullable=True)    # languages with system texts besides English
-    summary_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    summary_enabled: Mapped[bool] = mapped_column(Boolean, default=False)   # sends document text to the model: off until agreed
     summary_max_input_tokens: Mapped[int] = mapped_column(Integer, default=6000)
     glossary_mode: Mapped[str] = mapped_column(String(8), default="off")        # off | query | index (Phase 3)
     glossary_max_terms: Mapped[int] = mapped_column(Integer, default=5)

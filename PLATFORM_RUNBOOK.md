@@ -40,3 +40,10 @@ python -m pytest -m live tests/test_live_platforms.py
 - The Teams token validation is Microsoft's own library; the tests replace it with a stand-in for the good-token case and
   confirm that missing and forged tokens are refused. Its good-token path is only proven by a real Teams message.
 - Teams email lookup uses the Teams roster and is unverified on a real tenant.
+
+## Release 2: suggestion buttons (human steps)
+
+- **Slack:** in the Slack app settings, switch on **Interactivity & Shortcuts** (Socket Mode needs no request URL), then reinstall the app. Without it, Slack does not deliver button clicks.
+- **Teams:** suggestions arrive as an Adaptive Card with Action.Submit buttons. A click comes back as a message with a `value` and no text, on the same endpoint. Check it in the test tenant once Azure approval arrives.
+- **Google Chat:** buttons are cardsV2 in the synchronous reply, and clicks come back on the same endpoint (classic `CARD_CLICKED` or the add-on `commonEventObject`). Make sure the app is allowed to receive card clicks. If they do not work in your Workspace, switch **Suggestions as buttons** off on the channel to show them as text.
+- **Web UI:** nothing to do.

@@ -47,6 +47,29 @@ TEXTS = {
 }
 KEYS = tuple(TEXTS)
 
+# Hindi, written by Claude (not yet reviewed by a native speaker). Seeded as Drafts: never used until an Admin approves them.
+HINDI = {
+    "not_found": "मुझे यह जानकारी ज्ञानकोष में नहीं मिली।",
+    "blocked": "मैं इस अनुरोध में मदद नहीं कर सकता। अगर आपको लगता है कि यह गलती है, तो किसी व्यवस्थापक से संपर्क करें।",
+    "friendly_error": "क्षमा करें, मैं अभी इसे संसाधित नहीं कर सकता। कृपया थोड़ी देर बाद फिर से कोशिश करें।",
+    "error": "क्षमा करें, उत्तर देते समय कुछ गड़बड़ हो गई। कृपया फिर से कोशिश करें।",
+    "slow_down": "आप बहुत जल्दी-जल्दी पूछ रहे हैं। कृपया थोड़ा रुककर फिर से कोशिश करें।",
+    "slow_down_wait": "आप बहुत जल्दी-जल्दी पूछ रहे हैं। कृपया {seconds} सेकंड रुककर फिर से कोशिश करें।",
+    "denied": "इस सहायक तक आपकी पहुँच बंद कर दी गई है। कृपया किसी व्यवस्थापक से संपर्क करें।",
+    "provider_refused": "AI सेवा ने इस संदेश को संसाधित करने से मना कर दिया। कृपया अपना प्रश्न दूसरे शब्दों में लिखकर फिर से कोशिश करें।",
+    "gchat_timeout": "इसमें बहुत समय लग गया। कृपया फिर से कोशिश करें, या छोटा प्रश्न पूछें।",
+    "language_not_supported": "क्षमा करें, मैं केवल इन भाषाओं में प्रश्नों के उत्तर दे सकता हूँ: {languages}।",
+    "sources": "स्रोत",
+    "web_session_ended": "आपका सत्र समाप्त हो गया है। साइन आउट करें (ऊपर दाईं ओर) और फिर से साइन इन करें।",
+    "web_try_again": "कृपया फिर से कोशिश करें।",
+    "web_error": "हमारी ओर से कुछ गड़बड़ हो गई (त्रुटि {status})। कृपया फिर से कोशिश करें।",
+    "suggested": "सुझाए गए प्रश्न",
+    "suggestion_invalid": "यह बटन मान्य नहीं है।",
+    "suggestion_expired": "इस सुझाव की समय-सीमा समाप्त हो गई है। कृपया प्रश्न खुद लिखें।",
+    "suggestion_not_yours": "इन सुझावों का उपयोग केवल वही व्यक्ति कर सकता है जिसने प्रश्न पूछा था।",
+}
+DRAFTS = {"hi": HINDI}
+
 _cache: dict[int, tuple[float, dict]] = {}
 _lock = threading.Lock()
 
@@ -221,12 +244,29 @@ def draft_with_ai(lang: str, actor: str, db: Database | None = None) -> int:
 
 
 def seed(db: Database | None = None) -> None:
-    """First start: the English texts become Approved entries (built-in). Idempotent; an Admin's edit is never replaced."""
+    """First start: the English texts become Approved entries (built-in), and the built-in translations become Drafts.
+    Idempotent: nothing an Admin has saved is ever replaced."""
     db = db or get_db()
     with db.session() as s:
-        have = set(s.scalars(select(MessageCatalogEntry.key).where(MessageCatalogEntry.lang == "en")))
+        have = set(s.execute(select(MessageCatalogEntry.key, MessageCatalogEntry.lang)).all())
         for key, (text, _) in TEXTS.items():
-            if key not in have and key != "blocked":
+            if (key, "en") not in have and key != "blocked":
                 s.add(MessageCatalogEntry(key=key, lang="en", text=text, status=APPROVED, source="built-in",
                                           updated_by="system (built-in text)"))
+        for lang, texts in DRAFTS.items():
+            for key, text in texts.items():
+                if (key, lang) not in have:
+                    s.add(MessageCatalogEntry(key=key, lang=lang, text=text, status=DRAFT, source="built-in draft",
+                                              updated_by="system (built-in draft)"))
     invalidate()
+
+
+def approve_all(lang: str, actor: str, db: Database | None = None) -> int:
+    """Approve every Draft of one language (after someone has read them). Returns how many."""
+    db = db or get_db()
+    with db.session() as s:
+        rows = list(s.scalars(select(MessageCatalogEntry).where(MessageCatalogEntry.lang == lang, MessageCatalogEntry.status == DRAFT)))
+        for r in rows:
+            r.status, r.updated_by = APPROVED, actor
+    invalidate()
+    return len(rows)

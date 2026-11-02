@@ -36,6 +36,10 @@ USER agent
 # Bake the default embedding model (about 80 MB) into the image, so a fresh container never downloads it
 RUN python -c "from chromadb.utils.embedding_functions import DefaultEmbeddingFunction as F; F()(['warm up'])"
 
+# ...and the local multilingual model (multilingual-e5-small, about 129 MB, MIT licence) for knowledge bases that answer
+# questions in several languages. MODELS_DIR is /app/models on Cloud Run, which is not a volume, so it must be in the image.
+RUN python -c "from app.knowledge.embeddings import LocalMultilingualEmbeddings as M; M.download(); assert M.available()"
+
 EXPOSE 8000 8090
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=40s --retries=3 \

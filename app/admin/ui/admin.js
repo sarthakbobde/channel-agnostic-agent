@@ -1154,12 +1154,17 @@
         try { var d = await api("POST", "/catalog/" + lang + "/draft", {}); draw(d, msg("ok", d.drafted + " drafted. Check each one, then Approve it.")); }
         catch (err) { if (me) out.replaceChildren(msg("bad", err.message)); }
       } }, "Draft missing messages with AI") : null;
+      var drafts = c.keys.filter(function (k) { return (k.entries[lang] || {}).status === "Draft"; }).length;
+      var approveAll = lang !== "en" && drafts ? confirmButton("Approve all " + drafts + " drafts", "Click again: approve them all", async function () {
+        try { var d = await api("POST", "/catalog/" + lang + "/approve-all", {}); draw(d, msg("ok", d.approved + " approved.")); }
+        catch (err) { if (me) out.replaceChildren(msg("bad", err.message)); }
+      }, true) : null;
       var body = h("tbody", {});
       c.keys.forEach(function (k) {
         var e = k.entries[lang] || { text: "", status: "Missing" };
         var area = h("textarea", { rows: "2", "aria-label": k.key + " in " + lang, disabled: !!e.linked, lang: lang });
         area.value = e.text || "";
-        var status = e.status === "Approved" ? h("span", { class: "pill ok" }, "Approved") : e.status === "Draft" ? h("span", { class: "pill warn" }, e.source === "ai-draft" ? "AI draft" : "Draft") : h("span", { class: "pill off" }, "Missing");
+        var status = e.status === "Approved" ? h("span", { class: "pill ok" }, "Approved") : e.status === "Draft" ? h("span", { class: "pill warn" }, e.source === "ai-draft" ? "AI draft" : e.source === "built-in draft" ? "Built-in draft" : "Draft") : h("span", { class: "pill off" }, "Missing");
         body.appendChild(h("tr", {},
           h("td", { class: "wrap", "data-label": "Message" }, h("b", {}, k.key), h("div", { class: "meta" }, k.purpose), lang !== "en" ? h("div", { class: "meta" }, "English: " + k.entries.en.text) : null),
           h("td", { class: "wrap", "data-label": "Text" }, area, e.linked ? h("div", { class: "meta" }, "Edit it on the Guardrails screen (Blocked reply).") : null),
@@ -1174,7 +1179,7 @@
           } }, "Approve") : null)));
       });
       cat.replaceChildren(heading("h3", "Message catalogue", "System messages per language. A draft is never shown to anyone until it is approved; saving your own text approves it. A language can be accepted for questions only when all its messages are approved. Add languages under RAG settings > Message languages."),
-        h("div", { class: "toolbar" }, h("div", { class: "toolbar-left" }, h("div", { class: "field" }, fieldLabel("cat_lang", "Language"), pick)), draft),
+        h("div", { class: "toolbar" }, h("div", { class: "toolbar-left" }, h("div", { class: "field" }, fieldLabel("cat_lang", "Language"), pick)), h("div", { class: "actions" }, draft, approveAll)),
         info && !info.complete ? h("div", { class: "msg warn" }, "Not complete: until every message is approved, people asking in this language see the default or English text, and the language cannot be accepted.") : null,
         h("div", { class: "tablewrap" }, h("table", {}, h("thead", {}, h("tr", {}, ["Message", "Text", "Status", ""].map(function (t) { return h("th", {}, t); }))), body)),
         out, notice || null);

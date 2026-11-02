@@ -49,8 +49,23 @@ From `docs/development-plan-v4_3-release-2 1.md` (section A5), which has the ful
 | D37 | Interactive payloads | HMAC-signed with an expiry. A click is de-duplicated per person, and only the asker may click | Phase 4 | Proposed |
 | D39 | Accepted languages | A scoped setting, default all. A language outside the list gets a polite reply, with no search and no model call | Phase 2 | Proposed |
 | D40 | Suggestion validation | Not a duplicate, can be answered, passes checks; the best 2 are shown | Phase 4 | Proposed |
-| D46 | Document summary | A background job writes a short summary in the document's language. Display only | Phase 2 | Proposed |
+| D46 | Document summary | A background job writes a short summary in the document's language. Display only. **Off by default** (your decision, 2026-11-02): it sends whole document text to the AI model. Switch it on in RAG settings, or per KB in Scoped settings | Phase 2 | Confirmed off by default |
 | D47 | Stored suggestions | Every candidate is stored, masked, with its outcome. Deleted with the conversation | Phase 4 | Proposed |
+
+### Phase 4 format check on the configured models (2026-11-02)
+
+Run with your go-ahead, against the local configuration's models. Each slot was called directly, with no fallback. The
+questions were 12 on `HR-Policy.pdf` (8 English, 4 Hindi), with the 5 best passages and the real system prompt. Each
+question was asked once with the suggestion block, and the first 6 also without it. This was 36 calls; no errors.
+
+| Model | Replies with a usable block | Suggestions per reply | Block leaked into the answer | In the question's language | Extra input tokens (median) | Extra output tokens (median) | Extra time (median) |
+|---|---|---|---|---|---|---|---|
+| Preferred: Azure OpenAI gpt-4.1 | **12 of 12** | 3.0 | 0 | 12 of 12 | +88 (1,515 vs 1,427) | +42 (92 vs 50) | +0.43 s (1.50 vs 1.07 s) |
+| Fallback: DeepSeek deepseek-flash | 7 of 12 (3 of the 12 were "not found" replies, which need none) | 1.75 | 0 | 7 of 7 | +93 | +37 | +0.35 s |
+
+- **Decision:** keep same-call mode as the default; second-call mode is not needed for the preferred model.
+- When the fallback answers, some replies have no block. The answer is then shown alone and the counter goes up, which is the designed behaviour.
+- Budget for the release checklist: about +90 input tokens, +40 output tokens and +0.4 s per answer, plus the checking searches.
 
 ### Phase 3 comparison: one search string or two searches merged (2026-11-02)
 
@@ -215,7 +230,7 @@ Embedding models (recall at 5 = the answering section is among the top 5 passage
 | R2-3 | Publishing with conflicts | Refused (409) until the conflicts listed under the Draft are resolved | An ambiguous alias would expand unpredictably |
 | R2-3 | Trace | `glossary` holds, per KB: the mode, the versions, the terms applied and the texts searched. `search_text` is the expanded meaning-search text. The versions are part of `config_snapshot_id` | Rollback shows up as a different snapshot |
 | R2-3 | Audit | Records counts and version numbers, never the terms | Same rule as the other audit entries |
-| R2-4 | Spikes: the format's reliability, tokens and latency on the preferred and fallback models; Google Chat card clicks | **Not run.** The format spike calls your configured AI providers, which I did not do without asking. The Google Chat spike needs a Workspace. Measured offline: the code-owned block adds about 91 input tokens and about 30 output tokens per answer for 3 suggestions; checking adds one local embedding batch and up to 3 searches. Second-call mode is built and chosen by a setting (default: same call) | Live calls and tenants need your go-ahead |
+| R2-4 | Spikes: the format's reliability, tokens and latency on the preferred and fallback models; Google Chat card clicks | **Format: run afterwards with your go-ahead (see "Phase 4 format check" above).** The Google Chat spike needs a Workspace. Measured offline: the code-owned block adds about 91 input tokens and about 30 output tokens per answer for 3 suggestions; checking adds one local embedding batch and up to 3 searches. Second-call mode is built and chosen by a setting (default: same call) | Live calls and tenants need your go-ahead |
 | R2-4 | Toggles per channel and KB | One scoped key, `suggestions_enabled` (channel, KB, department; global default off). Suggestions are on only when the channel's value **and** a KB asked have it on. The Web UI is the channel scope `web`, which has no row in the channels table | Each switch alone cannot turn suggestions on by surprise |
 | R2-4 | D37 payload: answer id, action, platform user, expiry | Also the suggestion id, its position and its text. The user is a SHA-256 of the channel user (chat apps: channel, workspace and user; Web UI: the signed-in email), never the id itself. HMAC-SHA256 with a key derived from each `APP_SECRET_KEY`: the first signs, all verify (rotation). With no master key, suggestions are plain text | The text lets a click work even when the row could not be stored (task 5) |
 | R2-4 | A replay changes nothing | Recorded by `clicked_at` on the stored row: a second click of the same button by the same person is ignored. If the row could not be stored, a replay cannot be detected | No nonce store, as D37 says |

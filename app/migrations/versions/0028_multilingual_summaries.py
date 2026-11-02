@@ -53,7 +53,7 @@ def upgrade() -> None:
         b.add_column(sa.Column("default_language", sa.String(16), nullable=False, server_default="en"))
         b.add_column(sa.Column("language_confidence", sa.Float, nullable=False, server_default="0.5"))
         b.add_column(sa.Column("catalog_languages", sa.JSON, nullable=True))
-        b.add_column(sa.Column("summary_enabled", sa.Boolean, nullable=False, server_default=sa.true()))
+        b.add_column(sa.Column("summary_enabled", sa.Boolean, nullable=False, server_default=sa.false()))
         b.add_column(sa.Column("summary_max_input_tokens", sa.Integer, nullable=False, server_default="6000"))
     with op.batch_alter_table("guardrail_settings") as b:
         b.add_column(sa.Column("language_lists", sa.JSON, nullable=True))
