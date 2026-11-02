@@ -169,11 +169,14 @@ def retrieve_scored(query: str, top_k: int | None = None, kb_ids=None, apply_thr
     trace.note_used([{"kb_id": h.get("kb_id"), "chunk_id": h.get("id")} for h in merged])
     return [{"text": h["text"], "source": h["metadata"].get("source"),
              "page": h["metadata"].get("page") or None, "score": h["score"], "via": h.get("via", "meaning"),
-             "doc_id": h.get("doc_pk"), "kb_id": h.get("kb_id"), "chunk_id": h.get("id"),
-             "title": h["metadata"].get("source"),
+             "doc_id": h.get("doc_pk"), "kb_id": h.get("kb_id"), "chunk_id": h.get("id"), "id": h.get("id"),
+             "doc_key": h["metadata"].get("doc_id"), "title": h["metadata"].get("source"),
              "doc_language": h["metadata"].get("doc_lang") or h["metadata"].get("lang") or ""} for h in merged]
 
 
 def retrieve(query: str, kb_ids=None) -> list[dict]:
-    """Top-k passages that pass their knowledge base's score threshold."""
-    return retrieve_scored(query, kb_ids=kb_ids, apply_threshold=True) if kb_ids else retrieve_scored(query, apply_threshold=True)
+    """Top-k passages that pass their knowledge base's score threshold (D31), checked for personal data before anything
+    else sees them."""
+    from app.knowledge import pii_access, pii_filter
+    scored = retrieve_scored(query, kb_ids=kb_ids, apply_threshold=True) if kb_ids else retrieve_scored(query, apply_threshold=True)
+    return pii_access.open_passages(pii_filter.clean(scored))

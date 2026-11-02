@@ -783,6 +783,99 @@ D18 to D23, D26, D29 to D31, D33, D35, D37, D39, D40, D46 and D47 are Proposed. 
 - **fastText is archived upstream.**
 - **No browser or live chat-app testing.** The admin screens, the Web UI and the chat apps were not tried in a browser or a real tenant.
 
+## 26. Phase 12 (built on main in parallel with Release 2): file storage and personal data in documents
+
+Plan: `docs/phase-12-plan.md`. Parts 12a, 12b, 12c, 12c+, 12d and 12g are built; 12f (Excel and images) is next.
+
+### Phase 12, part 12a: every stored file encrypted
+- `app/knowledge/filestore.py`: one `FileStore` in front of a backend. Every file is encrypted with the master key
+  (Fernet, marked `CAAENC1`) before it is written, whatever its type; the backend only ever holds ciphertext.
+  Backends: local disk (`DOCS_DIR`, the default) and Azure Blob Storage (`FILE_STORE=azure_blob`, optional package
+  `pip install -e .[azure-blob]`). Keys are `<kb id>/<document id>/<file name>`; a key cannot leave the folder.
+- `documents.py` no longer touches the disk directly: upload, replace, re-index, move, delete and KB delete all go
+  through the store. Parsing decrypts into a private working folder (`DOCS_DIR/.work`) that is deleted straight after
+  the file is chunked, even if parsing fails; the chunk preview uses the same folder instead of the system temp folder.
+- At start: anything an interrupted parse left in `.work` is wiped, files stored before encryption are encrypted in
+  place (each in one step, so an interrupted run resumes), and a *Needs your attention* alert stays open while plain
+  files remain in the store, `data/docs` or the old chat files. The first-start import from `data/docs` and the chat
+  import read files secured with `python -m app.knowledge.filestore secure <folder>`.
+- `python -m app.secretstore check` also counts unencrypted files; `rotate` re-encrypts every file too (all files are
+  checked before any is changed). `python -m app.knowledge.filestore status|encrypt|secure <folder>`.
+- With no `APP_SECRET_KEY`, uploads are refused instead of stored in plain text.
+
+### Phase 12, part 12b: personal-data engine
+- Migration 0026: `pii_custom_types`, `pii_vault`, `pii_vault_refs`; guardrail settings gain a detection confidence
+  (default 40 %), a keyword switch and a sensitive-keyword list (seeded: Salary, CTC, DOB, Date of birth, Bank account,
+  Account no, IFSC, Aadhaar No, PAN, Passport, Medical, Diagnosis, Home address).
+- `app/pii.py`:
+  - **Admin-defined types** (name, regular expression, context words, confidence), registered with the detector and
+    switched on for masking when created. They work wherever the built-in types do.
+  - **Sensitive keywords**: the value after `Keyword:`, `Keyword =`, `Keyword | ` (a table row) or `Keyword - ` is
+    masked as `<SENSITIVE_VALUE>`; after a plain keyword (or `is`, `was`, `of`) only a value that starts with a number
+    is. "What is my salary?" or "Salary of employees is reviewed" are left alone. A value is at most 120 characters.
+  - **Tokens and the vault**: `tokenise()` replaces each hit with `<TYPE_xxxxxxxx>`, an HMAC of the value keyed per
+    knowledge base (the HMAC key is a random secret stored encrypted like other credentials), so the same value gets
+    the same token in every chunk. The value is stored encrypted in `pii_vault`; `reveal()` puts values back for
+    tokens of the given knowledge bases; values go when their last document is deleted or moved, or with their KB.
+- `guardrails.detect()` / `mask_with()` combine built-in types, custom types, names and keywords with the configured
+  confidence; questions, answers, summaries and the old-chat import all use them.
+- Guardrails screen: detection confidence, the keyword switch and list (under *Mask personal data*), and a new panel
+  *Your own personal-data types* (add, edit, delete, *Try pattern*, and a *Try it* box that shows what the saved
+  settings mask; nothing typed there is stored or logged). Audited as `pii_type.create|update|delete`.
+- Tests: `tests/test_storage_pii.py` (51).
+
+### Phase 12, part 12c: personal data masked in documents at indexing
+- Migration 0027: `knowledge_bases.pii_mask` (on for new knowledge bases, off for existing ones), the same on each index
+  version (so a change marks the index out of date and is applied by a rebuild, with rollback), and `documents.pii_counts`
+  and `documents.pii_flagged`.
+- `documents.prepare(..., pii_mask=True)`: after chunking and before embedding, each chunk's personal data (the types,
+  names, keywords, confidence and allow-list on the Guardrails screen) is replaced by its vault token. The vector store,
+  the keyword index and the source snippets never hold the values. Re-indexing a document releases its old tokens
+  first; a rebuild only adds, so the active index keeps working until the switch. Masking runs while the guardrails are on.
+- **Scan report**: indexing records how many of each type the whole document held (from one pass over the full text,
+  not the overlapping chunks). *KB documents* shows "N personal data items masked" (types and counts on hover, never values).
+- **Redacted copy**: the parsed text with plain labels, one section per page, stored encrypted as `<kb>/<doc>/.redacted.txt`.
+  ⋯ menu: *Download redacted copy* (anyone who manages the document) and *Download original* (Admins only). Both are audited
+  (`document.download_redacted`, `document.download_original`).
+- *KB configuration* has a **Personal data** tab with the switch. Only an Admin can change it.
+- Until 12d, people see tokens as plain labels (`<EMAIL_ADDRESS>`): in answers (also when streamed), source snippets and
+  reopened conversations. Stored answers keep the tokens so values can be revealed later.
+
+### Phase 12, part 12c+: search results checked before they are used
+- `app/knowledge/pii_filter.py`, run by `retriever.retrieve()` on every search, for every strategy and store: each passage
+  is checked again before the AI model, the source snippets or the stored conversation see it. Labels and tokens already
+  in the text are never masked again.
+- A find is tokenised into the same vault, recorded as a guardrail event (`personal_data / search / masked`, a count
+  only) and, when the document's index was built with masking, flags the document **Needs re-index**, so a detection gap
+  is reported. Re-indexing clears the flag.
+- Fails closed: if the check fails, no passage is used and the guardrail alert is raised. Results are cached for 10 minutes
+  per passage and settings, so popular passages are not checked again at every question.
+- Tests: 17 more in `tests/test_storage_pii.py`; downloads and the Admin-only switch in `tests/test_security_pass.py`.
+
+### Phase 12, part 12d: real values for the people allowed to see them
+- Migration 0028: `kb_pii_viewers` (groups and people per knowledge base, empty by default; Admins choose them under
+  *KB configuration → Personal data → Can see personal data*, audited as `kb.pii_viewers`).
+- `app/knowledge/pii_access.py`: `for_viewer()` shows a text as one person may see it: real values for the knowledge
+  bases they are listed on (or that are unprotected), plain labels for the rest. Every reveal under protection is
+  audited (`pii.reveal`, a count and the knowledge bases, never the values).
+- Applied to the final answer and the source snippets after the answer checks (redaction runs first, so values the model
+  invents are still redacted), and to reopened conversations (the person's own; the Admin's conversation viewer and
+  exports always show labels). Stored answers keep tokens. Only an answer checked as a whole is revealed: with answer
+  checks off, people see labels. A snippet never cuts a token in half.
+
+### Phase 12, part 12g: the PII protection switch
+- `guardrail_settings.pii_protection` (master, on) and `knowledge_bases.pii_protection` (inherit / on / off). Both are
+  changed with a reason (at least 10 characters), Admins only, audited as `pii.protection`; while any knowledge base is
+  unprotected a *Needs your attention* alert names them and its KB card shows **Unprotected**.
+- Off for a knowledge base: its passages are revealed before the AI model sees them, the search filter skips them and
+  everyone sees the values. Question masking and answer redaction stop only when every knowledge base a channel can
+  search is off. Other guardrails keep running; files stay encrypted; indexing still tokenises, so switching applies
+  within seconds and the search index never holds raw values.
+- What cannot be undone is said on screen: questions and answers stored while protection was off keep the real values.
+  *Guardrails → PII protection → Mask stored conversations again* re-runs masking over a date range (with a reason,
+  audited as `conversation.mask`).
+- Tests: 6 more in `tests/test_storage_pii.py`; the Admin-only rules in `tests/test_security_pass.py`.
+
 ## How to run
 
 ```powershell

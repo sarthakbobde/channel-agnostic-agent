@@ -192,7 +192,7 @@ def test_without_the_threshold_flag_nothing_is_filtered(monkeypatch):
 @pytest.fixture
 def guards(monkeypatch):
     guardrails.update({"enabled": True, "mask_enabled": True, "injection_enabled": True, "output_checks_enabled": False}, "tests")
-    monkeypatch.setattr(guardrails, "mask", lambda text, types_, names=False, allow=(): (text.replace("98450 12345", "<PHONE_NUMBER>"), {"PHONE_NUMBER": 1}))
+    monkeypatch.setattr(guardrails, "mask", lambda text, types_, names=False, allow=(), *rest, **kw: (text.replace("98450 12345", "<PHONE_NUMBER>"), {"PHONE_NUMBER": 1}))
     yield
     guardrails.update({"enabled": False}, "tests")
 

@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from functools import lru_cache
 from pathlib import Path
 
-from sqlalchemy import (JSON, Boolean, DateTime, Float, Integer, LargeBinary, String, Text, UniqueConstraint,
+from sqlalchemy import (JSON, Boolean, DateTime, Float, ForeignKey, Integer, LargeBinary, String, Text, UniqueConstraint,
                         create_engine, event, inspect)
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -112,6 +112,8 @@ class KnowledgeBase(Base):
     embedding_config: Mapped[dict] = mapped_column(JSON, default=dict)     # non-secret settings; secrets are stored encrypted
     store: Mapped[str] = mapped_column(String(20), default="chroma")
     store_config: Mapped[dict] = mapped_column(JSON, default=dict)
+    pii_mask: Mapped[bool] = mapped_column(Boolean, default=True)          # mask personal data in documents at indexing
+    pii_protection: Mapped[str] = mapped_column(String(8), default="inherit")   # inherit | on | off (12g)
     is_default: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)
@@ -142,6 +144,8 @@ class Document(Base):
     summary_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     summary_hash: Mapped[str] = mapped_column(String(64), default="")         # content_hash the summary was written from
     glossary_indexed: Mapped[str] = mapped_column(String(120), default="")    # "<hash> <versions>" of index-time glossary terms
+    pii_counts: Mapped[dict] = mapped_column(JSON, default=dict)           # {type: how many} masked at the last indexing
+    pii_flagged: Mapped[bool] = mapped_column(Boolean, default=False)      # search found personal data indexing missed
     __table_args__ = (UniqueConstraint("kb_id", "name", name="uq_documents_kb_name"),)
 
 
@@ -160,6 +164,7 @@ class KBIndexVersion(Base):
     embedding_config: Mapped[dict] = mapped_column(JSON, default=dict)
     store: Mapped[str] = mapped_column(String(20), default="chroma")
     store_config: Mapped[dict] = mapped_column(JSON, default=dict)
+    pii_mask: Mapped[bool] = mapped_column(Boolean, default=False)
     status: Mapped[str] = mapped_column(String(12), default="Building")       # Building | Ready | Failed | Cancelled
     is_active: Mapped[bool] = mapped_column(Boolean, default=False)
     chunks: Mapped[int] = mapped_column(Integer, default=0)
@@ -198,6 +203,14 @@ class DocumentAccess(Base):
     __tablename__ = "document_access"
     document_id: Mapped[int] = mapped_column(Integer, primary_key=True)
     kind: Mapped[str] = mapped_column(String(8), primary_key=True)
+    ref_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+
+
+class KBPiiViewer(Base):
+    """Groups and people who see the real values behind a knowledge base's personal-data tokens. None by default."""
+    __tablename__ = "kb_pii_viewers"
+    kb_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    kind: Mapped[str] = mapped_column(String(8), primary_key=True)         # group | user
     ref_id: Mapped[int] = mapped_column(Integer, primary_key=True)
 
 
@@ -248,8 +261,45 @@ class GuardrailSettings(Base):
     leak_check_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     language_lists: Mapped[dict | None] = mapped_column(JSON, nullable=True)   # {lang: {injection, toxicity, banned_topics}}
     unlisted_language: Mapped[str] = mapped_column(String(16), default="english")   # english | block
+    pii_threshold: Mapped[int] = mapped_column(Integer, default=40)                 # detection confidence, percent
+    keywords_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    sensitive_keywords: Mapped[list] = mapped_column(JSON, default=list)
+    pii_protection: Mapped[bool] = mapped_column(Boolean, default=True)              # master switch (12g), changed with a reason
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)
     updated_by: Mapped[str] = mapped_column(String(254), default="system")
+
+
+class PiiCustomType(Base):
+    """A personal-data type an Admin defined: a regular expression, optional context words and a confidence."""
+    __tablename__ = "pii_custom_types"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(40), unique=True)
+    pattern: Mapped[str] = mapped_column(Text)
+    context: Mapped[list] = mapped_column(JSON, default=list)
+    confidence: Mapped[int] = mapped_column(Integer, default=60)                    # percent
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)
+    updated_by: Mapped[str] = mapped_column(String(254), default="system")
+
+
+class PiiVault(Base):
+    """The real value behind one token in a knowledge base's documents (encrypted with the master key)."""
+    __tablename__ = "pii_vault"
+    __table_args__ = (UniqueConstraint("kb_id", "token", name="uq_pii_vault_token"),
+                      UniqueConstraint("kb_id", "value_hash", name="uq_pii_vault_value"))
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    kb_id: Mapped[int] = mapped_column(Integer)
+    token: Mapped[str] = mapped_column(String(80))
+    entity_type: Mapped[str] = mapped_column(String(48))
+    value_hash: Mapped[str] = mapped_column(String(64))
+    value_encrypted: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class PiiVaultRef(Base):
+    """Which documents use a vault token; a token goes when its last document goes."""
+    __tablename__ = "pii_vault_refs"
+    vault_id: Mapped[int] = mapped_column(Integer, ForeignKey("pii_vault.id", ondelete="CASCADE"), primary_key=True)
+    doc_id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
 
 
 class GuardrailEvent(Base):

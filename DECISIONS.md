@@ -197,6 +197,24 @@ Embedding models (recall at 5 = the answering section is among the top 5 passage
 | 9b | Channel health | Checked every 2 minutes; alert clears itself. | Quick enough to notice an outage. |
 | 9c | Audit search | Action filter is a prefix; target column widened to 254. | Targets such as `Knowledge base / file name` exceeded 64. |
 | 9c | Answered vs not-found | Counted from answers saved after this change (they record `kb_ids`). | Older answers do not say which knowledge base was used. |
+| 12a | File encryption | Fernet with the master key on whole files; a marker header tells encrypted from old plain files. | Chunked AES-GCM: only needed above about 100 MB; uploads are limited to 25 MB. |
+| 12a | Blob storage settings | `FILE_STORE`, `AZURE_BLOB_CONNECTION_STRING`, `AZURE_BLOB_CONTAINER` in `.env`. | The admin center: the server needs the store before it can read its database settings. |
+| 12a | Parsing | Every type (text files too) is decrypted into the private working folder for the parse. | Parse text files from memory: one path for all types is simpler and the file lives for milliseconds. |
+| 12a | `data/docs/HR-Policy.pdf` | Still in git (several checks use it); an alert says the folder holds plain files. | Removing it needs the checks to get their own sample. |
+| 12b | Token form | `<TYPE_` + first 8 hex characters of an HMAC-SHA256 keyed per KB `>`; longer on a clash. | Shorter tokens clash; a plain counter would differ between chunks indexed in a different order. |
+| 12b | Keyword values | After `:`, `=`, `|` or ` - `, any value to the end of the sentence or cell; otherwise only a value starting with a number. | Masking after `is`/`of` without a number would hide ordinary sentences. |
+| 12b | Custom types | Admin only; a new type is switched on at once. | Editors per department: open point in the plan. |
+| 12c | Existing knowledge bases | Document masking off until an Admin switches it on (one rebuild each); new knowledge bases start with it on. | Switch it on for all at once: a rebuild of every KB at upgrade. |
+| 12c | Who switches it | Admins only. | Editors of the department: turning masking off is a privacy decision. |
+| 12c | Which types | The Guardrails screen's types, names, keywords, confidence and allow-list, for every knowledge base. | A list per knowledge base: more settings to keep consistent. |
+| 12c | Guardrails off | No masking at indexing or search. | Mask anyway: the master switch is meant to turn every check off (12g formalises this). |
+| 12c | Until reveal exists | Tokens are shown as plain labels; stored text keeps tokens. | Store labels: the values could then never be revealed. |
+| 12c+ | Failure | No passage is used and an alert is raised. | Use the passages unchecked: could send personal data to an external model. |
+| 12d | Who sees values | A list of groups and people per knowledge base, empty by default; Admins choose it. | Admins and the KB's Editors automatically: wider than needed. |
+| 12d | Admin conversation viewer and exports | Always labels. | Reveal to Admins: the list is the only way to see values, and it is audited. |
+| 12d | Reveal audit | One audit row per answer that revealed values (count and KBs). | One per value: noisy; none: no trace of who saw what. |
+| 12g | Scope of "off" | Stops all masking for that scope (questions, answers, documents to the model), other guardrails stay on. | Keep masking questions: chosen by the project owner on 2 Nov 2026. |
+| 12g | Questions with several KBs | Masked unless every KB the channel can search is off. | The question is masked before anyone knows which KB answers. |
 | 8c | Store health cadence | Every 5 minutes. | Quick enough to catch an outage, light enough not to load the stores. |
 | R2-0 | D36: masking follows the masking switch, not the guardrails master switch | Masking is its own step (`guardrails.mask_input`), but it still runs only when the guardrails master switch **and** masking are on, as before. | Running it with the master switch off would change what "guardrails off" means for every Admin, and would load the personal-data model in setups that switched it off. Confirm whether "off" should still mask. **Superseded in Phase 2:** masking now follows its own switch only, as v4.3 says (see D36). |
 | R2-0 | Answers stream token by token when output checks are off | Every answer is now collected whole before it is handed over. | The not-found marker must never reach a person. Every caller (API, chat apps, preview) already joined the answer, so nothing visible changes. |

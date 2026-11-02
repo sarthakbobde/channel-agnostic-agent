@@ -72,7 +72,7 @@ def test_chat_routes_work_with_the_token(client, monkeypatch):
     monkeypatch.setattr(chat_service, "chat_stream",
                         lambda m, c, **kw: (iter(["Hello ", "there"]), {"sources": [], "searched": False, "query": ""}))
     monkeypatch.setattr(memory, "list_conversations", lambda: [{"id": "c1", "title": "hi"}])
-    monkeypatch.setattr(memory, "get_messages", lambda c: [{"role": "user", "content": "hi", "meta": {}}])
+    monkeypatch.setattr(memory, "get_messages", lambda c, **k: [{"role": "user", "content": "hi", "meta": {}}])
     deleted = []
     monkeypatch.setattr(memory, "delete", lambda c: deleted.append(c))
     r = client.post("/chat", headers=AUTH, json={"message": "hi", "conv_id": "c1"})

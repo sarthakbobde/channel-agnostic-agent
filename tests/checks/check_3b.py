@@ -32,7 +32,7 @@ col.upsert(ids=["HR-Policy.pdf::0"], documents=["Earned leave is 18 days."], met
 kbs.backfill_metadata(db, default)
 ok(documents.import_existing(db) == 1 and documents.import_existing(db) == 0, "existing indexed document recorded once")
 legacy = documents.list_for_kb(db, default["id"])[0]
-ok(legacy["name"] == "HR-Policy.pdf" and legacy["status"] == "Indexed" and documents.file_path(legacy).exists(), "legacy record keeps name, status and a copy of the original")
+ok(legacy["name"] == "HR-Policy.pdf" and legacy["status"] == "Indexed" and documents.stored(legacy), "legacy record keeps name, status and a copy of the original")
 
 store = ChannelStore(db, FernetSecretStore(generate_key()), lambda t: manager.adapter_class(t).SPEC)
 ctx = A.AdminContext(db=db, store=store, manager=manager, signer=SessionSigner(generate_key()), domain="sysfore.com", allow_remote=True)
@@ -131,7 +131,7 @@ ok(d["kb_id"] == default["id"] and d["status"] == "Indexed", "move re-indexes in
 ok(not [x for x in retriever.retrieve_scored("canteen opens", kb_ids=[it["id"]]) if x["source"] == "notes.md"], "nothing of it left in the old KB")
 ok(retriever.retrieve_scored("canteen opens")[0]["source"] == "notes.md", "found in the target KB")
 c.delete(f"/admin/api/documents/{rid}", headers=h)
-ok(documents.get(db, rid) is None and not documents.doc_dir(default["id"], rid).exists() and not [x for x in retriever.retrieve_scored("canteen opens") if x["source"] == "notes.md"], "delete removes record, file and vectors")
+ok(documents.get(db, rid) is None and not documents.files().keys(documents.doc_prefix(default["id"], rid)) and not [x for x in retriever.retrieve_scored("canteen opens") if x["source"] == "notes.md"], "delete removes record, file and vectors")
 
 # re-index the whole KB, and KB delete leaves nothing behind
 q = c.post(f"/admin/api/kbs/{it['id']}/reindex", headers=h).json()["queued"]

@@ -23,7 +23,7 @@ def _view(kb: KnowledgeBase) -> dict:
             "collection": kb.collection, "chunk_size": kb.chunk_size, "chunk_overlap": kb.chunk_overlap,
             "chunk_strategy": kb.chunk_strategy or "recursive", "embedding": kb.embedding or "chroma-default",
             "embedding_config": kb.embedding_config or {}, "store": kb.store or "chroma", "store_config": kb.store_config or {},
-            "is_default": kb.is_default, "created_at": kb.created_at, "updated_at": kb.updated_at}
+            "pii_mask": bool(kb.pii_mask), "pii_protection": kb.pii_protection or "inherit", "is_default": kb.is_default, "created_at": kb.created_at, "updated_at": kb.updated_at}
 
 
 # ---- reading ------------------------------------------------------------------------------
@@ -130,7 +130,7 @@ def check_strategy(strategy: str) -> None:
 
 def create_kb(db: Database, name: str, description: str, department_id: int, chunk_size: int | None = None,
               chunk_overlap: int | None = None, *, collection: str | None = None, is_default: bool = False,
-              chunk_strategy: str = "recursive", store: str | None = None) -> dict:
+              chunk_strategy: str = "recursive", store: str | None = None, pii_mask: bool = True) -> dict:
     """A new knowledge base. Its store is `store`, or for a new collection the preferred one (pgvector on PostgreSQL);
     an existing `collection` is a Chroma collection unless `store` says otherwise."""
     from app.knowledge import storeadapters
@@ -149,7 +149,8 @@ def create_kb(db: Database, name: str, description: str, department_id: int, chu
             raise ValueError("A knowledge base with that name already exists.")
         kb = KnowledgeBase(name=name, description=(description or "").strip(), department_id=department_id,
                            collection=collection or f"pending-{uuid.uuid4().hex[:12]}", chunk_size=chunk_size,
-                           chunk_overlap=chunk_overlap, chunk_strategy=chunk_strategy, is_default=is_default, store=store)
+                           chunk_overlap=chunk_overlap, chunk_strategy=chunk_strategy, is_default=is_default, store=store,
+                           pii_mask=pii_mask)
         s.add(kb)
         s.flush()
         if collection is None:
@@ -162,7 +163,7 @@ def create_kb(db: Database, name: str, description: str, department_id: int, chu
 
 def update_kb(db: Database, kb_id: int, *, name=None, description=None, department_id=None,
               chunk_size="keep", chunk_overlap="keep", chunk_strategy=None, embedding=None, embedding_config=None,
-              store=None, store_config=None) -> tuple[dict, dict]:
+              store=None, store_config=None, pii_mask=None) -> tuple[dict, dict]:
     """Returns (before, after). `chunk_size` / `chunk_overlap`: "keep" leaves as is, None = inherit global."""
     with db.session() as s:
         kb = s.get(KnowledgeBase, kb_id)
@@ -197,6 +198,8 @@ def update_kb(db: Database, kb_id: int, *, name=None, description=None, departme
         if store is not None:
             kb.store = store
             kb.store_config = store_config or {}
+        if pii_mask is not None:
+            kb.pii_mask = bool(pii_mask)
         s.flush()
         return before, _view(kb)
 
@@ -317,6 +320,9 @@ def run_startup() -> None:
         if n:
             log.info("completed metadata on %d existing chunks", n)
         from app.knowledge import documents
+        documents.secure_at_start()
+        from app.knowledge import pii_access
+        pii_access.refresh_alert(get_db())
         made = documents.import_existing()
         if made:
             log.info("recorded %d documents that were already indexed", made)

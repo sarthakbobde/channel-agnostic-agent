@@ -10,8 +10,8 @@ old key).
 
     python -m app.secretstore generate     # print a new key
     python -m app.secretstore fingerprint  # a short, non-secret tag of each configured key (to check a backup copy)
-    python -m app.secretstore check        # can every stored secret be decrypted with the configured keys?
-    python -m app.secretstore rotate       # re-encrypt every stored secret with the first key (all or nothing)
+    python -m app.secretstore check        # can every stored secret be decrypted, and is every stored file encrypted?
+    python -m app.secretstore rotate       # re-encrypt every stored secret and file with the first key
 """
 from abc import ABC, abstractmethod
 from cryptography.fernet import Fernet, InvalidToken, MultiFernet
@@ -49,6 +49,21 @@ class FernetSecretStore(SecretStore):
         except InvalidToken:
             raise SecretError("Cannot decrypt a stored secret: the master key is wrong or "
                               "has changed.") from None
+
+    def encrypt_bytes(self, data: bytes) -> bytes:
+        return self._fernet.encrypt(data)
+
+    def decrypt_bytes(self, token: bytes) -> bytes:
+        try:
+            return self._fernet.decrypt(token)
+        except InvalidToken:
+            raise SecretError("Cannot decrypt a stored file: the master key is wrong or has changed.") from None
+
+    def rotate_bytes(self, token: bytes) -> bytes:
+        try:
+            return self._fernet.rotate(token)
+        except InvalidToken:
+            raise SecretError("Cannot rotate: the file is not decryptable with the configured keys.") from None
 
     def rotate(self, token: str) -> str:
         """Re-encrypt a stored token with the primary (first) key."""
@@ -139,12 +154,17 @@ def _cli(argv: list[str]) -> int:
         try:
             store = FernetSecretStore(settings.secret_key)
             db = get_db()
+            from app.knowledge import filestore
+            files = filestore.build(settings)
             if cmd == "check":
                 r = check_all(db, store)
                 print(f"{r['total']} stored secrets; {len(r['undecryptable'])} cannot be decrypted; {r['old_key']} still use an older key.")
-                return 1 if r["undecryptable"] else 0
+                plain = files.plain_keys()
+                print(f"{len(files.keys())} stored files; {len(plain)} not encrypted yet.")
+                return 1 if r["undecryptable"] or plain else 0
+            f = files.rotate()                                   # files first: it changes nothing if one cannot be read
             r = rotate_all(db, store)
-            print(f"{r['rotated']} of {r['total']} stored secrets re-encrypted with the first key.")
+            print(f"{r['rotated']} of {r['total']} stored secrets and {f['rotated']} of {f['total']} stored files re-encrypted with the first key.")
             return 0
         except SecretError as e:
             print("Nothing was changed. " + str(e))

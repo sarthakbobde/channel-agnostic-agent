@@ -324,9 +324,23 @@ The base prompt always comes first and a closing line keeps its rules in force, 
 
 **Guardrails** (Admin): the master switch at the top turns every check on or off (while it is off, a warning says nothing is being checked).
 Below it, two columns, one row per check with its own switch; a check's settings appear underneath while it is on:
-- **Question checks** (left; they run first, so a blocked question never reaches the AI model): *Question length*; *Prompt injection* (strictness Low, Medium, High, plus phrases to always block); *Toxic language* (strictness, extra words, words that are fine); *Banned topics* (the topics are set per department); *Mask personal data* (tick which kinds: emails, phones, card numbers and so on; optionally names). Toxic language and banned topics are marked *Also checks answers*.
+- **Question checks** (left; they run first, so a blocked question never reaches the AI model): *Question length*; *Prompt injection* (strictness Low, Medium, High, plus phrases to always block); *Toxic language* (strictness, extra words, words that are fine); *Banned topics* (the topics are set per department); *Mask personal data* (tick which kinds: emails, phones, card numbers, your own types and so on; optionally names; *Detection confidence*; and *Sensitive keywords*: the value after a listed keyword such as `Salary: 12,40,000` is masked as `<SENSITIVE_VALUE>`). Toxic language and banned topics are marked *Also checks answers*.
 - **Answer checks** (right; they run before anyone sees the answer): *Check answers*; *Redact personal data* (with values that may stay, for example `hr@company.com`); *Protect instructions* (stops an answer that repeats the hidden instructions).
 - **Blocked reply** (right, below): the message people see, with a live preview.
+- Personal data in **documents** is masked per knowledge base: *KB configuration → Personal data* (Admins switch it; it
+  applies after a rebuild). *KB documents* then shows how many items each file had masked, and the ⋯ menu offers
+  *Download redacted copy* (and, for Admins, *Download original*; every download is recorded). A file marked
+  **Needs re-index** had personal data found at search time that indexing missed; choose *Re-index* in its ⋯ menu.
+- **PII protection** (top): the master switch for personal data. Turning it off needs a reason; while it is off for any
+  knowledge base, Home shows a warning and the knowledge base is marked **Unprotected**. Off means everyone sees the
+  real values and the AI model receives them; questions are stored unmasked. *Mask stored conversations again* masks
+  what was stored in a date range. Each knowledge base can override the switch (*KB configuration → Personal data*),
+  where Admins also choose who **Can see personal data**: those groups and people see real values in answers and
+  sources; everyone else sees labels such as `<EMAIL_ADDRESS>`. Every reveal is recorded in the audit log.
+- **Your own personal-data types** (left, below): numbers or codes only your organisation uses, such as `EMP-12345`. Give a
+  name (`EMPLOYEE_ID`), a regular expression (`\bEMP-\d{5}\b`), optional context words and a confidence; **Try pattern**
+  shows what it matches in the *Try it* text. A new type is masked straight away. **Try it** shows what the saved settings
+  would make of any line; nothing typed there is stored. These changes are saved at once, not with the Save bar.
 - Lists work like tags: type, press Enter, click the × to remove. The bar at the bottom shows how many changes are unsaved; **Save** applies them within seconds and **Discard** goes back.
 
 The injection and toxicity checks are rules, not an AI model: they catch known wording, not every paraphrase or language.

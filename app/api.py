@@ -254,7 +254,7 @@ def list_conversations(caller: Caller = Depends(require_chat_caller)):
 def get_conversation(conv_id: str, caller: Caller = Depends(require_chat_caller)):
     """Get full conversation history."""
     try:
-        return ConversationHistory(id=conv_id, messages=memory.get_messages(_conv(caller, conv_id)))
+        return ConversationHistory(id=conv_id, messages=memory.get_messages(_conv(caller, conv_id), who=identity.resolve(caller.email)))
     except HTTPException:
         raise
     except Exception as e:

@@ -14,6 +14,7 @@ import subprocess
 import sys
 
 import pytest
+from cryptography.fernet import Fernet
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 CHECKS = pathlib.Path(__file__).resolve().parent / "checks"
@@ -56,6 +57,8 @@ def test_feature_check(name, tmp_path):
         pytest.skip("the local multilingual model files are not on this machine")
     env = {**os.environ, **EXTRA_ENV.get(name, {}), "ADMIN_DB_PATH": str(tmp_path / "admin.db"), "CHAT_DIR": str(tmp_path / "chats"),
            "CHROMA_PATH": str(tmp_path / "chroma"), "DOCS_DIR": str(tmp_path / "files"), "DATABASE_URL": ""}
+    if not env.get("APP_SECRET_KEY"):                       # stored files are encrypted, so every check needs a master key
+        env["APP_SECRET_KEY"] = Fernet.generate_key().decode()
     out = subprocess.run([sys.executable, str(script)], capture_output=True, text=True, cwd=str(ROOT), env=env, timeout=900)
     lines = out.stdout.splitlines()
     failed = [x for x in lines if x.startswith("FAIL")]

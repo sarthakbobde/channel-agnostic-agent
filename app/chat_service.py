@@ -3,8 +3,9 @@ import logging
 import re
 from typing import Iterator
 from langchain_core.messages import HumanMessage, SystemMessage
-from app import (catalog, global_settings, guardrails, identity, language, memory, rag, scoped_settings, suggestions, summaries,
-                 trace, usage)
+from app import (catalog, global_settings, guardrails, identity, language, memory, pii, rag, scoped_settings, suggestions,
+                 summaries, trace, usage)
+from app.knowledge import pii_access
 from app.llm import get_chat_model
 
 log = logging.getLogger(__name__)
@@ -55,6 +56,16 @@ def trim_sources(answer: str, sources: list[dict], found: bool | None = None) ->
         sources[:] = [s for s in sources if s["n"] in cited]
 
 
+def _all_unprotected(scope: list[dict]) -> bool:
+    """12g: every knowledge base asked has PII protection off."""
+    try:
+        from app.db import get_db
+        return pii_access.all_off(get_db(), scope)
+    except Exception:
+        log.warning("could not read the PII protection switch; protecting", exc_info=True)
+        return False
+
+
 def _targets(kb_ids) -> list[dict]:
     """The knowledge bases a question is asked of (none named: the default one)."""
     try:
@@ -100,11 +111,12 @@ def chat_stream(message: str, conv_id: str | None, kb_ids=None, preview: bool = 
     message = language.normalize(message)                      # clean-up only: never translated (D21)
     targets = _targets(kb_ids)
     first = targets[0] if targets else None
+    unprotected = _all_unprotected(targets)                    # 12g: every one of them has PII protection off
     default = _kb_setting(first, "default_language")
     with rec.stage("input_checks"):
         gate = guardrails.check_input(message)
         if not gate.blocked:
-            gate = guardrails.mask_input(gate.text)            # personal data is masked from here on: model, history, logs
+            gate = guardrails.mask_input(gate.text, mask=not unprotected)   # masked from here on: model, history, logs
     if gate.blocked:                                           # no model is called, and nothing is stored
         lang = reply_language(message, None if preview else conv_id, first)
         return _refusal(catalog.t(gate.key, lang, default), lang)
@@ -166,6 +178,10 @@ def chat_stream(message: str, conv_id: str | None, kb_ids=None, preview: bool = 
     if decision["search"]:
         meta["kb_ids"] = [k["id"] for k in kept] if targets else []
     checked = guardrails.output_active()
+    who = identity.current()
+    if not checked:                                            # values are only revealed on an answer checked as a whole
+        for src in sources:
+            src["snippet"] = pii.label(src["snippet"])
     threshold = _kb_setting(first, "language_confidence")
 
     def wrong_language(text: str) -> bool:
@@ -223,7 +239,7 @@ def chat_stream(message: str, conv_id: str | None, kb_ids=None, preview: bool = 
                 candidates.clear()
             if checked:
                 with rec.stage("output_checks"):
-                    final = guardrails.guard_output(final, len(sources), decision["search"], lang=ctx.resolved)
+                    final = guardrails.guard_output(final, len(sources), decision["search"], lang=ctx.resolved, redact=not unprotected)
             trim_sources(final, sources, found)
             meta["found"] = found
             rows = []
@@ -239,12 +255,20 @@ def chat_stream(message: str, conv_id: str | None, kb_ids=None, preview: bool = 
                 if rows:
                     meta["suggestions"] = suggestions.controls(answer_id, rows, suggestions.store(turn, rows, asker_key), asker_key)
                 summaries.schedule(conv_id, identity.current().department)
+            # tokens stay stored; each person sees the real values they may (12d). Unchecked answers show plain labels.
+            ids = [k["id"] for k in kept] if targets else []
+            if checked:
+                for src in sources:
+                    src["snippet"] = pii_access.for_viewer(src["snippet"], ids, who, where="source")
+                shown = pii_access.for_viewer(final, ids, who)
+            else:
+                shown = pii.label(final)
         except BaseException:
             if turn:                       # the model failed or the caller went away: keep what arrived, marked incomplete
                 memory.fail_turn(turn, "" if checked else "".join(collected))   # unchecked text only when checks are off
                 trace.save(rec, turn, complete=False, found=False, searched=decision["search"])
             raise
-        yield final
+        yield shown
 
     meta["answer_id"] = answer_id
     return gen(), meta

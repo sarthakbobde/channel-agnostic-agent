@@ -102,7 +102,8 @@ def shutdown() -> None:
 def _texts(db: Database, d: dict, kb: dict) -> list[str]:
     from app.knowledge import documents, versions
     chunker = versions.active_chunker(db, kb)
-    return [c.text for c in chunker.chunk(documents.file_path(d))]
+    with documents.files().plain_copy(documents.file_key(d)) as path:        # stored files are encrypted; decrypted only while read
+        return [c.text for c in chunker.chunk(path)]
 
 
 def _ask(instruction: str, text: str) -> str:

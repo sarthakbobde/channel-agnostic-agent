@@ -148,13 +148,24 @@ def last_language(conv_id: str | None, db: Database | None = None) -> str:
                                                         Message.language != "").order_by(Message.id.desc()).limit(1)) or ""
 
 
-def get_messages(conv_id: str, db: Database | None = None) -> list[dict]:
-    """Full history for display."""
-    with (db or get_db()).session() as s:
+def get_messages(conv_id: str, db: Database | None = None, who=None) -> list[dict]:
+    """Full history for display. Vault tokens are shown as plain labels, or as the real values to `who` where they may
+    see them (the person reopening their own chat; never the Admin's conversation viewer). Each answer carries the
+    suggestions it showed, as buttons until they expire."""
+    from app.knowledge import pii_access
+    db = db or get_db()
+    with db.session() as s:
         rows = list(s.scalars(select(Message).where(Message.conversation_id == conv_id).order_by(Message.id)))
-        out = [{"id": m.id, "role": m.role, "content": m.content if (m.complete or m.content) else INTERRUPTED,
-                "meta": m.meta or {}, **({} if m.complete else {"incomplete": True})} for m in rows]
-    from app import suggestions                    # the same buttons when a conversation is reopened, until they expire
+        rows = [(m.id, m.role, m.content, dict(m.meta or {}), m.complete) for m in rows]
+    out = []
+    for mid, role, content, meta, complete in rows:
+        ids = meta.get("kb_ids") or []
+        show = lambda t: pii_access.for_viewer(t, ids, who, db, "conversation") if who is not None else pii_access.for_viewer(t, [], None, db)
+        if meta.get("sources"):
+            meta["sources"] = [{**src, "snippet": show(src.get("snippet", ""))} for src in meta["sources"]]
+        out.append({"id": mid, "role": role, "content": show(content) if (complete or content) else INTERRUPTED,
+                    "meta": meta, **({} if complete else {"incomplete": True})})
+    from app import suggestions
     shown = suggestions.for_history(conv_id, db)
     for m in out:
         if m["role"] == "assistant" and m["id"] in shown:
@@ -186,6 +197,32 @@ def delete(conv_id: str, db: Database | None = None) -> bool:
 clear = delete
 
 
+# ---- masking stored text again (after PII protection was off) -----------------------------------------------------------
+def remask(start=None, end=None, db: Database | None = None) -> int:
+    """Run personal-data masking over the stored messages in a date range (questions and answers typed or written while
+    protection was off). Tokens and labels already there are left alone. Returns how many messages changed."""
+    from app import guardrails
+    db = db or get_db()
+    snap = guardrails.current(db)
+    q = select(Message.id)
+    if start is not None:
+        q = q.where(Message.ts >= start)
+    if end is not None:
+        q = q.where(Message.ts < end)
+    with db.session() as s:
+        ids = list(s.scalars(q.order_by(Message.id)))
+    changed = 0
+    for i in range(0, len(ids), 200):
+        with db.session() as s:
+            for m in s.scalars(select(Message).where(Message.id.in_(ids[i:i + 200]))):
+                if m.content:
+                    new, counts = guardrails.mask_with(m.content, snap)
+                    if counts:
+                        m.content = new
+                        changed += 1
+    return changed
+
+
 # ---- one-off import of the old text files ----------------------------------------------------------------------
 def import_files(db: Database | None = None, directory: str | None = None) -> dict:
     """Bring the old per-thread text files into the database. Repeatable: a conversation that is already there is skipped.
@@ -208,7 +245,13 @@ def import_files(db: Database | None = None, directory: str | None = None) -> di
                 skipped += 1
                 continue
         records = []
-        for line in f.read_text(encoding="utf-8", errors="ignore").splitlines():
+        try:
+            from app.knowledge.filestore import read_maybe_encrypted
+            content = read_maybe_encrypted(f, settings.secret_key).decode("utf-8", errors="ignore")
+        except Exception:
+            log.warning("could not read %s", f.name, exc_info=True)
+            continue
+        for line in content.splitlines():
             try:
                 rec = json.loads(line)
             except json.JSONDecodeError:
@@ -225,7 +268,7 @@ def import_files(db: Database | None = None, directory: str | None = None) -> di
                 for rec in records:
                     text = str(rec.get("content", ""))
                     if mask and text:
-                        text, _ = guardrails.mask(text, g.masked_types, g.mask_names)
+                        text, _ = guardrails.mask_with(text, g)
                     ts = datetime.fromtimestamp(float(rec.get("ts", 0)), timezone.utc) if rec.get("ts") else _now()
                     _store(s, conv_id, who, rec["role"], text, rec.get("meta") if isinstance(rec.get("meta"), dict) else None, True, ts)
             done += 1

@@ -23,7 +23,7 @@ from dataclasses import dataclass
 
 from sqlalchemy.exc import IntegrityError
 
-from app import alerts, identity
+from app import alerts, identity, pii
 from app.config import settings as env
 from app import guardrail_rules
 from app.db import Database, Department, GuardrailEvent, GuardrailSettings, get_db
@@ -36,6 +36,9 @@ FRIENDLY_ERROR = "Sorry, I can't process that right now. Please try again in a m
 DEFAULT_TYPES = ["EMAIL_ADDRESS", "PHONE_NUMBER", "CREDIT_CARD", "US_SSN", "IN_AADHAAR", "IN_PAN", "IBAN_CODE"]
 OTHER_TYPES = ["IP_ADDRESS", "URL", "US_PASSPORT", "US_BANK_NUMBER", "US_DRIVER_LICENSE", "US_ITIN", "UK_NHS", "CRYPTO", "MEDICAL_LICENSE"]
 ALLOWED_TYPES = DEFAULT_TYPES + OTHER_TYPES
+KEYWORD_TYPE = "SENSITIVE_VALUE"          # what a value next to a sensitive keyword becomes
+DEFAULT_KEYWORDS = ["Salary", "CTC", "DOB", "Date of birth", "Bank account", "Account no", "IFSC", "Aadhaar No", "PAN",
+                    "Passport", "Medical", "Diagnosis", "Home address"]
 CACHE_SECONDS = 2.0
 CHARS_PER_TOKEN = 4
 _EMAIL = re.compile(r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}")
@@ -61,8 +64,21 @@ class Snapshot:
     toxicity_words: tuple
     toxicity_allow: tuple
     leak_check_enabled: bool
+    pii_threshold: int = 40
+    keywords_enabled: bool = True
+    sensitive_keywords: tuple = ()
+    pii_protection: bool = True
     language_lists: tuple = ()          # ((lang, {"injection": [...], "toxicity": [...], "banned_topics": [...]}), ...)
     unlisted_language: str = "english"  # english | block
+
+    @property
+    def keywords(self) -> tuple:
+        """The sensitive keywords in force (none while the keyword check is off)."""
+        return self.sensitive_keywords if self.keywords_enabled else ()
+
+    @property
+    def threshold(self) -> float:
+        return self.pii_threshold / 100
 
     def lists_for(self, lang: str) -> dict | None:
         return dict(self.language_lists).get(lang)
@@ -101,6 +117,12 @@ SPEC = (
      "help": "Comma-separated. Allowed: " + ", ".join(ALLOWED_TYPES) + "."},
     {"name": "mask_names", "label": "Also mask people's names", "kind": "bool",
      "help": "Off by default: names are often needed to answer (for example a manager's name). Detection is approximate."},
+    {"name": "pii_threshold", "label": "Detection confidence (%)", "kind": "number", "min": 10, "max": 95, "step": 5,
+     "help": "How sure the detector must be before something is treated as personal data. Lower catches more, with more false alarms."},
+    {"name": "keywords_enabled", "label": "Mask values next to sensitive keywords", "kind": "bool",
+     "help": "When a listed keyword appears (for example 'Salary: 12,40,000'), the value that follows it is masked as <SENSITIVE_VALUE>, whatever its format."},
+    {"name": "sensitive_keywords", "label": "Sensitive keywords", "kind": "list",
+     "help": "Comma-separated words or short phrases, for example Salary, DOB, Bank account."},
     {"name": "output_checks_enabled", "label": "Check answers before sending", "kind": "bool",
      "help": "Applies the banned-topic, redaction and citation checks to the finished answer."},
     {"name": "output_redaction", "label": "Redact personal data in answers", "kind": "bool",
@@ -127,13 +149,15 @@ def defaults() -> dict:
             "output_checks_enabled": True, "output_redaction": True, "allow_list": [],
             "injection_enabled": True, "injection_sensitivity": "medium", "injection_phrases": [],
             "toxicity_enabled": True, "toxicity_sensitivity": "medium", "toxicity_words": [], "toxicity_allow": [],
-            "leak_check_enabled": True, "language_lists": {}, "unlisted_language": "english"}
+            "leak_check_enabled": True, "pii_threshold": 40, "keywords_enabled": True, "sensitive_keywords": list(DEFAULT_KEYWORDS),
+            "pii_protection": True, "language_lists": {}, "unlisted_language": "english"}
 
 
 _COLUMNS = ("enabled", "max_input_tokens", "blocked_reply", "mask_enabled", "masked_types", "mask_names",
             "banned_topics_enabled", "output_checks_enabled", "output_redaction", "allow_list", "injection_enabled",
             "injection_sensitivity", "injection_phrases", "toxicity_enabled", "toxicity_sensitivity", "toxicity_words",
-            "toxicity_allow", "leak_check_enabled", "language_lists", "unlisted_language", "updated_at", "updated_by")
+            "toxicity_allow", "leak_check_enabled", "pii_threshold", "keywords_enabled", "sensitive_keywords", "pii_protection",
+            "language_lists", "unlisted_language", "updated_at", "updated_by")
 
 
 def _snapshot(row: dict) -> Snapshot:
@@ -142,7 +166,8 @@ def _snapshot(row: dict) -> Snapshot:
                     row["output_checks_enabled"], row["output_redaction"], tuple(row["allow_list"] or ()),
                     row["injection_enabled"], row["injection_sensitivity"], tuple(row["injection_phrases"] or ()),
                     row["toxicity_enabled"], row["toxicity_sensitivity"], tuple(row["toxicity_words"] or ()),
-                    tuple(row["toxicity_allow"] or ()), row["leak_check_enabled"],
+                    tuple(row["toxicity_allow"] or ()), row["leak_check_enabled"], row["pii_threshold"], row["keywords_enabled"],
+                    tuple(row["sensitive_keywords"] or ()), row["pii_protection"],
                     tuple(sorted((k, v) for k, v in (row["language_lists"] or {}).items())), row["unlisted_language"] or "english")
 
 
@@ -187,15 +212,17 @@ def view(db: Database | None = None) -> dict:
     row = _row(db)
     snap = _snapshot(row)
     fields = []
+    custom = [t["name"] for t in pii.list_custom(db)]
     for f in SPEC:
         value = getattr(snap, f["name"])
         if f["name"] == "language_lists":
             value = dict(value)
-        fields.append({**f, "value": list(value) if isinstance(value, tuple) else value})
+        extra = {"choices": ALLOWED_TYPES + custom} if f["name"] == "masked_types" else {}
+        fields.append({**f, **extra, "value": list(value) if isinstance(value, tuple) else value})
     return {"fields": fields, "updated_at": row["updated_at"], "updated_by": row["updated_by"]}
 
 
-def validate(values: dict) -> dict:
+def validate(values: dict, db: Database | None = None) -> dict:
     unknown = sorted(set(values) - set(_BY_NAME))
     if unknown:
         raise ValueError("Unknown setting: " + ", ".join(unknown))
@@ -225,9 +252,10 @@ def validate(values: dict) -> dict:
                 raise ValueError(f"{f['label']} must be a list.")
             items = [x.strip() for x in raw if x.strip()]
             if name == "masked_types":
-                bad = [x for x in items if x not in ALLOWED_TYPES]
+                allowed = ALLOWED_TYPES + [t["name"] for t in pii.list_custom(db or get_db())]
+                bad = [x for x in items if x not in allowed]
                 if bad:
-                    raise ValueError("Unknown personal-data type: " + ", ".join(bad) + ". Allowed: " + ", ".join(ALLOWED_TYPES) + ".")
+                    raise ValueError("Unknown personal-data type: " + ", ".join(bad) + ". Allowed: " + ", ".join(allowed) + ".")
                 items = list(dict.fromkeys(items))
             else:
                 if len(items) > 100 or any(len(x) > 200 for x in items):
@@ -264,7 +292,7 @@ def _clean_lists(raw) -> dict:
 def update(values: dict, actor: str, db: Database | None = None) -> tuple[Snapshot, Snapshot]:
     db = db or get_db()
     before = _snapshot(_row(db))
-    clean = validate(values)
+    clean = validate(values, db)
     if clean:
         with db.session() as s:
             row = s.get(GuardrailSettings, 1)
@@ -351,24 +379,55 @@ def status() -> str:
     return "error" if _load_error else "loading"
 
 
-def mask(text: str, types, mask_names: bool = False, allow=()) -> tuple[str, dict]:
-    """Replace personal data with <TYPE>. Returns (new text, {type: how many})."""
+@dataclass(frozen=True)
+class Hit:
+    start: int
+    end: int
+    entity_type: str
+    score: float
+
+
+def detect(text: str, types, mask_names: bool = False, allow=(), keywords=(), threshold: float = 0.4) -> list[Hit]:
+    """Personal data in `text`: the detector's types (built-in and Admin-defined), names if asked, and the values next to
+    sensitive keywords. Returns non-overlapping hits in order; values on the allow-list are left out."""
     entities = list(types) + (["PERSON"] if mask_names else [])
-    if not entities or not text.strip():
-        return text, {}
-    found = _get_analyzer().analyze(text=text, language="en", entities=entities, score_threshold=0.4)
+    if not text.strip() or not (entities or keywords):
+        return []
+    found: list[Hit] = []
+    if entities:
+        engine = _get_analyzer()
+        pii.sync_recognizers(engine)
+        supported = set(engine.get_supported_entities("en"))
+        entities = [e for e in entities if e in supported]           # a custom type deleted a moment ago is simply skipped
+        if entities:
+            found = [Hit(r.start, r.end, r.entity_type, r.score)
+                     for r in engine.analyze(text=text, language="en", entities=entities, score_threshold=threshold)]
+    found += [Hit(a, b, KEYWORD_TYPE, pii.KEYWORD_SCORE) for a, b in pii.keyword_spans(text, keywords)]
     allowed = {a.strip().lower() for a in allow}
     found = [r for r in found if text[r.start:r.end].strip().lower() not in allowed]
+    masked = [m.span() for m in pii.PLACEHOLDER_RE.finditer(text)]      # already masked: never mask a label or token again
+    if masked:
+        found = [r for r in found if not any(r.start < b and a < r.end for a, b in masked)]
     kept, end = [], -1
     for r in sorted(found, key=lambda r: (r.start, -r.score)):         # overlapping hits: keep the first / strongest
         if r.start >= end:
             kept.append(r)
             end = r.end
+    return kept
+
+
+def mask(text: str, types, mask_names: bool = False, allow=(), keywords=(), threshold: float = 0.4) -> tuple[str, dict]:
+    """Replace personal data with <TYPE>. Returns (new text, {type: how many})."""
     counts: dict = {}
-    for r in reversed(kept):
+    for r in reversed(detect(text, types, mask_names, allow, keywords, threshold)):
         text = text[:r.start] + f"<{r.entity_type}>" + text[r.end:]
         counts[r.entity_type] = counts.get(r.entity_type, 0) + 1
     return text, counts
+
+
+def mask_with(text: str, s: Snapshot, allow=()) -> tuple[str, dict]:
+    """`mask` with the types, keywords and threshold of the current settings."""
+    return mask(text, s.masked_types, s.mask_names, allow, s.keywords, s.threshold)
 
 
 # ---- banned topics ---------------------------------------------------------------------------------------------------
@@ -450,15 +509,17 @@ def check_input(message: str, db: Database | None = None) -> Decision:
         return Decision("", True, FRIENDLY_ERROR, "friendly_error")
 
 
-def mask_input(message: str, db: Database | None = None) -> Decision:
+def mask_input(message: str, db: Database | None = None, mask: bool = True) -> Decision:
     """Personal-data masking of a question. Everything after this step (detection, storage, logs, models) sees only its
-    output. Fails closed: if masking breaks, the question is refused rather than passed on unmasked."""
+    output. Fails closed: if masking breaks, the question is refused rather than passed on unmasked.
+    It follows its own switch, not the master switch (D36). `mask` False: every knowledge base asked has PII protection
+    off (12g)."""
     db = db or get_db()
     try:
         s = current(db)
-        if not s.mask_enabled:                       # its own switch, not the master switch (D36)
+        if not (s.mask_enabled and mask):
             return Decision(message)
-        masked, counts = mask(message, s.masked_types, s.mask_names)
+        masked, counts = mask_with(message, s)
         if counts:
             record(db, "personal_data", "input", "masked", sum(counts.values()))
         return Decision(masked)
@@ -501,10 +562,10 @@ def check_language(message: str, lang: str, db: Database | None = None) -> Decis
         return Decision("", True, FRIENDLY_ERROR, "friendly_error")
 
 
-def guard_input(message: str, db: Database | None = None) -> Decision:
+def guard_input(message: str, db: Database | None = None, mask: bool = True) -> Decision:
     """Both input steps: the checks, then masking."""
     gate = check_input(message, db)
-    return gate if gate.blocked else mask_input(gate.text, db)
+    return gate if gate.blocked else mask_input(gate.text, db, mask)
 
 
 def output_active(db: Database | None = None) -> bool:
@@ -533,8 +594,9 @@ def canary_line() -> str:
 _CITE = re.compile(r"\[(\d+)\]")
 
 
-def guard_output(answer: str, n_sources: int, searched: bool, db: Database | None = None, lang: str = "") -> str:
-    """`lang` is the answer's language: its own word lists are checked too, and a blocked answer is replaced in that language."""
+def guard_output(answer: str, n_sources: int, searched: bool, db: Database | None = None, lang: str = "", redact: bool = True) -> str:
+    """`lang` is the answer's language: its own word lists are checked too, and a blocked answer is replaced in that language.
+    `redact` False: every knowledge base asked has PII protection off (12g), so personal data is not redacted."""
     from app import catalog
     db = db or get_db()
     try:
@@ -555,8 +617,8 @@ def guard_output(answer: str, n_sources: int, searched: bool, db: Database | Non
                                         or _phrase_hit(answer, lists.get("banned_topics", ()))):
             record(db, "banned_topic", "output", "blocked", language=lang)
             return blocked
-        if s.output_redaction and s.masked_types:
-            answer, counts = mask(answer, s.masked_types, s.mask_names, s.allow_list)
+        if s.output_redaction and redact and (s.masked_types or s.keywords):
+            answer, counts = mask_with(answer, s, s.allow_list)
             if counts:
                 record(db, "personal_data", "output", "redacted", sum(counts.values()))
         if searched:

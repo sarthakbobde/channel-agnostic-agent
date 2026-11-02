@@ -11,9 +11,10 @@ from app.db import Database
 from app.secretstore import FernetSecretStore, generate_key
 from tests.conftest import TEST_DB
 
-HEAD = "0030"
+HEAD = "0033"
 TABLES = {"meta", "channels", "secrets", "users", "departments", "department_editors", "set_password_tokens", "knowledge_bases", "documents", "kb_index_versions", "groups", "group_members", "document_access", "kb_access", "prompts", "guardrail_settings", "guardrail_events", "conversations", "messages", "audit_log", "global_settings", "job_locks",
-          "alembic_version", "scoped_settings", "answer_traces", "message_catalog", "glossaries", "glossary_versions", "glossary_terms", "suggestions", "llm_providers", "model_settings", "model_prices", "usage_records", "alerts"}
+          "alembic_version", "scoped_settings", "answer_traces", "message_catalog", "glossaries", "glossary_versions", "glossary_terms", "suggestions",
+          "llm_providers", "model_settings", "model_prices", "usage_records", "alerts", "pii_custom_types", "pii_vault", "pii_vault_refs", "kb_pii_viewers"}
 
 # The schema exactly as it was before migrations existed (captured from the live database).
 LEGACY_DDL = """
@@ -120,3 +121,19 @@ def test_database_created_before_migrations_upgrades_in_place_with_data_intact(t
     store.save("gchat", enabled=False, values={"audience": "123"}, actor="a")
     assert store.runtime_config("slack")[1]["bot_token"] == "xoxb-new"
     assert store.runtime_config("slack")[1]["app_token"] == "xapp-legacy-app"
+
+
+def test_a_database_on_the_release_2_branchs_old_0026_upgrades_to_head(new_db):
+    """The UAT database ran the Release 2 branch's 0026 (answer identity) before main's personal-data 0026-0028 existed.
+    Alembic then believes main's 0026 already ran; 0029 must create what it skipped and not add its own columns twice."""
+    db = new_db()
+    db.downgrade("0025")
+    with db.engine.begin() as c:                                   # what the branch's old 0026 did, then its stamp
+        c.execute(text("ALTER TABLE messages ADD COLUMN author_user_id INTEGER"))
+        c.execute(text("ALTER TABLE messages ADD COLUMN author_email VARCHAR(254) NOT NULL DEFAULT ''"))
+        c.execute(text("ALTER TABLE usage_records ADD COLUMN message_id INTEGER"))
+        c.execute(text("UPDATE alembic_version SET version_num = '0026'"))
+    db.migrate()
+    assert revision(db) == HEAD and tables(db) == TABLES
+    assert {"pii_threshold", "keywords_enabled", "sensitive_keywords", "pii_protection"} <= columns(db, "guardrail_settings")
+    assert {"author_user_id", "author_email", "language"} <= columns(db, "messages")
