@@ -1,0 +1,61 @@
+pair,question,expected_section
+en-en,How many casual leaves do employees get in a year?,LEAVE POLICY
+hi-en,कर्मचारियों को साल में कितनी आकस्मिक छुट्टियाँ मिलती हैं?,LEAVE POLICY
+mr-en,कर्मचाऱ्यांना वर्षात किती नैमित्तिक रजा मिळतात?,LEAVE POLICY
+en-en,Is Diwali a company holiday?,LEAVE POLICY
+hi-en,क्या दिवाली पर कंपनी की छुट्टी होती है?,LEAVE POLICY
+mr-en,दिवाळीला कंपनीची सुट्टी असते का?,LEAVE POLICY
+en-en,How long is maternity leave?,MATERNITY AND PATERNITY LEAVE POLICY
+hi-en,मातृत्व अवकाश कितने समय का होता है?,MATERNITY AND PATERNITY LEAVE POLICY
+mr-en,प्रसूती रजा किती दिवसांची असते?,MATERNITY AND PATERNITY LEAVE POLICY
+en-en,Do fathers get paternity leave?,MATERNITY AND PATERNITY LEAVE POLICY
+hi-en,क्या पिता को पितृत्व अवकाश मिलता है?,MATERNITY AND PATERNITY LEAVE POLICY
+mr-en,वडिलांना पितृत्व रजा मिळते का?,MATERNITY AND PATERNITY LEAVE POLICY
+en-en,How do I report sexual harassment at work?,SEXUAL HARASSMENT POLICY
+hi-en,कार्यस्थल पर यौन उत्पीड़न की शिकायत कैसे करें?,SEXUAL HARASSMENT POLICY
+mr-en,कामाच्या ठिकाणी लैंगिक छळाची तक्रार कशी करावी?,SEXUAL HARASSMENT POLICY
+en-en,What is the notice period when I resign?,TERMINATION AND SEPARATION POLICY
+hi-en,इस्तीफा देने पर नोटिस अवधि कितनी होती है?,TERMINATION AND SEPARATION POLICY
+mr-en,राजीनामा दिल्यावर नोटीस कालावधी किती असतो?,TERMINATION AND SEPARATION POLICY
+en-en,What happens if I come late to the office?,ATTENDANCE
+hi-en,अगर मैं ऑफिस देर से आऊँ तो क्या होता है?,ATTENDANCE
+mr-en,मी ऑफिसला उशिरा आलो तर काय होते?,ATTENDANCE
+en-en,How can I report fraud anonymously?,WHISTLEBLOWER POLICY
+hi-en,धोखाधड़ी की गुमनाम शिकायत कैसे कर सकते हैं?,WHISTLEBLOWER POLICY
+mr-en,फसवणुकीची निनावी तक्रार कशी करता येईल?,WHISTLEBLOWER POLICY
+en-en,What is the dress code on Fridays?,GROOMING & DRESS CODE POLICY
+hi-en,शुक्रवार को ड्रेस कोड क्या है?,GROOMING & DRESS CODE POLICY
+mr-en,शुक्रवारी ड्रेस कोड काय आहे?,GROOMING & DRESS CODE POLICY
+en-en,How long is the probation period?,PROBATION AND CONFIRMATION POLICY
+hi-en,परिवीक्षा अवधि कितनी लंबी होती है?,PROBATION AND CONFIRMATION POLICY
+mr-en,परिवीक्षा कालावधी किती असतो?,PROBATION AND CONFIRMATION POLICY
+en-en,Can I work from home?,WORK FROM HOME POLICY
+hi-en,क्या मैं घर से काम कर सकता हूँ?,WORK FROM HOME POLICY
+mr-en,मी घरून काम करू शकतो का?,WORK FROM HOME POLICY
+en-en,Who handles employee grievances?,GRIEVANCE POLICY
+hi-en,कर्मचारियों की शिकायतों का निपटारा कौन करता है?,GRIEVANCE POLICY
+mr-en,कर्मचाऱ्यांच्या तक्रारींचे निवारण कोण करते?,GRIEVANCE POLICY
+en-en,Are there awards for good performance?,AWARDS AND RECOGNITION POLICY
+hi-en,क्या अच्छे प्रदर्शन के लिए पुरस्कार मिलते हैं?,AWARDS AND RECOGNITION POLICY
+mr-en,चांगल्या कामगिरीसाठी पुरस्कार मिळतात का?,AWARDS AND RECOGNITION POLICY
+en-en,Is alcohol allowed at work?,DRUG AND ALCOHOL POLICY
+hi-en,क्या काम पर शराब की अनुमति है?,DRUG AND ALCOHOL POLICY
+mr-en,कामावर दारूला परवानगी आहे का?,DRUG AND ALCOHOL POLICY
+en-en,When are performance appraisals done?,PERFORMANCE MANAGEMENT AND APPRAISAL
+hi-en,प्रदर्शन मूल्यांकन कब किया जाता है?,PERFORMANCE MANAGEMENT AND APPRAISAL
+mr-en,कामगिरी मूल्यमापन केव्हा केले जाते?,PERFORMANCE MANAGEMENT AND APPRAISAL
+en-en,How does the company hire new employees?,RECRUITMENT AND HIRING POLICY
+hi-en,कंपनी नए कर्मचारियों की भर्ती कैसे करती है?,RECRUITMENT AND HIRING POLICY
+mr-en,कंपनी नवीन कर्मचाऱ्यांची भरती कशी करते?,RECRUITMENT AND HIRING POLICY
+en-en,What travel expenses are reimbursed?,TRAVEL POLICY
+hi-en,यात्रा के कौन से खर्च वापस मिलते हैं?,TRAVEL POLICY
+mr-en,प्रवासाचे कोणते खर्च परत मिळतात?,TRAVEL POLICY
+en-en,When is salary paid each month?,EMPLOYEE WAGES
+hi-en,हर महीने वेतन कब दिया जाता है?,EMPLOYEE WAGES
+mr-en,दर महिन्याला पगार केव्हा दिला जातो?,EMPLOYEE WAGES
+en-en,What does the code of conduct say about confidentiality?,CODE OF CONDUCT
+hi-en,आचार संहिता गोपनीयता के बारे में क्या कहती है?,CODE OF CONDUCT
+mr-en,आचारसंहिता गोपनीयतेबद्दल काय सांगते?,CODE OF CONDUCT
+en-en,Who manages office supplies and housekeeping?,OFFICE MANAGEMENT
+hi-en,कार्यालय की आपूर्ति और साफ-सफाई कौन संभालता है?,OFFICE MANAGEMENT
+mr-en,कार्यालयीन साहित्य आणि स्वच्छता कोण सांभाळते?,OFFICE MANAGEMENT

@@ -37,6 +37,7 @@ class Recorder:
         self.prompts: dict[str, dict] = {}
         self.models: list[dict] = []
         self.timings: dict[str, int] = {}
+        self.language = None               # the turn's LanguageContext (Phase 2)
         self.saved = False
 
     @contextlib.contextmanager
@@ -56,6 +57,8 @@ class Recorder:
         """A hash of what was in effect: two answers with the same id had the same models, prompts, indexes and settings."""
         config = {"models": sorted({(m["provider"], m["model"]) for m in self.models}),
                   "prompts": {k: v["id"] for k, v in self.prompts.items()}, "retrieval": self.retrieval}
+        if self.language is not None:
+            config["language"] = {"resolved": self.language.resolved, "accepted": self.language.accepted}
         return hashlib.sha256(json.dumps(config, sort_keys=True, default=str).encode()).hexdigest()[:16]
 
 
@@ -111,10 +114,12 @@ def save(rec: Recorder, turn, *, complete: bool, found: bool, searched: bool, db
     if rec.saved:
         return
     used = rec.answering_model()
+    lang = rec.language
     with (db or get_db()).session() as s:
         s.add(AnswerTrace(answer_id=turn.answer_id, question_id=turn.question_id, conversation_id=turn.conversation_id, complete=complete,
                           found=found, searched=searched, standalone_query=rec.standalone_query, search_text=rec.search_text,
                           hits=rec.hits, retrieval=rec.retrieval, prompt_versions=rec.prompts, provider=used.get("provider", ""),
                           model=used.get("model", ""), fallback_used=any(m["fallback"] for m in rec.models), timings=rec.timings,
-                          glossary={}, config_snapshot_id=rec.snapshot_id()))
+                          glossary={}, config_snapshot_id=rec.snapshot_id(), language=lang.resolved if lang else "",
+                          language_confidence=lang.confidence if lang else None, language_detail=lang.as_dict() if lang else None))
     rec.saved = True

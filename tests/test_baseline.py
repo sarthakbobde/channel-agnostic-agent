@@ -76,7 +76,7 @@ def test_retrieve_scored_asks_chroma_for_five_and_converts_distance(monkeypatch,
     monkeypatch.setattr(retriever, "get_collection", lambda: Col())
     got = retriever.retrieve_scored("leave policy")
     assert asked == {"n": 5, "q": ["leave policy"]}
-    assert got[0] == {"text": "doc1", "source": "a.pdf", "page": 3, "score": 0.75, "via": "meaning",   # score = 1 - distance
+    assert got[0] == {"text": "doc1", "source": "a.pdf", "page": 3, "score": 0.75, "via": "meaning", "doc_language": "",   # score = 1 - distance
                       "doc_id": None, "kb_id": got[0]["kb_id"], "chunk_id": None, "title": "a.pdf"}     # ids: Release 2
     assert got[1]["page"] is None and got[1]["score"] == 0.1                          # page 0 means "no page"
 

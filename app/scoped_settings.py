@@ -33,6 +33,11 @@ REGISTRY = {k.name: k for k in (
     Key("diversity", (KB, DEPARTMENT)),
     Key("top_k", (KB, DEPARTMENT)),
     Key("score_threshold", (KB,)),          # scores from different embedding models are not comparable (D31)
+    Key("accepted_languages", (KB, DEPARTMENT)),      # D39
+    Key("document_languages", (KB, DEPARTMENT)),
+    Key("default_language", (KB, DEPARTMENT)),
+    Key("language_confidence", (KB, DEPARTMENT)),
+    Key("summary_enabled", (KB,)),                    # D46
 )}
 RETRIEVAL_KEYS = ("retrieval_strategy", "hybrid_keyword_weight", "diversity", "top_k")
 
@@ -51,7 +56,8 @@ def _spec(key: str) -> dict:
 
 
 def _clean(key: str, value, db: Database | None = None):
-    return global_settings.validate({key: value}, global_settings.current(db))[key]
+    clean = global_settings.validate({key: value}, global_settings.current(db))[key]
+    return list(clean) if isinstance(clean, tuple) else clean
 
 
 def _overrides(db: Database | None = None) -> dict:
@@ -94,7 +100,8 @@ def explain(key: str, *, channel=None, kb_id=None, department_id=None, db: Datab
     for scope_type, scope_id in _chain(channel, kb_id, department_id):
         if scope_type in REGISTRY[key].scopes and (scope_type, scope_id, key) in found:
             return found[(scope_type, scope_id, key)], scope_type
-    return getattr(global_settings.current(db), key), "global"
+    value = getattr(global_settings.current(db), key)
+    return (list(value) if isinstance(value, tuple) else value), "global"
 
 
 def get(key: str, *, channel=None, kb_id=None, department_id=None, db: Database | None = None):

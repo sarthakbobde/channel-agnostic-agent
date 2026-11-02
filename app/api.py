@@ -8,12 +8,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-from app import channels, chat_auth, chat_service, global_settings, guardrails, identity, memory, prompts, ratelimit, retention, summaries
+from app import catalog, channels, chat_auth, chat_service, global_settings, guardrails, identity, language, memory, prompts, ratelimit, retention, summaries
 from app.knowledge import storehealth
 from app.channels import health as channel_health
 from app.jobs import scheduler
 from app.providers import seed as provider_seed
-from app.knowledge import documents as knowledge_documents, kbs as knowledge_kbs
+from app.knowledge import doc_summary as knowledge_doc_summary, documents as knowledge_documents, kbs as knowledge_kbs
 from app.admin.api import check_local
 from app.admin.server import include_admin, listener as admin_listener
 from app.config import settings
@@ -34,6 +34,8 @@ class ChatResponse(BaseModel):
     sources: list[dict]
     searched: bool
     query: str = ""
+    language: str = ""                # the language the answer is written in (D19)
+    rejected: str | None = None       # "language" when the question's language is not accepted (D39)
 
 
 class ConversationSummary(BaseModel):
@@ -58,6 +60,10 @@ async def lifespan(app: FastAPI):
     except Exception:
         log.exception("could not seed the prompts; the built-in text is used")
     try:
+        catalog.seed()
+    except Exception:
+        log.exception("could not seed the message catalogue; the English texts are used")
+    try:
         imported = memory.import_files()
         if imported["imported"]:
             log.info("imported %d conversations from the old text files (kept as a backup)", imported["imported"])
@@ -80,6 +86,7 @@ async def lifespan(app: FastAPI):
     yield
     admin_listener.stop()
     knowledge_documents.shutdown()
+    knowledge_doc_summary.shutdown()
     summaries.shutdown()
     scheduler.stop()
     channels.stop_all()
@@ -113,8 +120,9 @@ app.include_router(chat_auth.router)
 
 @app.get("/health")
 def health():
-    """Health check endpoint. `guardrails`: off | ready | loading | error (the detection model is loaded once at start-up)."""
-    return {"status": "ok", "guardrails": guardrails.status()}
+    """Health check endpoint. `guardrails`: off | ready | loading | error (the detection model is loaded once at start-up).
+    `language`: ready | missing (without the detector every question is answered in the default language)."""
+    return {"status": "ok", "guardrails": guardrails.status(), "language": language.status()}
 
 
 # API documentation: reachable only from this machine, never through a tunnel or proxy.
@@ -139,7 +147,7 @@ def _audit(actor: str, action: str, target: str, detail: str = "") -> None:
         log.warning("could not audit %s", action, exc_info=True)
 
 
-PROVIDER_REFUSED_REPLY = "The AI service refused to process this message. Please rephrase your question and try again."
+PROVIDER_REFUSED_REPLY = catalog.TEXTS["provider_refused"][0]
 
 
 def _refused_by_provider(e: BaseException) -> bool:
@@ -158,7 +166,8 @@ def chat(request: MessageRequest, caller: Caller = Depends(require_chat_caller))
     """Chat endpoint - returns answer with sources."""
     ok, wait = ratelimit.allow("chat:" + (caller.email.lower() or "service"), global_settings.current().chat_rate_per_minute)
     if not ok:
-        raise HTTPException(429, f"You are asking too quickly. Please wait {wait} seconds and try again.", headers={"Retry-After": str(wait)})
+        lang = chat_service.reply_language(request.message, _conv(caller, request.conv_id))
+        raise HTTPException(429, catalog.t("slow_down_wait", lang, seconds=wait), headers={"Retry-After": str(wait)})
     who = identity.resolve(caller.email)
     token = identity.bind(who)
     try:
@@ -174,15 +183,26 @@ def chat(request: MessageRequest, caller: Caller = Depends(require_chat_caller))
             sources=meta.get("sources", []),
             searched=meta.get("searched", False),
             query=meta.get("query", ""),
+            language=meta.get("language", ""),
+            rejected=meta.get("rejected"),
         )
     except Exception as e:
         if _refused_by_provider(e):
             log.warning("the AI provider's own content filter refused the request: %s", e)
-            return ChatResponse(answer=PROVIDER_REFUSED_REPLY, sources=[], searched=False, query="")
+            lang = chat_service.reply_language(request.message, _conv(caller, request.conv_id))
+            return ChatResponse(answer=catalog.t("provider_refused", lang), sources=[], searched=False, query="", language=lang)
         log.error(f"Chat error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Internal error")
     finally:
         identity.unbind(token)
+
+
+@app.get("/catalog/{lang}")
+def message_texts(lang: str, caller: Caller = Depends(require_chat_caller)):
+    """The system texts in one language, with the fallbacks applied (the Web UI shows its own errors with these)."""
+    if not language.valid(lang):
+        raise HTTPException(404, "Unknown language.")
+    return catalog.bundle(lang)
 
 
 @app.get("/conversations")

@@ -134,6 +134,13 @@ class Document(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)
     indexed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    language: Mapped[str] = mapped_column(String(16), default="")             # detected from its passages (Phase 2)
+    content_hash: Mapped[str] = mapped_column(String(64), default="")         # of the original file, for the summary
+    summary: Mapped[str] = mapped_column(Text, default="")                    # display only (D46)
+    summary_lang: Mapped[str] = mapped_column(String(16), default="")
+    summary_status: Mapped[str] = mapped_column(String(12), default="")       # "" | Pending | Ready | Failed
+    summary_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    summary_hash: Mapped[str] = mapped_column(String(64), default="")         # content_hash the summary was written from
     __table_args__ = (UniqueConstraint("kb_id", "name", name="uq_documents_kb_name"),)
 
 
@@ -238,6 +245,8 @@ class GuardrailSettings(Base):
     toxicity_words: Mapped[list] = mapped_column(JSON, default=list)
     toxicity_allow: Mapped[list] = mapped_column(JSON, default=list)
     leak_check_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    language_lists: Mapped[dict | None] = mapped_column(JSON, nullable=True)   # {lang: {injection, toxicity, banned_topics}}
+    unlisted_language: Mapped[str] = mapped_column(String(16), default="english")   # english | block
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)
     updated_by: Mapped[str] = mapped_column(String(254), default="system")
 
@@ -252,6 +261,7 @@ class GuardrailEvent(Base):
     action: Mapped[str] = mapped_column(String(10))
     department: Mapped[str] = mapped_column(String(80), default="")
     count: Mapped[int] = mapped_column(Integer, default=1)
+    language: Mapped[str] = mapped_column(String(16), default="")
 
 
 class Conversation(Base):
@@ -283,6 +293,7 @@ class Message(Base):
     ts: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
     author_user_id: Mapped[int | None] = mapped_column(Integer, nullable=True)   # who asked (user messages)
     author_email: Mapped[str] = mapped_column(String(254), default="")
+    language: Mapped[str] = mapped_column(String(16), default="")       # resolved language of a question (D19)
 
 
 class SetPasswordToken(Base):
@@ -329,6 +340,13 @@ class GlobalSettings(Base):
     retrieval_strategy: Mapped[str] = mapped_column(String(16), default="similarity")   # similarity | keyword | hybrid | mmr
     hybrid_keyword_weight: Mapped[float] = mapped_column(Float, default=0.5)
     diversity: Mapped[float] = mapped_column(Float, default=0.3)
+    accepted_languages: Mapped[list | None] = mapped_column(JSON, nullable=True)   # empty = every language (D39)
+    document_languages: Mapped[list | None] = mapped_column(JSON, nullable=True)   # empty = detected from the documents
+    default_language: Mapped[str] = mapped_column(String(16), default="en")        # last fallback when detection is unsure
+    language_confidence: Mapped[float] = mapped_column(Float, default=0.5)
+    catalog_languages: Mapped[list | None] = mapped_column(JSON, nullable=True)    # languages with system texts besides English
+    summary_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    summary_max_input_tokens: Mapped[int] = mapped_column(Integer, default=6000)
 
 
 class JobLock(Base):
@@ -434,7 +452,23 @@ class AnswerTrace(Base):
     timings: Mapped[dict] = mapped_column(JSON, default=dict)          # milliseconds per stage
     glossary: Mapped[dict] = mapped_column(JSON, default=dict)         # applied terms and version, filled from Phase 3
     config_snapshot_id: Mapped[str] = mapped_column(String(32), default="")
+    language_detail: Mapped[dict | None] = mapped_column(JSON, nullable=True)   # detection, fallback, accepted list, retry
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class MessageCatalogEntry(Base):
+    """A system text in one language (D29). Only Approved entries are used; English is seeded from the code."""
+    __tablename__ = "message_catalog"
+    __table_args__ = (UniqueConstraint("key", "lang", name="uq_message_catalog"),)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    key: Mapped[str] = mapped_column(String(48))
+    lang: Mapped[str] = mapped_column(String(16))
+    text: Mapped[str] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(12), default="Draft")      # Draft | Approved
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    source: Mapped[str] = mapped_column(String(16), default="person")     # person | ai-draft | built-in
+    updated_by: Mapped[str] = mapped_column(String(254), default="")
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)
 
 
 class Alert(Base):

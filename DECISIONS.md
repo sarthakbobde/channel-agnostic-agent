@@ -34,23 +34,62 @@ From `docs/development-plan-v4_3-release-2 1.md` (section A5), which has the ful
 |---|---|---|---|---|
 | D18 | Release 2 scope | As in plan section A1 | n/a | Proposed |
 | D19 | Answer language | Always the question's language. Low-confidence detection falls back to the conversation's last language, then the KB default | Phase 2 | Proposed |
-| D20 | Embedding model | Per KB. Existing KBs stay on MiniLM until an Admin switches | Phase 2 | Proposed |
-| D21 | Language detection and normalization | A local detector behind an adapter, chosen in the Phase 2 spike. Clean-up only, never translation | Phase 2 | Proposed |
+| D20 | Embedding model | Per KB. Existing KBs stay on MiniLM until an Admin switches. **Recommended for multilingual KBs: the local multilingual e5-small** (spike below) | Phase 2 | Proposed; re-run on customer data |
+| D21 | Language detection and normalization | A local detector behind an adapter: **fastText lid.176**, confidence threshold **0.5** (spike below). Clean-up only, never translation | Phase 2 | Proposed; re-run on customer data |
 | D22 | Glossary | Query-time expansion of the search text by default. Index-time is optional per KB | Phase 3 | Proposed |
 | D23 | Trace | `answer_id` is the assistant Message id. References only, not the rendered prompt or passage text. Passage text is fetched when viewed, only for viewers who may see the document. Retention follows the conversation | Phase 1 | Proposed |
 | D26 | Suggestions | Generated in the same call, 3 asked for and 2 shown, each through the D40 checks. Off by default | Phase 4 | Proposed |
 | D29 | Message catalogue | English is byte-identical to today. Other languages need Admin approval | Phase 2 | Proposed |
 | D30 | Google Chat buttons | In the synchronous reply. Verified in the Phase 4 spike, with text only as the fallback | Phase 4 | Proposed |
-| D31 | Per-KB retrieval settings | Threshold, top-k and strategy can be overridden per KB (threshold: KB or global only). The threshold applies per KB before the merge | Groundwork (per KB); Phase 1 (settable); Phase 2 (calibration) | Proposed |
+| D31 | Per-KB retrieval settings | Threshold, top-k and strategy can be overridden per KB (threshold: KB or global only). The threshold applies per KB before the merge. **Recommended thresholds: MiniLM 0.35, e5-small 0.75** | Groundwork (per KB); Phase 1 (settable); Phase 2 (calibration) | Proposed; re-run on customer data |
 | D33 | Not found | A code-owned marker that the code replaces with the not-found text. Answers carry `found` | Groundwork; Phase 2 (catalogue) | Proposed |
-| D34 | Language through the router | The router keeps the user's language. The answer step receives the original masked question. See the R2-0 row below on the standalone meaning | Groundwork | Proposed |
+| D34 | Language through the router | The router keeps the user's language. The answer step receives the original masked question, and the router's standalone meaning in brackets when it differs (a confirmed deviation from v4.3; see R2-0 below) | Groundwork | **Confirmed 2026-11-02** |
 | D35 | Keyword search and languages | Words keep their combining marks. Cross-language questions skip keyword search | Groundwork (words); Phase 2 (cross-language) | Proposed |
-| D36 | Masking step | Masking is its own step after the input checks. v4.3 says it follows the masking switch, not the master switch; **the code still follows both, see R2-0 below. Needs a decision** | Groundwork | Proposed |
+| D36 | Masking step | Masking is its own step after the input checks, and since Phase 2 it follows only the masking switch, as v4.3 says: switching the guardrails off no longer stores personal data unmasked | Groundwork; Phase 2 (own switch) | **Confirmed 2026-11-02** |
 | D37 | Interactive payloads | HMAC-signed with an expiry. A click is de-duplicated per person, and only the asker may click | Phase 4 | Proposed |
 | D39 | Accepted languages | A scoped setting, default all. A language outside the list gets a polite reply, with no search and no model call | Phase 2 | Proposed |
 | D40 | Suggestion validation | Not a duplicate, can be answered, passes checks; the best 2 are shown | Phase 4 | Proposed |
 | D46 | Document summary | A background job writes a short summary in the document's language. Display only | Phase 2 | Proposed |
 | D47 | Stored suggestions | Every candidate is stored, masked, with its outcome. Deleted with the conversation | Phase 4 | Proposed |
+
+### Phase 2 spike results (2026-11-02)
+
+**Neither sample is customer data**, because the 50 to 100 documents and question pairs (plan, section 0) have not arrived. The
+detector sample is 111 messages in 13 languages written by Claude (57 short, 44 sentences, 10 mixed-language), plus 5 in
+romanised Hindi. The embedding sample is the repo's `data/docs/HR-Policy.pdf` (English, 44 passages) with 20 questions
+written by Claude in English, Hindi and Marathi, each labelled with the section that answers it, plus 5 unanswerable
+questions. Re-run both on the customer sample before D20, D21 and D31 are confirmed. The scripts are kept with the session
+notes; `tests/data/retrieval_check.csv` holds the embedding questions.
+
+Language detectors (no PyTorch; memory is the growth of one process after loading):
+
+| Detector | All | Short (< 20 characters) | Sentences | Mixed | Memory | Load | Per message |
+|---|---|---|---|---|---|---|---|
+| **fastText lid.176 (chosen)** | **91%** | **84%** | 100% | 90% | **15 MB** | 0.4 s | 0.01 ms |
+| langdetect | 83% | 68% | 100% | 90% | 61 MB | 0.4 s | 2 ms (11 ms p95) |
+| py3langid | 81% | 68% | 100% | 70% | 87 MB | 1.0 s | 0.07 ms |
+| Lingua, high accuracy | 79% | 75% | 93% | 40% | 1,160 MB | 4.0 s | 0.3 ms |
+| Lingua, low accuracy | 72% | 65% | 91% | 30% | 67 MB | 0.3 s | 0.2 ms |
+
+- fastText's misses are short Hindi and Marathi phrases confused with each other (the same script), and one-word English.
+- At the chosen threshold of 0.5, 92 of 111 messages are trusted, and 96% of those are right. The other 19 fall back as D19 says.
+- At 0.7, 99% of trusted messages are right, but 30 fall back.
+- **Romanised Hindi** ("meri leave kitni bachi hai") is not recognised by any detector. With fastText its confidence was 0.12 to 0.38, so it always falls back to the conversation's language or the default.
+- Licence: the lid.176 model is CC BY-SA 3.0 (a release checklist item).
+- fastText is archived upstream, and its Python wrapper breaks on NumPy 2, so the code calls its C++ binding directly. The adapter allows a swap; py3langid is the next best.
+
+Embedding models (recall at 5 = the answering section is among the top 5 passages):
+
+| Model | Recall@5 en→en | hi→en | mr→en | Score of the right passage / best wrong one (Hindi questions, median) | Top score of unanswerable questions | Query time |
+|---|---|---|---|---|---|---|
+| MiniLM (built in) | 1.00 | 0.20 | 0.15 | 0.36 / 0.35 | 0.16 to 0.41 | 340 ms* |
+| **multilingual e5-small** | 1.00 | **1.00** | **0.85** | 0.80 / 0.79 | 0.75 to 0.82 | 6 ms |
+
+- \*The MiniLM figure includes per-call overhead in Chroma's embedding function.
+- Index size: both models make 384-dimension vectors (132 KB for 44 passages). Indexing time was about 5 s for both.
+- **Threshold.** e5's scores are compressed: the lowest right passage scored 0.751, and unanswerable questions scored 0.75 to 0.82. So no threshold separates them. The recommended **0.75** keeps every right passage seen here, and unanswerable questions are left to the model's not-found reply (D33). MiniLM keeps 0.35.
+- No API embedding model was compared, because none has keys here and none was used without asking.
+- **Targets for the retrieval check:** recall at 5 of at least 0.9 for en→en and hi→en, and 0.8 for mr→en. The test passes with e5.
 
 ## Deviations from the plan, recorded as they happen
 
@@ -130,13 +169,26 @@ From `docs/development-plan-v4_3-release-2 1.md` (section A5), which has the ful
 | 9c | Audit search | Action filter is a prefix; target column widened to 254. | Targets such as `Knowledge base / file name` exceeded 64. |
 | 9c | Answered vs not-found | Counted from answers saved after this change (they record `kb_ids`). | Older answers do not say which knowledge base was used. |
 | 8c | Store health cadence | Every 5 minutes. | Quick enough to catch an outage, light enough not to load the stores. |
-| R2-0 | D36: masking follows the masking switch, not the guardrails master switch | Masking is its own step (`guardrails.mask_input`), but it still runs only when the guardrails master switch **and** masking are on, as before. | Running it with the master switch off would change what "guardrails off" means for every Admin, and would load the personal-data model in setups that switched it off. Confirm whether "off" should still mask. |
+| R2-0 | D36: masking follows the masking switch, not the guardrails master switch | Masking is its own step (`guardrails.mask_input`), but it still runs only when the guardrails master switch **and** masking are on, as before. | Running it with the master switch off would change what "guardrails off" means for every Admin, and would load the personal-data model in setups that switched it off. Confirm whether "off" should still mask. **Superseded in Phase 2:** masking now follows its own switch only, as v4.3 says (see D36). |
 | R2-0 | Answers stream token by token when output checks are off | Every answer is now collected whole before it is handed over. | The not-found marker must never reach a person. Every caller (API, chat apps, preview) already joined the answer, so nothing visible changes. |
 | R2-0 | The editable base prompt says to reply "I couldn't find this…" | It is left unchanged. A code-owned reply rule after it asks for the marker, and both are recognised. | Admins may have published their own base prompt, and the code must not rewrite it. |
 | R2-0 | Sources gain `doc_language` | Not yet. `doc_id`, `kb_id`, `chunk_id` and `title` are added now. | Document languages are only known after Phase 3. |
-| R2-0 | v4.3 D34: the answer step receives the original masked question; the standalone query is only for search | The original question is sent, and the router's standalone meaning is added in brackets when it differs | Built under v4.1, which asked for this. Without it, a follow-up such as "what about contractors?" reaches the answer step with no history. Needs a decision before Phase 2 |
+| R2-0 | v4.3 D34: the answer step receives the original masked question; the standalone query is only for search | The original question is sent, and the router's standalone meaning is added in brackets when it differs | Built under v4.1, which asked for this. Without it, a follow-up such as "what about contractors?" reaches the answer step with no history. **Confirmed 2026-11-02:** kept. The answer step sees no conversation history, so a follow-up needs the router's reading; the trace records it |
 | R2-1 | Editors open a trace "from Conversations", but that screen and its API were Admin only | Editors get a read-only view through the new `/admin/api/traces` routes, limited to their own departments. The Admin `/conversations` routes (delete, export, retention) stay Admin only. Stored source snippets are left out of the Editor's view | The default-deny role map stays meaningful. Snippets are passage text from documents the Editor may not be allowed to see. **An Editor can now read the masked questions and answers of their own departments, which they could not before. This belongs in the privacy sign-off** |
 | R2-1 | Precedence is channel, KB, department, global | Built and tested, but none of the five first keys allows the channel scope, so the screen offers no channels yet | D31 names KB and global for the threshold, and top-k and strategy per KB. The first channel-scoped keys are the suggestion switches in Phase 4 |
 | R2-1 | The department in the precedence chain is not defined for retrieval | For retrieval settings it is the department that owns the knowledge base, not the asker's | Search tuning belongs to the index. Everyone asking one KB gets the same behaviour. Keys about the asker can pass their own department later |
 | R2-1 | One `top_k` per question | Each KB searches with its own value. When several are merged, the merged list keeps the largest | Otherwise a KB's override could be cut off by another KB's smaller value |
 | R2-1 | Trace hits per KB | Hits below the threshold are recorded too, marked `above_threshold: false`, along with whether each was used. A turn that fails also gets a trace, with `complete: false` | "Not found" is the answer that most needs explaining. These are references only, and only passages the asker could see |
+| R2-2 | Input checks run in step 3, before the language is known (step 5) | English checks stay in step 3. A language's own word lists, and the choice for a language without lists, run right after detection, on masked text | The language must be known to pick its lists |
+| R2-2 | D21: detection runs on masked text | Questions are detected on masked text. Replies sent before masking (blocked, slow down, access turned off, failure, provider refusal, Google Chat timeout) pick their language by detecting the cleaned text in memory. Only the language code is used, and nothing is stored or logged | Otherwise every refusal would be in English. Detection is local |
+| R2-2 | Which scope decides a turn's default language and confidence threshold | The first knowledge base asked: its own value, then its department's, then global. Accepted languages are checked for each knowledge base | One turn needs one language. Knowledge bases asked together usually share a department |
+| R2-2 | Carry a `LanguageContext` through the turn | It travels in a context variable, like the asker's identity. Search (D35) and the prompt read it; no function signatures change | Same pattern as `identity.bind` and the trace recorder |
+| R2-2 | LLM-drafted translations need Admin approval | AI drafts are Drafts and are never used. An Admin's own edit is approved by saving it, since the Admin is the approver. AI drafting never overwrites an approved entry. The English `blocked` entry stays the Blocked Reply Text on the Guardrails screen | One place to edit each text; a live language can never lose an approved text |
+| R2-2 | Rejections and wrong-language answers are counted per language | Stored as guardrail events, with a new `language` column (a code only), and shown on a new Admin **Languages** screen, which also holds the message catalogue | Reuses the event table, which never holds content |
+| R2-2 | Long documents are summarised by section, within a cap | When a document is longer than the cap, up to 5 consecutive parts are each cut to their share of the cap, summarised, and then combined. The cap bounds all the text read. Usage is recorded against the knowledge base's department | Covers the whole document at a known cost |
+| R2-2 | A not-found answer in another language | Sources are cleared on `found`, not by matching the English sentence | The not-found text is now in the user's language |
+| R2-2 | Where the detector model lives | Baked into the image at `/opt/langid` with a SHA-256 check, outside `/app/models`, so a mounted volume cannot hide it. Locally, `MODELS_DIR/lid.176.ftz`. Missing model: every question goes to the fallback and `/health` says `language: missing` | Never a download at run time |
+| R2-2 | Web UI error texts move behind the catalogue | The web chat fetches the texts from a new `GET /catalog/{lang}` (chat sign-in required), cached for 5 minutes. Errors before the first answer are in English | The web chat has no language until it gets an answer |
+| R2-2 | The recommended threshold is offered when switching models | Shown with the rebuild estimate, and offered as a one-click KB override once the new version is in use, not before | Setting e5's 0.75 while the MiniLM index still answers would drop every passage |
+| R2-2 | Polite reply names the accepted languages | Each language is named in its own script (for example "English, हिन्दी") | The person may not read the reply's language |
+| R2-2 | Spikes on the customer sample | Run on stand-in samples (see "Phase 2 spike results"). Numbers must be re-run on customer data | The sample has not arrived |

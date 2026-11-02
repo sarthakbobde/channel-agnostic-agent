@@ -43,15 +43,18 @@ async def resume(thread):
 async def answer(message: cl.Message):
     token = backend.token_for(cl.user_session.get("user"))
     status, body = await backend.ask(token, cl.context.session.thread_id, message.content)
+    if status == 200 and body.get("language"):
+        cl.user_session.set("lang", body["language"])          # the person's language, for the texts below
+    texts = await backend.texts(token, cl.user_session.get("lang") or "")
     if status == 200:
-        await cl.Message(content=backend.with_sources(body.get("answer", ""), body.get("sources", [])),
+        await cl.Message(content=backend.with_sources(body.get("answer", ""), body.get("sources", []), body.get("language", ""), texts["sources"]),
                          **({"id": backend.step_id(body["answer_id"], "")} if body.get("answer_id") else {})).send()
     elif status in (401, 503):
-        await cl.ErrorMessage(content="Your session has ended. Sign out (top right) and sign in again.").send()
+        await cl.ErrorMessage(content=texts["web_session_ended"]).send()
     elif status in (0, 429):
-        await cl.ErrorMessage(content=body.get("detail", "Please try again.")).send()
+        await cl.ErrorMessage(content=body.get("detail", texts["web_try_again"])).send()
     else:
-        await cl.ErrorMessage(content=f"Something went wrong on our side (error {status}). Please try again.").send()
+        await cl.ErrorMessage(content=texts["web_error"].replace("{status}", str(status))).send()
 
 
 # ---------- choose a password (opened from the one-time link) ----------

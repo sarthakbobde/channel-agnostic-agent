@@ -3,6 +3,7 @@ through the API with each person's own session token, so the API's rules (who ma
 exactly as they do for every other channel."""
 import logging
 import os
+import time
 import uuid
 from datetime import datetime, timedelta, timezone
 
@@ -94,12 +95,40 @@ def step_id(message_id, fallback: str) -> str:
     return f"msg-{message_id}" if message_id else fallback
 
 
-def with_sources(answer: str, sources: list[dict]) -> str:
+# The Web UI's own texts in English; the API's message catalogue gives them in other languages.
+TEXTS = {"sources": "Sources", "web_session_ended": "Your session has ended. Sign out (top right) and sign in again.",
+         "web_try_again": "Please try again.", "web_error": "Something went wrong on our side (error {status}). Please try again."}
+TEXTS_SECONDS = 300
+_texts: dict[str, tuple[float, dict]] = {}
+
+
+async def texts(token: str, lang: str) -> dict:
+    """The Web UI texts in `lang` (cached for a few minutes). English, or the last copy, when the API cannot say."""
+    if not lang or lang == "en":
+        return TEXTS
+    hit = _texts.get(lang)
+    if hit and time.monotonic() - hit[0] < TEXTS_SECONDS:
+        return hit[1]
+    try:
+        async with _client() as c:
+            r = await c.get(f"/catalog/{lang}", headers={"Authorization": f"Bearer {token}"})
+        if r.status_code == 200:
+            got = {k: v for k, v in r.json().items() if k in TEXTS and isinstance(v, str)}
+            _texts[lang] = (time.monotonic(), {**TEXTS, **got})
+            return _texts[lang][1]
+    except (httpx.HTTPError, ValueError):
+        log.warning("could not fetch the %s texts", lang)
+    return hit[1] if hit else TEXTS
+
+
+def with_sources(answer: str, sources: list[dict], lang: str = "", label: str = "Sources") -> str:
+    """Titles as written; a document in another language than the answer gets its language code, for example (EN)."""
     if not sources:
         return answer
     lines = [f"- [{s.get('n', i + 1)}] {s.get('source', '')}" + (f", p.{s['page']}" if s.get("page") else "")
+             + (f" ({s['doc_language'].upper()})" if lang and s.get("doc_language") and s["doc_language"] != lang else "")
              for i, s in enumerate(sources)]
-    return answer + "\n\n**Sources**\n" + "\n".join(lines)
+    return answer + f"\n\n**{label}**\n" + "\n".join(lines)
 
 
 # ---------- history, for Chainlit's sidebar ----------
@@ -176,7 +205,7 @@ class BackendDataLayer(BaseDataLayer):
                           "name": owner if mine else self.assistant_name,
                           "type": "user_message" if mine else "assistant_message",
                           "output": m.get("content", "") if mine else
-                          with_sources(m.get("content", ""), (m.get("meta") or {}).get("sources", [])),
+                          with_sources(m.get("content", ""), (m.get("meta") or {}).get("sources", []), (m.get("meta") or {}).get("language", "")),
                           "input": "", "createdAt": ts, "start": ts, "end": ts, "streaming": False,
                           "isError": False, "waitForAnswer": False, "metadata": {}, "showInput": False})
         first = next((m.get("content", "") for m in messages if m.get("role") == "user"), "")

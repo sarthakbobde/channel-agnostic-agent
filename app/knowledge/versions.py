@@ -193,6 +193,7 @@ def estimate(db: Database, kb_id: int) -> dict:
     return {"documents": docs, "chunks": chunks, "tokens": tokens, "seconds": round(chunks / rate) if rate else None,
             "cost_usd": None if price is None else round(tokens / 1_000_000 * price, 6),
             "model": model_cls.title, "warning": model_cls.warning, "skipped_documents": problems, "target": d,
+            "recommended_threshold": model_cls.RECOMMENDED_THRESHOLD,
             "note": ("Embedding runs on this machine, so there is no charge." if price == 0 else
                      "Cost is not known for this embedding model." if price is None else "Cost uses the model's approximate list price; your plan may differ.")
                     + (" Time is measured from the last build." if last else " Time is a rough guess until a build has been measured.")}

@@ -79,9 +79,21 @@ def _active_version(kb: dict):
     return v and v["version"]
 
 
+def document_languages(kb: dict) -> list[str]:
+    """The languages a knowledge base's documents are written in: its setting, else what was detected in its documents."""
+    chosen = scoped_settings.for_kb(kb, "document_languages")
+    if chosen or not kb.get("id"):
+        return list(chosen or [])
+    from sqlalchemy import distinct, select
+    from app.db import Document, get_db
+    with get_db().session() as s:
+        return sorted(l for l in s.scalars(select(distinct(Document.language)).where(Document.kb_id == kb["id"], Document.language != "")))
+
+
 def _search_kb(kb: dict, query: str, k: int, who, min_score: float | None = None) -> list[dict]:
     """One knowledge base, with the asker's access applied INSIDE the search, for every strategy.
     Each hit carries the Document id of its passage (`doc_pk`)."""
+    from app import language
     from app.db import get_db
     from app.knowledge import access, kbs
     db = get_db()
@@ -93,6 +105,15 @@ def _search_kb(kb: dict, query: str, k: int, who, min_score: float | None = None
         return []
     conf = {key: scoped_settings.for_kb(kb, key) for key in scoped_settings.RETRIEVAL_KEYS}
     strategy = conf["retrieval_strategy"]
+    turn = language.current()
+    if turn is not None:
+        langs = document_languages(kb)
+        turn.doc_languages[str(kb.get("id"))] = langs
+        conf["doc_languages"] = langs
+        if strategy in ("keyword", "hybrid") and langs and turn.resolved not in langs:
+            # D35: keywords cannot match across languages, so a cross-language question is searched by meaning only
+            conf["keywords_skipped"] = True
+            strategy = "similarity"
     flt = {"doc_id": {"in": keys}}
     try:
         if strategy == "keyword":
@@ -139,7 +160,8 @@ def retrieve_scored(query: str, top_k: int | None = None, kb_ids=None, apply_thr
     return [{"text": h["text"], "source": h["metadata"].get("source"),
              "page": h["metadata"].get("page") or None, "score": h["score"], "via": h.get("via", "meaning"),
              "doc_id": h.get("doc_pk"), "kb_id": h.get("kb_id"), "chunk_id": h.get("id"),
-             "title": h["metadata"].get("source")} for h in merged]
+             "title": h["metadata"].get("source"),
+             "doc_language": h["metadata"].get("doc_lang") or h["metadata"].get("lang") or ""} for h in merged]
 
 
 def retrieve(query: str, kb_ids=None) -> list[dict]:

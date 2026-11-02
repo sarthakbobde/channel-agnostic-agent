@@ -105,7 +105,7 @@ def read_trace(answer_id: int, sess: Session = Depends(admin_session), ctx: Admi
         view = {"answer_id": t.answer_id, "question_id": t.question_id, "conversation_id": t.conversation_id, "complete": t.complete,
                 "found": t.found, "searched": t.searched, "standalone_query": t.standalone_query, "search_text": t.search_text,
                 "retrieval": t.retrieval, "provider": t.provider, "model": t.model, "fallback_used": t.fallback_used, "timings": t.timings,
-                "language": t.language, "language_confidence": t.language_confidence, "glossary": t.glossary,
+                "language": t.language, "language_confidence": t.language_confidence, "language_detail": t.language_detail, "glossary": t.glossary,
                 "config_snapshot_id": t.config_snapshot_id, "created_at": t.created_at, "usage": usage,
                 "prompts": [{"scope": scope, "id": v["id"], "version": v["version"], "status": prompts[v["id"]].status if v["id"] in prompts else "deleted"}
                             for scope, v in (t.prompt_versions or {}).items()]}

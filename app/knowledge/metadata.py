@@ -18,10 +18,13 @@ def decode_ids(value: str) -> list[int]:
 
 
 def build(*, source: str, doc_id: str, page: int, chunk: int, kb_id: int, department: str,
-          heading_path: str = "", allowed_groups=(), allowed_people=()) -> dict:
+          heading_path: str = "", allowed_groups=(), allowed_people=(), lang: str = "", lang_confidence: float = 0.0,
+          doc_lang: str = "") -> dict:
+    """`lang`/`lang_confidence` are the passage's detected language, `doc_lang` its document's (Phase 2; "" = unknown)."""
     return {"source": source, "doc_id": doc_id, "page": int(page or 0), "heading_path": heading_path,
             "chunk": int(chunk), "kb_id": int(kb_id), "department": department or "",
-            "allowed_groups": encode_ids(allowed_groups), "allowed_people": encode_ids(allowed_people)}
+            "allowed_groups": encode_ids(allowed_groups), "allowed_people": encode_ids(allowed_people),
+            "lang": lang or "", "lang_confidence": float(lang_confidence or 0.0), "doc_lang": doc_lang or ""}
 
 
 def missing(meta: dict) -> list[str]:

@@ -78,10 +78,11 @@ def _write(conv_id: str, who, db: Database | None, fn):
 
 
 # ---- saving a turn --------------------------------------------------------------------------------------
-def begin_turn(conv_id: str, question: str, who=None, db: Database | None = None) -> Turn:
-    """Store the question now, and an empty answer row marked incomplete."""
+def begin_turn(conv_id: str, question: str, who=None, db: Database | None = None, language: str = "") -> Turn:
+    """Store the question now (with its resolved language), and an empty answer row marked incomplete."""
     def go(s):
         q = _store(s, conv_id, who, "user", question, None, True)
+        q.language = language or ""
         a = _store(s, conv_id, who, "assistant", "", None, False)
         return Turn(conv_id, q.id, a.id)
     return _write(conv_id, who, db, go)
@@ -136,6 +137,15 @@ def get_summary(conv_id: str, db: Database | None = None) -> str:
 def get_context(conv_id: str, db: Database | None = None) -> tuple[str, list[tuple[str, str]]]:
     """(summary of the older turns, the most recent turns word for word): what the model is given about this conversation."""
     return get_summary(conv_id, db), get(conv_id, db)
+
+
+def last_language(conv_id: str | None, db: Database | None = None) -> str:
+    """The language of the latest question in the conversation that has one (the D19 fallback)."""
+    if not conv_id:
+        return ""
+    with (db or get_db()).session() as s:
+        return s.scalar(select(Message.language).where(Message.conversation_id == conv_id, Message.role == "user",
+                                                        Message.language != "").order_by(Message.id.desc()).limit(1)) or ""
 
 
 def get_messages(conv_id: str, db: Database | None = None) -> list[dict]:

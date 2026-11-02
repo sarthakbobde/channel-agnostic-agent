@@ -10,7 +10,7 @@ from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel
 from sqlalchemy import select
 
-from app import global_settings
+from app import global_settings, scoped_settings
 from app.admin.api import AdminContext, Session, admin_session, get_ctx
 from app.db import Department, DepartmentEditor
 from app.knowledge import access, chunkers, documents, embeddings, kbs, parsers, storeadapters, versions
@@ -110,6 +110,9 @@ def _present(ctx: AdminContext, kb: dict, names: dict) -> dict:
             "active_store": (versions.active(ctx.db, kb["id"]) or {}).get("store"), "health": health,
             "size_bytes": stats.get("size_bytes"), "last_indexed": _last_indexed(ctx, kb["id"]),
             "active_embedding": (versions.active(ctx.db, kb["id"]) or {}).get("embedding"),
+            "threshold": scoped_settings.for_kb(kb, "score_threshold", ctx.db),
+            "recommended_threshold": embeddings.REGISTRY.get((versions.active(ctx.db, kb["id"]) or {}).get("embedding") or embeddings.DEFAULT,
+                                                             embeddings.ChromaDefaultEmbeddings).RECOMMENDED_THRESHOLD,
             "bound_channels": kbs.channels_using(ctx.db, kb["id"])}
 
 

@@ -324,5 +324,8 @@ def run_startup() -> None:
         resumed = documents.resume_unfinished()
         if resumed:
             log.info("re-queued %d unfinished documents", resumed)
+        documents.queue_language_backfill()
+        from app.knowledge import doc_summary
+        doc_summary.resume()
     except Exception:
         log.exception("knowledge base set-up failed; the original index still answers questions")

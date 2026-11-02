@@ -18,7 +18,7 @@ from fastapi.concurrency import run_in_threadpool
 from google.auth.transport import requests as g_requests
 from google.oauth2 import id_token
 from app.channels.base import Adapter, Envelope, Field
-from app.channels.core import handle, sources_line, to_mrkdwn
+from app.channels.core import handle, sources_footer, to_mrkdwn
 
 log = logging.getLogger(__name__)
 CHAT_ISSUER = "chat@system.gserviceaccount.com"
@@ -132,10 +132,11 @@ class GChatAdapter(Adapter):
         try:
             result = await asyncio.wait_for(run_in_threadpool(handle, env), TIMEOUT_S)
         except asyncio.TimeoutError:
-            return self._reply(TIMEOUT_REPLY, addon)
+            from app import catalog, chat_service
+            return self._reply(catalog.t("gchat_timeout", chat_service.reply_language(text, env.conv_id)), addon)
         out = to_mrkdwn(result["answer"])
         if self.show_sources and result["sources"]:
-            out += f"\n\n_Sources: {sources_line(result['sources'])}_"
+            out += sources_footer(result)
         return self._reply(out, addon)
 
     def test(self) -> tuple[bool, str]:

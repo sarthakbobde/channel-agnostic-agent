@@ -37,6 +37,20 @@ NOT_FOUND_MARKER = "[[NOT_FOUND]]"
 REPLY_RULES = ("# REPLY RULES (set by the system; they take priority over any other wording about a missing answer)\n"
                f"If the numbered context does not contain the answer, reply with only this marker and nothing else: {NOT_FOUND_MARKER}")
 
+
+
+def language_rules(lang: str, strong: bool = False) -> str:
+    """The answer-language directive (D19). Code-owned: it names the question's language and is not a setting."""
+    from app import language
+    name = language.name(lang)
+    text = ("# ANSWER LANGUAGE (set by the system)\n"
+            f"The user wrote in {name}. Write your whole reply in {name}, even when the context is in another language. "
+            "Do not translate document titles: keep them as they are written.")
+    if strong:
+        text += f"\nIMPORTANT: an earlier reply was not in {name}. Every sentence of this reply must be in {name}."
+    return text
+
+
 _override: contextvars.ContextVar[dict | None] = contextvars.ContextVar("prompt_override", default=None)
 
 
@@ -130,6 +144,10 @@ def assemble(mode: str, context: str = "") -> str:
         parts += ["# DEPARTMENT INSTRUCTIONS\n" + dept, CLOSING]
     if mode == "answer":
         parts.append(REPLY_RULES)
+    from app import language
+    turn = language.current()
+    if turn is not None and turn.resolved:
+        parts.append(language_rules(turn.resolved, turn.retried))
     if context:
         parts.append("CONTEXT:\n" + context)
     from app import guardrails

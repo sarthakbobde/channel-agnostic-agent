@@ -12,7 +12,7 @@ from fastapi.concurrency import run_in_threadpool
 from botbuilder.core import BotFrameworkAdapter, BotFrameworkAdapterSettings, TurnContext
 from botbuilder.schema import Activity, ActivityTypes
 from app.channels.base import Adapter, Envelope, Field
-from app.channels.core import handle, sources_line
+from app.channels.core import handle, sources_footer
 from app.identity import TTLCache, lookup_ok, lookup_problem
 
 log = logging.getLogger(__name__)
@@ -111,7 +111,7 @@ class TeamsAdapter(Adapter):
         result = await run_in_threadpool(handle, env)
         out = result["answer"]
         if self.show_sources and result["sources"]:
-            out += f"\n\n_Sources: {sources_line(result['sources'])}_"
+            out += sources_footer(result)
 
         async def send(ctx: TurnContext):
             await ctx.send_activity(out)

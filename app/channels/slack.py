@@ -4,7 +4,7 @@ import re
 from slack_bolt import App
 from slack_bolt.adapter.socket_mode import SocketModeHandler
 from app.channels.base import Adapter, Envelope, Field
-from app.channels.core import handle, sources_line, to_mrkdwn
+from app.channels.core import handle, sources_footer, to_mrkdwn
 from app.identity import TTLCache, lookup_ok, lookup_problem
 
 log = logging.getLogger(__name__)
@@ -94,7 +94,7 @@ class SlackAdapter(Adapter):
         result = handle(env)
         out = to_mrkdwn(result["answer"])
         if self.show_sources and result["sources"]:
-            out += f"\n\n_Sources: {sources_line(result['sources'])}_"
+            out += sources_footer(result)
         say(text=out, thread_ts=thread_ts)
 
     def start(self) -> None:

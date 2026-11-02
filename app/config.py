@@ -11,6 +11,7 @@ class Settings:
     api_key: str = os.getenv("NINEROUTER_API_KEY", "")
     llm_model: str = os.getenv("LLM_MODEL", "")
     models_dir: str = os.getenv("MODELS_DIR", "./models")                # downloaded embedding models
+    langid_model: str = os.getenv("LANGID_MODEL", "")                    # fastText lid.176.ftz; empty = MODELS_DIR/lid.176.ftz
     docs_dir: str = os.getenv("DOCS_DIR", "./data/kb_files")             # uploaded originals, one folder per knowledge base
     max_upload_mb: int = int(os.getenv("MAX_UPLOAD_MB", "25"))
     chat_dir: str = os.getenv("CHAT_DIR", "./chats")

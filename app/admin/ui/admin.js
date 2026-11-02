@@ -348,6 +348,7 @@
     groups: "M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM23 21v-2a4 4 0 0 0-3-3.9M16 3.1a4 4 0 0 1 0 7.8",
     departments: "M3 21h18M5 21V7l7-4 7 4v14M9 21v-6h6v6",
     scoped: "M4 6h10M18 6h2M4 12h2M10 12h10M4 18h8M16 18h4M14 4v4M6 10v4M12 16v4",
+    languages: "M12 3a9 9 0 100 18 9 9 0 000-18zM3 12h18M12 3c2.5 2.7 3.8 5.7 3.8 9s-1.3 6.3-3.8 9c-2.5-2.7-3.8-5.7-3.8-9S9.5 5.7 12 3z",
     conversations: "M8 10h8M8 14h5M21 12a9 9 0 0 1-13.3 7.9L3 21l1.1-4.7A9 9 0 1 1 21 12z",
     usage: "M4 20V10M10 20V4M16 20v-8M22 20H2",
     reports: "M14 3H6v18h12V7zM14 3v4h4M9 13h6M9 17h6",
@@ -502,14 +503,14 @@
 
   // ---- shell ----------------------------------------------------------------------
   // [screen, menu label, permission the server grants for it (defaults to the screen name)]
-  var TABS = [["home", "Home"], ["channels", "Channels"], ["providers", "LLM providers"], ["kbconfig", "KB configuration", "knowledge"], ["settings", "RAG settings"], ["scoped", "Scoped settings"], ["guardrails", "Guardrails"], ["signin", "Sign-in"],
+  var TABS = [["home", "Home"], ["channels", "Channels"], ["providers", "LLM providers"], ["kbconfig", "KB configuration", "knowledge"], ["settings", "RAG settings"], ["scoped", "Scoped settings"], ["languages", "Languages"], ["guardrails", "Guardrails"], ["signin", "Sign-in"],
               ["users", "Users"], ["groups", "Groups"], ["departments", "Departments"],
               ["prompts", "Prompts"], ["kbdocs", "KB documents", "knowledge"],
               ["reports", "Reports"], ["audit", "Audit log"], ["conversations", "Conversations"], ["usage", "Usage and cost"],
               ["account", "Account"]];
   // The side menu, in the order an admin works: configure the assistant, add people, give it content, then watch it run.
   var NAV_GROUPS = [["", ["home"]],
-                    ["Settings", ["channels", "providers", "kbconfig", "settings", "scoped", "guardrails", "signin"]],
+                    ["Settings", ["channels", "providers", "kbconfig", "settings", "scoped", "languages", "guardrails", "signin"]],
                     ["User management", ["users", "groups", "departments"]],
                     ["Input", ["prompts", "kbdocs"]],
                     ["Monitoring", ["reports", "audit", "conversations", "usage"]]];
@@ -622,7 +623,7 @@
     var scrim = h("div", { class: "scrim", "aria-hidden": "true", onclick: function () { app.classList.remove("nav-open"); sync(); } });
     app.append(top, nav, scrim, main);
     mount(app);
-    var view = { home: viewHome, channels: viewChannels, settings: viewSettings, scoped: viewScoped, providers: viewProviders,
+    var view = { home: viewHome, channels: viewChannels, settings: viewSettings, scoped: viewScoped, languages: viewLanguages, providers: viewProviders,
       kbconfig: viewKnowledge, kbdocs: viewKbDocs,
       groups: viewGroups, prompts: viewPrompts, guardrails: viewGuardrails, conversations: viewConversations, usage: viewUsage, reports: viewReports,
       departments: viewDepartments, users: viewUsers, audit: viewAudit, account: viewAccount, signin: viewSignin }[state.tab] || viewAccount;
@@ -827,7 +828,9 @@
       ["Finding answers", "How documents are searched, and how much of the conversation is remembered.", ["retrieval_strategy", "hybrid_keyword_weight", "diversity", "top_k", "score_threshold", "recent_turns"]],
       ["Splitting documents", "How documents are cut into searchable passages. Applies the next time documents are indexed.", ["chunk_size", "chunk_overlap"]],
       ["Conversations and privacy", "How long conversations are kept, when long chats are summarised, and whether they can be exported.", ["max_retention_days", "retention_job_enabled", "summarise_after_turns", "export_enabled"]],
-      ["Limits", "Caps on question length and on how fast one person can ask.", ["prompt_max_chars", "chat_rate_per_minute"]]
+      ["Limits", "Caps on question length and on how fast one person can ask.", ["prompt_max_chars", "chat_rate_per_minute"]],
+      ["Languages", "Answers are always written in the language of the question. Language codes are two letters, for example en or hi.", ["accepted_languages", "default_language", "document_languages", "language_confidence", "catalog_languages"]],
+      ["Document summaries", "A short summary of each document, shown in KB documents. Display only: never used to answer.", ["summary_enabled", "summary_max_input_tokens"]]
     ];
 
     function show(data, notice) {
@@ -912,11 +915,22 @@
   // ---- settings per scope ---------------------------------------------------------------
   var SCOPE_SOURCE = { kb: "this knowledge base", department: "the department", channel: "the channel", global: "RAG settings" };
   async function viewScoped(main) {
-    pageHead(main, "Scoped settings", "Give one knowledge base or department its own search settings. A knowledge base's value beats its department's, and a department's beats RAG settings. Changes apply within seconds, with no restart.");
+    pageHead(main, "Scoped settings", "Give one knowledge base or department its own search and language settings. A knowledge base's value beats its department's, and a department's beats RAG settings. Changes apply within seconds, with no restart.");
     var holder = h("div", {}, msg("wait", "Loading…"));
     var out = h("div", { "aria-live": "polite" });
     var scope;
-    function labelOf(f, value) { return f.choice_labels ? f.choice_labels[value] || value : String(value); }
+    function labelOf(f, value) {
+      if (f.kind === "bool") return value ? "On" : "Off";
+      if (f.kind === "list") return value.length ? value.join(", ") : (f.key === "accepted_languages" ? "Every language" : "Detected from the documents");
+      return f.choice_labels ? f.choice_labels[value] || value : String(value);
+    }
+    function valueOf(f, input) {
+      if (f.kind === "choice") return input.value;
+      if (f.kind === "bool") return input.checked;
+      if (f.kind === "list") return input.value.split(",").map(function (s) { return s.trim(); }).filter(Boolean);
+      if (f.kind === "text") return input.value.trim();
+      return Number(input.value);
+    }
     function path() { return "/scoped-settings/" + scope.value.split(":").map(encodeURIComponent).join("/"); }
     function render(data) {
       var byKey = {}; data.fields.forEach(function (f) { byKey[f.key] = f; });
@@ -927,6 +941,9 @@
         var id = "ss_" + f.key;
         var input = f.kind === "choice"
           ? selectOf(f.choices.map(function (c) { return [c, f.choice_labels[c]]; }), f.value, null, f.label)
+          : f.kind === "bool" ? h("input", { type: "checkbox", id: id, checked: !!f.value, "aria-label": f.label })
+          : f.kind === "list" || f.kind === "text" ? h("input", { type: "text", id: id, value: f.kind === "list" ? f.value.join(", ") : f.value,
+              placeholder: f.kind === "list" ? "e.g. en, hi" : "e.g. en", autocomplete: "off", "aria-label": f.label })
           : h("input", { type: "number", id: id, min: f.min, max: f.max, step: f.step, value: String(f.value), "aria-label": f.label });
         body.appendChild(h("tr", {},
           h("td", { class: "wrap", "data-label": "Setting" }, h("b", {}, f.label, tip(f.help))),
@@ -934,7 +951,7 @@
           h("td", { "data-label": "Change" }, input),
           h("td", { class: "act" },
             h("button", { type: "button", class: "btn small", onclick: async function () {
-              var values = {}; values[f.key] = f.kind === "choice" ? input.value : Number(input.value);
+              var values = {}; values[f.key] = valueOf(f, input);
               out.replaceChildren(msg("wait", "Saving…"));
               try { render(await api("PUT", path(), { values: values })); out.replaceChildren(msg("ok", "Saved. In use within a few seconds.")); }
               catch (err) { if (me) out.replaceChildren(msg("bad", err.message)); }
@@ -965,6 +982,65 @@
       main.appendChild(h("section", { class: "panel" }, holder, out));
       load();
     } catch (err) { if (me) { holder.replaceChildren(msg("bad", err.message)); main.appendChild(holder); } }
+  }
+
+  // ---- languages: report and message catalogue (Admin) ------------------------------------------
+  async function viewLanguages(main) {
+    pageHead(main, "Languages", "Answers are written in the language of each question. Here: which languages people ask in, and the system messages people see in each language. Accepted languages and default language are in RAG settings and Scoped settings.");
+    var report = h("section", { class: "panel" }, msg("wait", "Loading…"));
+    var cat = h("section", { class: "panel" }, msg("wait", "Loading…"));
+    main.append(report, cat);
+    try {
+      var r = await api("GET", "/reports/languages?days=30");
+      var det = r.detector === "ready" ? h("span", { class: "pill ok" }, "Language detection ready") : h("span", { class: "pill bad" }, "Language detection missing: every question is answered in the default language");
+      report.replaceChildren(heading("h3", "Last 30 days", "Answers per language, questions refused because their language is not accepted, answers that came out in the wrong language, and questions checked only with the English lists."), det,
+        r.rows.length ? h("div", { class: "tablewrap" }, h("table", {}, h("thead", {}, h("tr", {}, ["Language", "Answers", "Refused", "Retried for language", "Still wrong", "English checks only", "Blocked"].map(function (t) { return h("th", {}, t); }))),
+          h("tbody", {}, r.rows.map(function (x) {
+            return h("tr", {}, h("td", { "data-label": "Language" }, x.name + (x.code ? " (" + x.code + ")" : "")), [x.answers, x.rejected, x.retried, x.wrong, x.english_checks, x.blocked].map(function (n, i) {
+              return h("td", { class: "num", "data-label": ["Answers", "Refused", "Retried for language", "Still wrong", "English checks only", "Blocked"][i] }, String(n));
+            }));
+          })))) : h("p", { class: "empty" }, "No questions yet."));
+    } catch (err) { if (me) report.replaceChildren(msg("bad", err.message)); }
+
+    var out = h("div", { "aria-live": "polite" });
+    function draw(c, notice) {
+      var langs = c.languages.filter(function (l) { return l.code !== "en"; });
+      var pick = selectOf(c.languages.map(function (l) { return [l.code, l.name + " (" + l.code + ")" + (l.complete ? "" : " · not complete")]; }), state.catLang || (langs[0] || c.languages[0]).code,
+        function () { state.catLang = pick.value; draw(c); }, "Language");
+      pick.id = "cat_lang";
+      var lang = pick.value, info = c.languages.filter(function (l) { return l.code === lang; })[0];
+      var draft = lang !== "en" ? h("button", { type: "button", class: "btn", onclick: async function () {
+        out.replaceChildren(msg("wait", "Drafting with the AI model…"));
+        try { var d = await api("POST", "/catalog/" + lang + "/draft", {}); draw(d, msg("ok", d.drafted + " drafted. Check each one, then Approve it.")); }
+        catch (err) { if (me) out.replaceChildren(msg("bad", err.message)); }
+      } }, "Draft missing messages with AI") : null;
+      var body = h("tbody", {});
+      c.keys.forEach(function (k) {
+        var e = k.entries[lang] || { text: "", status: "Missing" };
+        var area = h("textarea", { rows: "2", "aria-label": k.key + " in " + lang, disabled: !!e.linked, lang: lang });
+        area.value = e.text || "";
+        var status = e.status === "Approved" ? h("span", { class: "pill ok" }, "Approved") : e.status === "Draft" ? h("span", { class: "pill warn" }, e.source === "ai-draft" ? "AI draft" : "Draft") : h("span", { class: "pill off" }, "Missing");
+        body.appendChild(h("tr", {},
+          h("td", { class: "wrap", "data-label": "Message" }, h("b", {}, k.key), h("div", { class: "meta" }, k.purpose), lang !== "en" ? h("div", { class: "meta" }, "English: " + k.entries.en.text) : null),
+          h("td", { class: "wrap", "data-label": "Text" }, area, e.linked ? h("div", { class: "meta" }, "Edit it on the Guardrails screen (Blocked reply).") : null),
+          h("td", { "data-label": "Status" }, status),
+          h("td", { class: "act" }, e.linked ? null : h("button", { type: "button", class: "btn small", onclick: async function () {
+            out.replaceChildren(msg("wait", "Saving…"));
+            try { draw(await api("PUT", "/catalog/" + k.key + "/" + lang, { text: area.value }), msg("ok", "Saved and approved.")); }
+            catch (err) { if (me) out.replaceChildren(msg("bad", err.message)); }
+          } }, "Save"), e.status === "Draft" ? h("button", { type: "button", class: "btn small", onclick: async function () {
+            try { draw(await api("POST", "/catalog/" + k.key + "/" + lang + "/approve", {}), msg("ok", "Approved.")); }
+            catch (err) { if (me) out.replaceChildren(msg("bad", err.message)); }
+          } }, "Approve") : null)));
+      });
+      cat.replaceChildren(heading("h3", "Message catalogue", "System messages per language. A draft is never shown to anyone until it is approved; saving your own text approves it. A language can be accepted for questions only when all its messages are approved. Add languages under RAG settings > Message languages."),
+        h("div", { class: "toolbar" }, h("div", { class: "toolbar-left" }, h("div", { class: "field" }, fieldLabel("cat_lang", "Language"), pick)), draft),
+        info && !info.complete ? h("div", { class: "msg warn" }, "Not complete: until every message is approved, people asking in this language see the default or English text, and the language cannot be accepted.") : null,
+        h("div", { class: "tablewrap" }, h("table", {}, h("thead", {}, h("tr", {}, ["Message", "Text", "Status", ""].map(function (t) { return h("th", {}, t); }))), body)),
+        out, notice || null);
+    }
+    try { draw(await api("GET", "/catalog")); }
+    catch (err) { if (me) cat.replaceChildren(msg("bad", err.message)); }
   }
 
   function flash(el, kind, text) { el.replaceChildren(msg(kind, text)); }
@@ -1222,7 +1298,8 @@
     "kb.reindex": "Reprocessed a knowledge base", "kb.rollback": "Rolled back a knowledge base", "kb.rebuild.start": "Started a rebuild", "kb.rebuild.finish": "Finished a rebuild",
     "kb.rebuild.fail": "A rebuild failed", "kb.rebuild.cancel": "Cancelled a rebuild", "document.upload": "Uploaded a document", "document.replace": "Replaced a document",
     "document.delete": "Deleted a document", "document.move": "Moved a document", "document.reindex": "Reprocessed a document", "document.access": "Changed who can read a document",
-    "embedding.download": "Downloaded a search model", "conversation.view": "Opened a conversation", "trace.view": "Opened an answer trace", "scoped_setting.update": "Changed a scoped setting", "scoped_setting.reset": "Reset a scoped setting", "conversation.delete": "Deleted a conversation",
+    "embedding.download": "Downloaded a search model", "conversation.view": "Opened a conversation", "trace.view": "Opened an answer trace", "scoped_setting.update": "Changed a scoped setting", "catalog.update": "Changed a system message", "catalog.approve": "Approved a system message",
+    "catalog.draft": "Drafted system messages with AI", "document.summary": "Asked for document summaries", "scoped_setting.reset": "Reset a scoped setting", "conversation.delete": "Deleted a conversation",
     "conversation.export": "Started an export", "conversation.export.done": "Finished an export", "retention.run": "Ran automatic deletion", "alert.resolve": "Dismissed an alert",
     "alert_sinks.update": "Changed alert notifications", "alert_sinks.test": "Tested alert notifications", "price.set": "Set a price", "price.delete": "Removed a price",
     "import": "Imported settings", "audit.cleanup": "Cleaned up the audit log"
@@ -1899,7 +1976,18 @@
       out);
 
     // ---- list -----------------------------------------------------------------------
-    var search = h("input", { type: "search", id: "kd_q", placeholder: "Search files", autocomplete: "off", "aria-label": "Search files", oninput: draw });
+    var search = h("input", { type: "search", id: "kd_q", placeholder: "Search files and summaries", autocomplete: "off", "aria-label": "Search files", oninput: draw });
+    var expanded = {};
+    function summaryCell(d) {
+      if (d.status !== "Indexed") return null;
+      if (d.summary_status === "Pending") return h("span", { class: "meta" }, "Summarising…");
+      if (d.summary_status === "Failed" || (d.summary_status === "Ready" && !d.summary)) return h("span", { class: "meta" }, "No summary");
+      if (!d.summary) return null;
+      var open = !!expanded[d.id];
+      var text = h("span", { class: "summary" + (open ? " open" : ""), lang: d.summary_lang || null }, d.summary);
+      var more = h("button", { type: "button", class: "linkbtn", "aria-expanded": String(open), onclick: function () { expanded[d.id] = !open; draw(); } }, open ? "Show less" : "Show more");
+      return h("div", { class: "summary-box" }, text, d.summary.length > 140 ? more : null);
+    }
     var statusF = selectOf([["", "Any status"], ["Indexed", "Indexed"], ["busy", "Indexing or pending"], ["Failed", "Failed"]], "", draw, "Status");
     var visF = selectOf([["", "Anyone can see"], ["everyone", "Everyone"], ["restricted", "Restricted"]], "", draw, "Visibility");
     var count = h("span", { class: "pill off" });
@@ -1910,8 +1998,23 @@
       catch (err) { if (me) out.replaceChildren(msg("bad", err.message)); }
       refresh();
     } }, "Re-index all");
+    var summarise = state.perm && state.perm.can_manage_all ? h("button", { type: "button", class: "btn", onclick: async function () {
+      out.replaceChildren(msg("wait", "Estimating…"));
+      try {
+        var e = await api("GET", "/summaries/estimate?kb_id=" + k.id);
+        if (!e.documents) { out.replaceChildren(msg("ok", "Every document here already has a summary.")); return; }
+        var start = confirmButton("Summarise " + e.documents + (e.documents === 1 ? " document" : " documents"), "Click again to start", async function () {
+          try { var r = await api("POST", "/summaries/backfill", { kb_id: k.id }); out.replaceChildren(msg("ok", r.queued + " queued. They are written one at a time.")); }
+          catch (err) { if (me) out.replaceChildren(msg("bad", err.message)); }
+          refresh();
+        }, true);
+        out.replaceChildren(h("div", { class: "msg warn" }, h("div", {},
+          e.documents + (e.documents === 1 ? " document has" : " documents have") + " no summary. About " + e.input_tokens.toLocaleString() + " tokens would be read" +
+          (e.model ? " by " + e.model : "") + (e.cost != null ? ", costing about " + e.cost : "") + ". " + e.note), h("div", { class: "actions" }, start)));
+      } catch (err) { if (me) out.replaceChildren(msg("bad", err.message)); }
+    } }, "Summarise existing documents") : null;
     body.appendChild(panel("Documents", null, count,
-      h("div", { class: "toolbar" }, h("div", { class: "toolbar-left" }, search, statusF, visF), reindexAll),
+      h("div", { class: "toolbar" }, h("div", { class: "toolbar-left" }, search, statusF, visF), h("div", { class: "actions" }, summarise, reindexAll)),
       tableBox));
 
     async function act(promise, okText) {
@@ -1942,6 +2045,8 @@
         menuItem("refresh", d.status === "Failed" ? "Retry indexing" : "Re-index", function () { act(api("POST", "/documents/" + d.id + "/reindex", {}), "Re-indexing " + d.name + "."); },
           "Split and index this file again"),
         menuItem("upload", "Replace with a new version", function () { replaceInput.click(); }, "Keeps its access settings"),
+        d.status === "Indexed" ? menuItem("refresh", "Regenerate summary", function () { act(api("POST", "/documents/" + d.id + "/summary", {}), "Writing a new summary of " + d.name + "."); },
+          "Ask the AI model for a new summary") : null,
         others.length ? h("div", { class: "menu-sep", role: "separator" }) : null,
         others.length ? h("div", { class: "menu-head" }, "Move to") : null,
         others.map(function (x) {
@@ -1953,6 +2058,7 @@
         h("td", { class: "wrap", "data-label": "File" }, h("div", { class: "file" }, fileIcon(d.name),
           h("div", { class: "row-text" }, h("b", { class: "fname", title: d.name }, d.name),
             h("span", { class: "meta" }, d.uploaded_by ? "Uploaded by " + d.uploaded_by : ""),
+            summaryCell(d),
             d.error ? h("span", { class: "meta bad" }, d.error) : null))),
         h("td", { "data-label": "Visible to" }, visibleTo(d)),
         h("td", { "data-label": "Status" }, docStatus(d)),
@@ -1966,7 +2072,7 @@
     function draw() {
       var q = search.value.trim().toLowerCase(), st = statusF.value, vf = visF.value;
       var list = docs.filter(function (d) {
-        if (q && d.name.toLowerCase().indexOf(q) < 0 && (d.access_names || []).join(" ").toLowerCase().indexOf(q) < 0) return false;
+        if (q && d.name.toLowerCase().indexOf(q) < 0 && (d.summary || "").toLowerCase().indexOf(q) < 0 && (d.access_names || []).join(" ").toLowerCase().indexOf(q) < 0) return false;
         if (st === "busy" && !(d.status === "Pending" || d.status === "Indexing")) return false;
         if (st && st !== "busy" && d.status !== st) return false;
         if (vf === "everyone" && d.visibility !== "everyone") return false;
@@ -2051,7 +2157,13 @@
         }
         form.replaceChildren.apply(form, kids);
         info.replaceChildren(h("div", { class: "meta" }, "In use: " + (options.filter(function (o) { return o.name === k.active_embedding; })[0] || { title: k.active_embedding || "?" }).title),
-          k.embedding !== k.active_embedding ? h("div", { class: "msg warn" }, "A different model is selected. Rebuild the index to start using it.") : null);
+          k.embedding !== k.active_embedding ? h("div", { class: "msg warn" }, "A different model is selected. Rebuild the index to start using it.") : null,
+          k.recommended_threshold != null && k.recommended_threshold !== k.threshold && k.embedding === k.active_embedding ? h("div", { class: "msg warn" },
+            h("div", {}, "The model in use suits a match threshold of " + k.recommended_threshold + "; this knowledge base uses " + k.threshold + "."),
+            h("div", { class: "actions" }, h("button", { type: "button", class: "btn small", onclick: async function () {
+              try { await api("PUT", "/scoped-settings/kb/" + k.id, { values: { score_threshold: k.recommended_threshold } }); k.threshold = k.recommended_threshold; out.replaceChildren(msg("ok", "Match threshold set to " + k.recommended_threshold + " for this knowledge base.")); draw(); }
+              catch (err) { if (me) out.replaceChildren(msg("bad", err.message)); }
+            } }, "Use " + k.recommended_threshold))) : null);
       }
       function collect() {
         var vals = Object.assign({}, current.defaults, current.sf.collect());
@@ -2205,6 +2317,7 @@
               h("dt", {}, "Time"), h("dd", {}, "≈ " + secs(e.seconds)),
               h("dt", {}, "Cost"), h("dd", {}, money(e))),
             e.note ? h("div", { class: "help" }, e.note) : null,
+            e.recommended_threshold != null ? h("div", { class: "help" }, "This model suits a match threshold of " + e.recommended_threshold + ". Once the new version is in use, this screen offers to set it.") : null,
             e.warning ? h("div", { class: "msg warn" }, e.warning) : null,
             e.skipped_documents ? h("div", { class: "msg warn" }, e.skipped_documents + " document(s) cannot be read and will be left out.") : null,
             h("div", { class: "actions" },
@@ -2720,7 +2833,7 @@
       var masterNote = h("div", { class: "meta" });
       var master = h("section", { class: "gr-master" },
         h("div", {}, masterTitle, masterNote), h("div", { class: "gr-switch" }, h("span", { class: "pill " + kind }, label), toggle("enabled", "Guardrails")));
-      var warn = h("div", { class: "msg warn" }, "Guardrails are off. Questions and answers are not checked.");
+      var warn = h("div", { class: "msg warn" }, "Guardrails are off. Questions and answers are not checked. Personal data is still masked while “Mask personal data” is on.");
       redraw.push(function () { var on = !!cur.enabled; masterTitle.textContent = on ? "Guardrails are on" : "Guardrails are off"; masterNote.textContent = "Last changed " + when(data.updated_at) + " by " + data.updated_by; warn.hidden = on; page.classList.toggle("all-off", !on); });
 
       var questionCards = h("div", { class: "gr-list" },
@@ -2740,12 +2853,55 @@
           tags("allow_list", "Never redact", "Exact values that may appear in answers, for example hr@company.com.", "name@company.com"), "output_checks_enabled"),
         card("Protect instructions", "Answers", "A hidden marker is added to the instructions; an answer that repeats it is replaced by the blocked reply.", "leak_check_enabled", hint("Stops answers that leak the hidden instructions."), "output_checks_enabled"));
 
+      // other languages: what happens without lists, and the lists per language
+      function langLists() {
+        var wrap = h("div", { class: "stack-sm" });
+        var codeIn = h("input", { type: "text", id: id(), placeholder: "e.g. hi", autocomplete: "off", "aria-label": "Language code", maxlength: "3" });
+        var pick = h("select", { id: id(), "aria-label": "Language" });
+        var editor = h("div", { class: "stack-sm" });
+        var KINDS = [["injection", "Injection phrases"], ["toxicity", "Toxic words"], ["banned_topics", "Banned topics"]];
+        function paint() {
+          var langs = Object.keys(cur.language_lists).sort();
+          var keep = pick.value;
+          pick.replaceChildren.apply(pick, langs.map(function (l) { return h("option", { value: l, text: l }); }));
+          if (langs.indexOf(keep) >= 0) pick.value = keep;
+          var lang = pick.value;
+          if (!lang) { editor.replaceChildren(h("p", { class: "empty" }, "No word lists yet. Add a language code to start one.")); return; }
+          editor.replaceChildren.apply(editor, KINDS.map(function (k) {
+            var area = h("textarea", { id: id(), rows: "2", "aria-label": k[1] + " (" + lang + ")", placeholder: "One per line" });
+            area.value = (cur.language_lists[lang][k[0]] || []).join("\n");
+            area.addEventListener("change", function () {
+              var next = JSON.parse(JSON.stringify(cur.language_lists));
+              next[lang][k[0]] = area.value.split("\n").map(function (s) { return s.trim(); }).filter(Boolean);
+              set("language_lists", next);
+            });
+            return h("div", { class: "field" }, h("label", { class: "l", for: area.id }, k[1]), area);
+          }).concat([h("button", { type: "button", class: "btn small", onclick: function () {
+            var next = JSON.parse(JSON.stringify(cur.language_lists)); delete next[lang]; set("language_lists", next);
+          } }, "Remove " + lang)]));
+        }
+        pick.addEventListener("change", paint);
+        var add = h("button", { type: "button", class: "btn small", onclick: function () {
+          var c = codeIn.value.trim().toLowerCase(); if (!c || c === "en" || cur.language_lists[c]) return;
+          var next = JSON.parse(JSON.stringify(cur.language_lists)); next[c] = { injection: [], toxicity: [], banned_topics: [] };
+          codeIn.value = ""; set("language_lists", next); pick.value = c; paint();
+        } }, "Add language");
+        var mode = selectOf(fields.unlisted_language.choices.map(function (c) { return [c, fields.unlisted_language.choice_labels[c]]; }), cur.unlisted_language,
+          function () { set("unlisted_language", mode.value); }, "A language without lists");
+        mode.id = id();
+        redraw.push(paint);
+        wrap.append(h("div", { class: "field" }, fieldLabel(mode.id, "A language without its own lists", fields.unlisted_language.help), mode),
+          h("div", { class: "toolbar" }, h("div", { class: "toolbar-left" }, pick, codeIn, add)), editor);
+        return wrap;
+      }
+      var langBox = panel("Other languages", "English is checked by the rules above. Add word lists for each other language people ask in, and have a native speaker review them.", null, langLists());
+
       // blocked reply with a preview
       var reply = h("textarea", { id: id(), rows: "3", "aria-label": "Blocked reply text", oninput: function () { set("blocked_reply", reply.value); } });
       reply.value = cur.blocked_reply;
       var bubble = h("div", { class: "bubble" });
       redraw.push(function () { bubble.textContent = cur.blocked_reply || "(empty: people would see nothing)"; });
-      var blockedBox = panel("Blocked reply", "What people see instead of an answer. No AI model is called for a blocked question.", null,
+      var blockedBox = panel("Blocked reply", "What people see instead of an answer, in English. Other languages are in Languages > Message catalogue. No AI model is called for a blocked question.", null,
         h("div", { class: "stack-sm" }, h("div", { class: "field" }, h("label", { class: "l", for: reply.id }, "Message"), reply),
           h("div", { class: "field" }, h("span", { class: "l" }, "Preview"), bubble)));
 
@@ -2767,7 +2923,7 @@
           panel("Question checks", "Run first. A blocked question never reaches the AI model.", null, questionCards),
           h("div", { class: "stack" },
             panel("Answer checks", "Run on the finished answer, before the person sees it.", null, answerCards),
-            blockedBox)),
+            blockedBox, langBox)),
         result, bar);
       holder.replaceChildren(page);
       redraw.forEach(function (fn) { fn(); });
@@ -2777,7 +2933,16 @@
   }
 
   // ---- answer trace -----------------------------------------------------------------------
-  var STAGE_NAMES = { input_checks: "Input checks", routing: "Routing", retrieval: "Search", generation: "Writing the answer", output_checks: "Output checks" };
+  var LANG_SOURCES = { detected: "detected", conversation: "unsure, so the conversation's language", kb_default: "unsure, so the default language" };
+  function languageLine(l) {
+    var s = "Answered in " + l.resolved + " (" + (LANG_SOURCES[l.source] || l.source) + (l.detected ? "; detector said " + l.detected + " at " + l.confidence : "") + ")";
+    if (l.answer && l.answer !== l.resolved) s += " · the answer came out in " + l.answer;
+    if (l.retried) s += " · retried once for the language";
+    var kbs = Object.keys(l.doc_languages || {});
+    if (kbs.length) s += " · documents in " + kbs.map(function (k) { return (l.doc_languages[k] || []).join("/") || "?"; }).join(", ");
+    return s;
+  }
+  var STAGE_NAMES = { input_checks: "Input checks", language: "Language", routing: "Routing", retrieval: "Search", generation: "Writing the answer", output_checks: "Output checks" };
   function traceView(t) {
     function rows(cols, list) {
       return h("div", { class: "tablewrap" }, h("table", {}, h("thead", {}, h("tr", {}, cols.map(function (c) { return h("th", {}, c); }))),
@@ -2788,6 +2953,7 @@
       h("div", { class: "chips-static" }, h("span", { class: "pill " + outcome[0] }, outcome[1]), t.fallback_used ? h("span", { class: "pill warn" }, "Fallback model used") : null),
       h("div", { class: "meta" }, (t.model ? "Written by " + t.provider + " / " + t.model + " · " : "No model wrote this answer · ") + "Configuration " + (t.config_snapshot_id || "–")),
       t.standalone_query ? h("p", {}, h("b", {}, "Searched for: "), t.search_text) : null,
+      t.language_detail ? h("p", { class: "meta" }, languageLine(t.language_detail)) : null,
       h("p", { class: "meta" }, Object.keys(STAGE_NAMES).filter(function (k) { return k in t.timings; }).map(function (k) { return STAGE_NAMES[k] + " " + t.timings[k] + " ms"; }).join(" · ")),
       t.prompts.length ? h("p", { class: "meta" }, "Prompts: " + t.prompts.map(function (p) { return p.scope + " v" + p.version + " (" + p.status + ")"; }).join(", ")) : null
     ];

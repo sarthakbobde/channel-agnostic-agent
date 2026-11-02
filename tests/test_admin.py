@@ -296,9 +296,9 @@ def test_settings_view_update_and_audit(env):
     _, h = login(c)
     view = c.get("/admin/api/settings").json()
     by = {f["name"]: f for f in view["fields"]}
-    assert set(by) == {"top_k", "score_threshold", "recent_turns", "chunk_size", "chunk_overlap", "max_retention_days", "prompt_max_chars", "summarise_after_turns", "retention_job_enabled", "export_enabled", "chat_rate_per_minute", "retrieval_strategy", "hybrid_keyword_weight", "diversity"}
+    assert set(by) == {"top_k", "score_threshold", "recent_turns", "chunk_size", "chunk_overlap", "max_retention_days", "prompt_max_chars", "summarise_after_turns", "retention_job_enabled", "export_enabled", "chat_rate_per_minute", "retrieval_strategy", "hybrid_keyword_weight", "diversity", "accepted_languages", "default_language", "document_languages", "language_confidence", "catalog_languages", "summary_enabled", "summary_max_input_tokens"}
     assert (by["top_k"]["value"], by["score_threshold"]["value"], by["recent_turns"]["value"]) == (5, 0.35, 6)
-    assert all(f["kind"] in ("number", "bool", "choice") and f["help"] for f in view["fields"])
+    assert all(f["kind"] in ("number", "bool", "choice", "list", "text") and f["help"] for f in view["fields"])
 
     r = c.put("/admin/api/settings", headers=h, json={"values": {"top_k": 8, "score_threshold": 0.5}})
     assert r.status_code == 200

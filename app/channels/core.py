@@ -1,43 +1,55 @@
 """The single entry point every adapter uses."""
 import logging
 import re
-from app import chat_service, global_settings, identity, ratelimit
+from app import catalog, chat_service, global_settings, identity, ratelimit
 from app.channels.base import Envelope
 
 log = logging.getLogger(__name__)
-SLOW_DOWN = "You are asking too quickly. Please wait a moment and try again."
-ERROR_REPLY = "Sorry, something went wrong while answering. Please try again."
+SLOW_DOWN = catalog.TEXTS["slow_down"][0]
+ERROR_REPLY = catalog.TEXTS["error"][0]
 
 
-def _reply(answer: str) -> dict:
-    """A reply that is not an answer from the assistant (refused, slowed down, failed): nothing to rate."""
-    return {"answer": answer, "answer_id": None, "found": False, "sources": [], "searched": False, "query": ""}
+def _reply(key: str, env: Envelope) -> dict:
+    """A reply that is not an answer from the assistant (refused, slowed down, failed): nothing to rate. It is sent in the
+    language the person wrote in, when that language has approved messages."""
+    lang = chat_service.reply_language(env.text, env.conv_id)
+    return {"answer": catalog.t(key, lang), "answer_id": None, "found": False, "sources": [], "searched": False, "query": "",
+            "language": lang}
 
 
 def handle(env: Envelope) -> dict:
-    """Run one turn. Returns {answer, answer_id, found, sources, searched, query}; never raises."""
+    """Run one turn. Returns {answer, answer_id, found, sources, searched, query, language}; never raises."""
     who = identity.resolve(env.email)
     if not who.active:
         log.info("refused deactivated sender %s", who.email)
-        return _reply(identity.DENIED_REPLY)
+        return _reply("denied", env)
     ok, _ = ratelimit.allow("chat:" + (who.email.lower() if who.email else f"{env.channel}:{env.workspace}:{env.user}"),
                             global_settings.current().chat_rate_per_minute)
     if not ok:
-        return _reply(SLOW_DOWN)
+        return _reply("slow_down", env)
     token = identity.bind(who)
     try:
         return chat_service.chat(env.text, env.conv_id, **({"kb_ids": list(env.kb_ids)} if env.kb_ids else {}))
     except Exception:
         log.exception("chat failed for %s", env.conv_id)
-        return _reply(ERROR_REPLY)
+        return _reply("error", env)
     finally:
         identity.unbind(token)
 
 
-def sources_line(sources: list[dict]) -> str:
+def sources_footer(result: dict) -> str:
+    """The italic sources line the chat apps add under an answer, in the answer's language."""
+    lang = result.get("language", "")
+    return f"\n\n_{catalog.t('sources', lang)}: {sources_line(result['sources'], lang)}_"
+
+
+def sources_line(sources: list[dict], lang: str = "") -> str:
+    """Titles as written. A document in another language than the answer gets its language code, for example [EN]."""
     seen, out = set(), []
     for s in sources:
         label = s["source"] + (f" p.{s['page']}" if s.get("page") else "")
+        if lang and s.get("doc_language") and s["doc_language"] != lang:
+            label += f" [{s['doc_language'].upper()}]"
         if label not in seen:
             seen.add(label)
             out.append(label)

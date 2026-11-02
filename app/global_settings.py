@@ -35,7 +35,16 @@ class Snapshot:
     retrieval_strategy: str
     hybrid_keyword_weight: float
     diversity: float
+    accepted_languages: tuple = ()
+    document_languages: tuple = ()
+    default_language: str = "en"
+    language_confidence: float = 0.5
+    catalog_languages: tuple = ()
+    summary_enabled: bool = True
+    summary_max_input_tokens: int = 6000
 
+
+LIST_FIELDS = ("accepted_languages", "document_languages", "catalog_languages")
 
 STRATEGIES = {
     "similarity": "Similarity (meaning)",
@@ -75,6 +84,20 @@ SPEC = (
      "help": "A daily job deletes conversations that are older than their department's keep-for period. Every run is recorded in the audit log."},
     {"name": "export_enabled", "label": "Allow exporting conversations", "kind": "bool",
      "help": "Off by default. Turn it on only after the privacy sign-off. An export needs a written reason, only Admins can do it, and every export is recorded in the audit log."},
+    {"name": "accepted_languages", "label": "Languages questions may be asked in", "kind": "list",
+     "help": "Two-letter codes, comma-separated (for example en, hi). Empty accepts every language. A question in another language gets a polite reply that names these, and nothing is searched. A language can be added only when all its system messages are approved (Message catalogue)."},
+    {"name": "default_language", "label": "Default language", "kind": "text",
+     "help": "Two-letter code. Used only when the language of a question cannot be told and the conversation has no earlier language. Default en."},
+    {"name": "document_languages", "label": "Languages of the documents", "kind": "list",
+     "help": "Two-letter codes, comma-separated. Empty means detected from the documents. A question in a language the documents are not written in is searched by meaning only, not by keywords."},
+    {"name": "language_confidence", "label": "How sure language detection must be", "min": 0.05, "max": 1.0, "step": 0.05, "integer": False,
+     "help": "From 0 to 1. Below this, the question is answered in the conversation's last language, or else the default language. Default 0.5."},
+    {"name": "catalog_languages", "label": "Message languages", "kind": "list",
+     "help": "Two-letter codes, comma-separated, of the languages that get their own system messages besides English. Add one here, then write or draft its messages in the Message catalogue."},
+    {"name": "summary_enabled", "label": "Write a summary of each document", "kind": "bool",
+     "help": "When a document is indexed, the preferred AI model writes a 2 to 3 sentence summary in the document's language, shown in the documents table. Display only: never used to answer."},
+    {"name": "summary_max_input_tokens", "label": "Longest text read for a summary (tokens)", "min": 500, "max": 50000, "step": 500, "integer": True,
+     "help": "A longer document is summarised section by section, and only this much of it is read. A token is about four characters. Default 6000."},
 )
 _BY_NAME = {f["name"]: f for f in SPEC}
 
@@ -89,13 +112,18 @@ def defaults() -> Snapshot:
                     chunk_size=env.chunk_size, chunk_overlap=env.chunk_overlap,
                     max_retention_days=env.max_retention_days, prompt_max_chars=env.prompt_max_chars,
                     summarise_after_turns=env.summarise_after_turns, retention_job_enabled=True, export_enabled=False,
-                    chat_rate_per_minute=20, retrieval_strategy="similarity", hybrid_keyword_weight=0.5, diversity=0.3)
+                    chat_rate_per_minute=20, retrieval_strategy="similarity", hybrid_keyword_weight=0.5, diversity=0.3,
+                    accepted_languages=(), document_languages=(), default_language="en", language_confidence=0.5, catalog_languages=(),
+                    summary_enabled=True, summary_max_input_tokens=6000)
 
 
 def _snapshot(row: GlobalSettings) -> Snapshot:
     return Snapshot(row.top_k, row.score_threshold, row.recent_turns, row.chunk_size, row.chunk_overlap,
                     row.max_retention_days, row.prompt_max_chars, row.summarise_after_turns, row.retention_job_enabled,
-                    row.export_enabled, row.chat_rate_per_minute, row.retrieval_strategy, row.hybrid_keyword_weight, row.diversity)
+                    row.export_enabled, row.chat_rate_per_minute, row.retrieval_strategy, row.hybrid_keyword_weight, row.diversity,
+                    tuple(row.accepted_languages or ()), tuple(row.document_languages or ()), row.default_language or "en",
+                    row.language_confidence if row.language_confidence is not None else 0.5, tuple(row.catalog_languages or ()),
+                    row.summary_enabled if row.summary_enabled is not None else True, row.summary_max_input_tokens or 6000)
 
 
 def _read(db: Database) -> tuple[Snapshot, GlobalSettings]:
@@ -105,11 +133,33 @@ def _read(db: Database) -> tuple[Snapshot, GlobalSettings]:
             if row is not None:
                 return _snapshot(row), row
             try:
-                s.add(GlobalSettings(id=1, updated_by="system (seeded from .env)", **asdict(defaults())))
+                s.add(GlobalSettings(id=1, updated_by="system (seeded from .env)", **_columns(asdict(defaults()))))
                 s.flush()
             except IntegrityError:           # another process seeded it first
                 s.rollback()
     raise RuntimeError("could not read or seed global settings")
+
+
+def _columns(values: dict) -> dict:
+    """Snapshot values as stored: the language lists are JSON lists."""
+    return {k: list(v) if k in LIST_FIELDS else v for k, v in values.items()}
+
+
+def _languages(f: dict, raw) -> list[str]:
+    from app import language
+    if not isinstance(raw, (list, tuple)) or not all(isinstance(x, str) for x in raw):
+        raise ValueError(f"{f['label']} must be a list of two-letter language codes.")
+    codes = list(dict.fromkeys(x.strip().lower() for x in raw if x.strip()))
+    bad = [c for c in codes if not language.valid(c)]
+    if bad:
+        raise ValueError(f"{f['label']}: not a language code: " + ", ".join(bad) + ". Use two-letter codes such as en or hi.")
+    if f["name"] == "accepted_languages":
+        from app import catalog
+        missing = [c for c in codes if not catalog.complete(c)]
+        if missing:
+            raise ValueError("These languages cannot be accepted yet, because not all their system messages are approved "
+                             "(Message catalogue): " + ", ".join(missing) + ".")
+    return codes
 
 
 def invalidate() -> None:
@@ -156,6 +206,16 @@ def validate(values: dict, base: Snapshot) -> dict:
                 raise ValueError(f"{f['label']} must be on or off.")
             clean[name] = raw
             continue
+        if f.get("kind") == "list":
+            clean[name] = tuple(_languages(f, raw))
+            continue
+        if f.get("kind") == "text":
+            from app import language
+            code = raw.strip().lower() if isinstance(raw, str) else raw
+            if not language.valid(code):
+                raise ValueError(f"{f['label']} must be a two-letter language code such as en.")
+            clean[name] = code
+            continue
         if isinstance(raw, bool) or not isinstance(raw, (int, float)):
             raise ValueError(f"{f['label']} must be a number.")
         if f["integer"]:
@@ -181,8 +241,9 @@ def view(db: Database | None = None) -> dict:
     fields = [{"name": f["name"], "label": f["label"], "kind": "choice", "help": f["help"], "value": values[f["name"]],
                "choices": f["choices"], "choice_labels": f["choice_labels"]}
               if f.get("kind") == "choice" else
-              {"name": f["name"], "label": f["label"], "kind": "bool", "help": f["help"], "value": values[f["name"]]}
-              if f.get("kind") == "bool" else
+              {"name": f["name"], "label": f["label"], "kind": f["kind"], "help": f["help"],
+               "value": list(values[f["name"]]) if f["kind"] == "list" else values[f["name"]]}
+              if f.get("kind") in ("bool", "list", "text") else
               {"name": f["name"], "label": f["label"], "kind": "number", "help": f["help"],
                "min": f["min"], "max": f["max"], "step": f["step"], "value": values[f["name"]], **({"show_when": f["show_when"]} if f.get("show_when") else {})}
               for f in SPEC]
@@ -197,7 +258,7 @@ def update(values: dict, actor: str, db: Database | None = None) -> tuple[Snapsh
     if clean:
         with db.session() as s:
             row = s.get(GlobalSettings, 1)
-            for k, v in clean.items():
+            for k, v in _columns(clean).items():
                 setattr(row, k, v)
             row.updated_by = actor
         invalidate()

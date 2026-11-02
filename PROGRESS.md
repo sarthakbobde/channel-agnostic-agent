@@ -588,6 +588,64 @@ This follows `docs/development-plan-v4_3-release-2 1.md`, on branch `r2/phase-1-
   - **Browser:** the admin page script passes a syntax check, and its API calls are tested, but the two screens have not been opened in a browser.
 - **Prerequisite still open:** the privacy sign-off for storing traces (plan, section 0).
 
+## 22. Release 2, Phase 2: multilingual answers and document summaries (2026-11-02)
+
+This follows `docs/development-plan-v4_3-release-2 1.md`, on branch `r2/phase-2-multilingual`, which is built on Phase 1. Deviations are marked R2-2 in `DECISIONS.md`, which also holds the spike numbers.
+
+- **Spikes.** These were run on stand-in samples, because the customer documents and question pairs have not arrived; re-run them on customer data before confirming. See "Phase 2 spike results" in `DECISIONS.md`.
+  - **Detector:** fastText lid.176 is chosen. It is right 91% of the time overall and 84% on short text, uses 15 MB and loads in 0.4 s. The confidence threshold is 0.5.
+  - **Embeddings:** multilingual e5-small reaches recall at 5 of 1.00 for Hindi questions and 0.85 for Marathi questions against an English policy; MiniLM reaches 0.20 and 0.15. The recommended threshold is 0.75 for e5 and 0.35 for MiniLM.
+- **Language (D19, D21).**
+  - `app/language.py` handles clean-up (NFKC, zero-width characters, whitespace; nothing is translated) and holds the detector adapter.
+  - When detection is unsure, the turn falls back to the conversation's last language, then the knowledge base's default.
+  - The question's language is stored on the question and carried through the turn.
+  - A code-owned directive tells the model to answer in the question's language. Passages are labelled with their title and language.
+  - The answer's language is checked; a wrong one is retried once with a stronger directive, then delivered and counted.
+- **Accepted languages (D39).**
+  - Set in RAG settings or per KB and department. Empty means every language.
+  - A language can be accepted only when all its system messages are approved.
+  - A question in any other language gets a polite reply naming the accepted languages. Nothing is searched, no model is called, nothing is stored and no trace is written.
+  - In a question to several KBs, a KB that does not accept the language is left out.
+- **Keyword search across languages (D35).** For a question in a language the KB's documents are not written in, hybrid and keyword search use meaning only. The trace records this.
+- **Ingestion.**
+  - Each passage gets `lang`, `lang_confidence` and `doc_lang`, and each document gets a language.
+  - Existing passages are back-filled at start-up by a metadata update, with no re-embedding and no change to the text.
+- **Message catalogue (D29).**
+  - `app/catalog.py` holds the system texts per language. The English texts are byte-identical to before, and the English blocked text is still the Blocked Reply Text.
+  - The texts behind it: not found, blocked, friendly error, chat-app error, slow down (both forms), access turned off, provider refused, the Google Chat timeout, the language reply, the "Sources" label, and the Web UI's error texts.
+  - Admins edit the texts on the new **Languages** screen, and can draft a language with the AI model. Drafts are used only once approved.
+- **Guardrails.**
+  - Masking now follows its own switch, not the master switch (D36, as recommended).
+  - Each language can have its own injection, toxicity and banned-topic word lists.
+  - For a language without lists, the Admin chooses: apply the English checks with a warning (the default), or block.
+- **Citations.** Every source carries `doc_language`. Slack, Teams, Google Chat and the Web UI tag a source whose language differs from the answer's (for example `[EN]`). `/chat`, `core.handle()` and the history return `language`; `/chat` also returns `rejected`.
+- **Trace.** The detected language, how it was chosen, the accepted lists, the document languages per KB and any retry are recorded, and are part of `config_snapshot_id`. The trace view shows them.
+- **Document summaries (D46).**
+  - `app/knowledge/doc_summary.py`, on its own worker. Indexing never waits for it, and a failure leaves the document Indexed with summary status Failed.
+  - The summary is in the document's language. A file whose content has not changed is never summarised again.
+  - In KB documents, the summary shows under the file name with **Show more**, the row menu has **Regenerate summary**, and search matches summaries.
+  - Admins get **Summarise existing documents**, which shows an estimate before anything is sent.
+  - A per-KB switch turns it off. A summary is never used in retrieval or in a prompt.
+- **Recommended threshold.** It is shown with the rebuild estimate, and once the new model is in use, KB configuration offers it as a one-click setting.
+- **Language report.** The Languages screen shows, per language: answers, questions refused, answers retried, answers still in the wrong language, questions checked only with the English lists, and whether the detector is ready. `/health` gains `language`.
+- **Packaging.** `fasttext-wheel==0.9.2` is pinned. The Dockerfile bakes the detector model into `/opt/langid`, checked against its SHA-256. The model's licence is CC BY-SA 3.0.
+- **Migration 0028.** Its PostgreSQL SQL (upgrade and downgrade) was rendered offline and read through.
+- **Tests.**
+  - `tests/test_release2_multilingual.py` has 37 tests (one of them runs for 7 routes), including the retrieval check against `tests/data/retrieval_check.csv` with the real e5 model; it is skipped where that model is not downloaded.
+  - A stand-in detector, based on the script of the text, is installed for every test.
+  - Pinned lists updated on purpose: the Global Settings fields and kinds, the health keys, the migration head and tables, the guardrail event columns, and the old "guardrails off means no masking" check (now D36).
+- **Results:**
+  - **SQLite:** 462 passed, 12 skipped, 2 deselected. An earlier full run failed check_8b with a non-zero exit at shutdown, because summary jobs were still queued as the process ended. Queued summaries are now cancelled at exit (Pending ones resume at the next start), and the full suite then passed.
+  - **PostgreSQL and pgvector:** not run, because Docker Desktop is not running. Phases 0 and 1 are still pending for the same reason.
+  - **Browser:** the admin page script passes a syntax check, and its API calls are tested, but the new and changed screens have not been opened in a browser. These are Languages, RAG settings, Scoped settings, Guardrails, KB documents, KB configuration and the trace.
+- **Not done, or still needed from people:**
+  - The customer sample, to re-run both spikes and set the real recall targets.
+  - The first languages and the accepted list.
+  - A native speaker to approve each language's messages and word lists.
+  - Agreement that whole document text may go to the preferred model for summaries.
+  - Name masking stays English-only.
+  - Romanised Hindi is not detected, so it falls back.
+
 ## How to run
 
 ```powershell

@@ -1,7 +1,7 @@
 from typing import Iterator
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from app.llm import get_chat_model
-from app import prompts
+from app import language, prompts
 from app.retriever import retrieve
 
 FALLBACK = "I couldn't find this in the knowledge base."
@@ -70,7 +70,7 @@ def format_sources(chunks: list[dict]) -> list[dict]:
     return [
         {"n": i, "source": c["source"], "page": c["page"],
          "score": c["score"], "snippet": c["text"][:300], "via": c.get("via", "meaning"),
-         **{k: c[k] for k in ("doc_id", "kb_id", "chunk_id", "title") if k in c}}
+         **{k: c[k] for k in ("doc_id", "kb_id", "chunk_id", "title", "doc_language") if k in c}}
         for i, c in enumerate(chunks, 1)
     ]
 
@@ -78,6 +78,12 @@ def format_sources(chunks: list[dict]) -> list[dict]:
 def not_found(answer: str) -> bool:
     """Did the model say the context has no answer? The marker from the reply rules, or the sentence older prompts ask for."""
     return prompts.NOT_FOUND_MARKER in answer or FALLBACK.lower().rstrip(".") in answer.lower()
+
+
+def _lang_label(chunk: dict) -> str:
+    """Each passage is labelled with its language once languages are in play; nothing is translated."""
+    code = chunk.get("doc_language") or ""
+    return f"; language: {language.name(code)}" if code and language.current() is not None else ""
 
 
 def stream_grounded(question: str, chunks: list[dict], purpose: str = "answer", standalone: str = "") -> Iterator[str]:
@@ -88,7 +94,7 @@ def stream_grounded(question: str, chunks: list[dict], purpose: str = "answer", 
         yield FALLBACK
         return
     context = "\n\n".join(
-        f"[{i}] ({c['source']}{', p.' + str(c['page']) if c['page'] else ''})\n{c['text']}"
+        f"[{i}] ({c['source']}{', p.' + str(c['page']) if c['page'] else ''}{_lang_label(c)})\n{c['text']}"
         for i, c in enumerate(chunks, 1)
     )
     if standalone and " ".join(standalone.split()).lower() != " ".join(question.split()).lower():

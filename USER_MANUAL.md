@@ -1,7 +1,7 @@
 # User manual: configuring the Channel Agnostic Agent
 
 Everything below is set on the **admin page** (`/admin`) unless it says `.env`. The side menu is grouped in the order you set things up:
-**Home**; **Settings** (Channels, LLM providers, KB configuration, RAG settings, Scoped settings, Guardrails); **User management** (Users, Groups,
+**Home**; **Settings** (Channels, LLM providers, KB configuration, RAG settings, Scoped settings, Languages, Guardrails); **User management** (Users, Groups,
 Departments); **Input** (Prompts, KB documents); **Monitoring** (Reports, Audit log, Conversations, Usage and cost). The ☰ button
 collapses the menu to icons. Each screen's title has an (i) that explains it. Changes to providers, channels, prompts, guardrails and
 settings apply within seconds, with no restart. Secrets (keys, tokens, passwords) are stored encrypted and are **never shown again**:
@@ -374,6 +374,23 @@ department's, and a department's beats RAG settings.
 
 **Monitoring → Conversations**: open a conversation and choose **Why this answer?** under an answer to see what was searched for, the passages found,
 the settings and model used, and the time taken. Passages from documents you may not see show as **Restricted**.
+
+### Languages
+
+People can ask in any language (unless **Languages questions may be asked in** is set) and get the answer in that language.
+Citations keep the document's own title, and show its language, for example [EN], when it differs from the answer's.
+
+- **Settings → RAG settings → Languages:** the accepted languages, the default language, the languages of the documents, how
+  sure detection must be, and which languages get their own system messages.
+- **Settings → Languages:** answers and refusals per language, and the **Message catalogue**. Choose a language, then **Save**
+  your own text (this approves it), or **Draft missing messages with AI** and **Approve** each draft.
+- **Settings → Guardrails → Other languages:** word lists per language, and what to do with a language that has none.
+
+### Document summaries
+
+In **Input → KB documents**, each indexed file shows a short summary under its name ("Summarising…" while it is written).
+**Show more** opens it; **Regenerate summary** is in the row's ⋯ menu. Admins can **Summarise existing documents**: an
+estimate is shown first, and nothing is sent until you confirm.
 
 ## 10. Alerts and notifications
 
