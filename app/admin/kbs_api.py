@@ -10,7 +10,7 @@ from sqlalchemy import select
 from app import global_settings
 from app.admin.api import AdminContext, Session, admin_session, get_ctx
 from app.db import Department, DepartmentEditor
-from app.knowledge import access, chunkers, documents, embeddings, kbs, parsers, storeadapters, versions
+from app.knowledge import access, chunkers, documents, embeddings, kbs, parsers, pii_access, storeadapters, versions
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/admin/api", tags=["admin"])
@@ -108,7 +108,7 @@ def _present(ctx: AdminContext, kb: dict, names: dict) -> dict:
             "active_store": (versions.active(ctx.db, kb["id"]) or {}).get("store"), "health": health,
             "size_bytes": stats.get("size_bytes"), "last_indexed": _last_indexed(ctx, kb["id"]),
             "active_embedding": (versions.active(ctx.db, kb["id"]) or {}).get("embedding"),
-            "bound_channels": kbs.channels_using(ctx.db, kb["id"])}
+            "bound_channels": kbs.channels_using(ctx.db, kb["id"]), "pii_protected": pii_access.protected(ctx.db, kb)}
 
 
 @router.get("/kbs")
@@ -452,3 +452,51 @@ async def chunk_preview(kb_id: int, file: UploadFile = File(...), strategy: str 
             "average_chars": round(sum(lengths) / len(lengths)), "longest": max(lengths), "notes": notes, "shown": min(len(chunks), PREVIEW_LIMIT),
             "chunks": [{"n": i, "page": c.page or None, "heading_path": c.heading_path, "chars": len(c.text), "text": c.text[:SNIPPET]}
                        for i, c in enumerate(chunks[:PREVIEW_LIMIT])]}
+
+
+
+# ---- personal data: protection and who may see the real values (12d, 12g). Admins change them; Editors can read ----
+class PiiModeBody(BaseModel):
+    mode: str
+    reason: str
+
+
+class PiiViewersBody(BaseModel):
+    group_ids: list[int] = []
+    user_ids: list[int] = []
+
+
+def _pii_view(ctx: AdminContext, kb: dict) -> dict:
+    return {"mode": kb["pii_protection"], "protected": pii_access.protected(ctx.db, kb), "master": pii_access.master(ctx.db),
+            **pii_access.viewers(ctx.db, kb["id"])}
+
+
+@router.get("/kbs/{kb_id}/pii")
+def get_pii(kb_id: int, sess: Session = Depends(admin_session), ctx: AdminContext = Depends(get_ctx)):
+    return _pii_view(ctx, _kb_for(ctx, sess, kb_id))
+
+
+@router.put("/kbs/{kb_id}/pii-protection")
+def set_pii_mode(kb_id: int, body: PiiModeBody, sess: Session = Depends(admin_session), ctx: AdminContext = Depends(get_ctx)):
+    _kb_for(ctx, sess, kb_id)
+    if sess.role != "admin":
+        raise HTTPException(403, "Only an Admin can change PII protection.")
+    try:
+        pii_access.set_kb_mode(ctx.db, kb_id, body.mode, body.reason, sess.email)
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+    return _pii_view(ctx, kbs.get_kb(ctx.db, kb_id))
+
+
+@router.put("/kbs/{kb_id}/pii-viewers")
+def set_pii_viewers(kb_id: int, body: PiiViewersBody, sess: Session = Depends(admin_session), ctx: AdminContext = Depends(get_ctx)):
+    kb = _kb_for(ctx, sess, kb_id)
+    if sess.role != "admin":
+        raise HTTPException(403, "Only an Admin can choose who sees personal data.")
+    before = pii_access.describe(ctx.db, kb_id)
+    try:
+        pii_access.set_viewers(ctx.db, kb_id, body.group_ids, body.user_ids)
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+    ctx.store.record(sess.email, "kb.pii_viewers", kb["name"], f"{before} -> {pii_access.describe(ctx.db, kb_id)}")
+    return _pii_view(ctx, kbs.get_kb(ctx.db, kb_id))

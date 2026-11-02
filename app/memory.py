@@ -136,13 +136,23 @@ def get_context(conv_id: str, db: Database | None = None) -> tuple[str, list[tup
     return get_summary(conv_id, db), get(conv_id, db)
 
 
-def get_messages(conv_id: str, db: Database | None = None) -> list[dict]:
-    """Full history for display (vault tokens shown as plain labels)."""
-    from app import pii
-    with (db or get_db()).session() as s:
+def get_messages(conv_id: str, db: Database | None = None, who=None) -> list[dict]:
+    """Full history for display. Vault tokens are shown as plain labels, or as the real values to `who` where they may
+    see them (the person reopening their own chat; never the Admin's conversation viewer)."""
+    from app.knowledge import pii_access
+    db = db or get_db()
+    with db.session() as s:
         rows = list(s.scalars(select(Message).where(Message.conversation_id == conv_id).order_by(Message.id)))
-        return [{"role": m.role, "content": pii.label(m.content) if (m.complete or m.content) else INTERRUPTED,
-                 "meta": m.meta or {}, **({} if m.complete else {"incomplete": True})} for m in rows]
+        rows = [(m.role, m.content, dict(m.meta or {}), m.complete) for m in rows]
+    out = []
+    for role, content, meta, complete in rows:
+        ids = meta.get("kb_ids") or []
+        show = lambda t: pii_access.for_viewer(t, ids, who, db, "conversation") if who is not None else pii_access.for_viewer(t, [], None, db)
+        if meta.get("sources"):
+            meta["sources"] = [{**src, "snippet": show(src.get("snippet", ""))} for src in meta["sources"]]
+        out.append({"role": role, "content": show(content) if (complete or content) else INTERRUPTED,
+                    "meta": meta, **({} if complete else {"incomplete": True})})
+    return out
 
 
 def list_conversations(prefix: str = "", db: Database | None = None) -> list[dict]:
@@ -164,6 +174,32 @@ def delete(conv_id: str, db: Database | None = None) -> bool:
 
 
 clear = delete
+
+
+# ---- masking stored text again (after PII protection was off) -----------------------------------------------------------
+def remask(start=None, end=None, db: Database | None = None) -> int:
+    """Run personal-data masking over the stored messages in a date range (questions and answers typed or written while
+    protection was off). Tokens and labels already there are left alone. Returns how many messages changed."""
+    from app import guardrails
+    db = db or get_db()
+    snap = guardrails.current(db)
+    q = select(Message.id)
+    if start is not None:
+        q = q.where(Message.ts >= start)
+    if end is not None:
+        q = q.where(Message.ts < end)
+    with db.session() as s:
+        ids = list(s.scalars(q.order_by(Message.id)))
+    changed = 0
+    for i in range(0, len(ids), 200):
+        with db.session() as s:
+            for m in s.scalars(select(Message).where(Message.id.in_(ids[i:i + 200]))):
+                if m.content:
+                    new, counts = guardrails.mask_with(m.content, snap)
+                    if counts:
+                        m.content = new
+                        changed += 1
+    return changed
 
 
 # ---- one-off import of the old text files ----------------------------------------------------------------------

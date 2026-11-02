@@ -104,3 +104,26 @@ def try_pii(body: Sample, _: Session = Depends(admin_session), ctx: AdminContext
     snap = guardrails.current(ctx.db)
     masked, counts = guardrails.mask_with(body.text, snap)
     return {"masked": masked, "counts": counts}
+
+
+
+# ---- PII protection (12g): the master switch, changed with a reason --------------------------------------------
+class Protection(BaseModel):
+    enabled: bool
+    reason: str
+
+
+@router.get("/guardrails/pii-protection")
+def get_protection(_: Session = Depends(admin_session), ctx: AdminContext = Depends(get_ctx)):
+    from app.knowledge import pii_access
+    return {"enabled": pii_access.master(ctx.db), "unprotected": pii_access.unprotected(ctx.db)}
+
+
+@router.put("/guardrails/pii-protection")
+def put_protection(body: Protection, s: Session = Depends(admin_session), ctx: AdminContext = Depends(get_ctx)):
+    from app.knowledge import pii_access
+    try:
+        pii_access.set_master(ctx.db, body.enabled, body.reason, s.email)
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+    return {"enabled": pii_access.master(ctx.db), "unprotected": pii_access.unprotected(ctx.db)}

@@ -78,8 +78,14 @@ def clean(chunks: list[dict], db: Database | None = None) -> list[dict]:
             return chunks
         sig = _signature(snap)
         found, memo = 0, {}
+        from app.knowledge import pii_access
         for c in chunks:
             text = c.get("text") or ""
+            if c.get("kb_id") is not None:
+                if ("open", c["kb_id"]) not in memo:
+                    memo[("open", c["kb_id"])] = not pii_access.protected(db, c["kb_id"])
+                if memo[("open", c["kb_id"])]:
+                    continue                                   # PII protection is off for this knowledge base (12g)
             key = (c.get("kb_id"), c.get("id"), hashlib.sha1(text.encode("utf-8")).hexdigest(), sig)
             done = _cached(key)
             if done is None:

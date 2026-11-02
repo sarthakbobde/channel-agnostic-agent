@@ -525,8 +525,7 @@ PyTorch, transformers and LLM Guard are NOT installed yet (part 6b); their memor
 
 ## 20. Phase 12: file storage and personal data in documents
 
-Plan: `docs/phase-12-plan.md`. Parts 12a, 12b, 12c and 12c+ are built; 12d (reveal), 12f (Excel and images) and 12g
-(PII protection switch) are next.
+Plan: `docs/phase-12-plan.md`. Parts 12a, 12b, 12c, 12c+, 12d and 12g are built; 12f (Excel and images) is next.
 
 ### Phase 12, part 12a: every stored file encrypted
 - `app/knowledge/filestore.py`: one `FileStore` in front of a backend. Every file is encrypted with the master key
@@ -592,6 +591,30 @@ Plan: `docs/phase-12-plan.md`. Parts 12a, 12b, 12c and 12c+ are built; 12d (reve
 - Fails closed: if the check fails, no passage is used and the guardrail alert is raised. Results are cached for 10 minutes
   per passage and settings, so popular passages are not checked again at every question.
 - Tests: 17 more in `tests/test_storage_pii.py`; downloads and the Admin-only switch in `tests/test_security_pass.py`.
+
+### Phase 12, part 12d: real values for the people allowed to see them
+- Migration 0028: `kb_pii_viewers` (groups and people per knowledge base, empty by default; Admins choose them under
+  *KB configuration → Personal data → Can see personal data*, audited as `kb.pii_viewers`).
+- `app/knowledge/pii_access.py`: `for_viewer()` shows a text as one person may see it: real values for the knowledge
+  bases they are listed on (or that are unprotected), plain labels for the rest. Every reveal under protection is
+  audited (`pii.reveal`, a count and the knowledge bases, never the values).
+- Applied to the final answer and the source snippets after the answer checks (redaction runs first, so values the model
+  invents are still redacted), and to reopened conversations (the person's own; the Admin's conversation viewer and
+  exports always show labels). Stored answers keep tokens. Only an answer checked as a whole is revealed: with answer
+  checks off, people see labels. A snippet never cuts a token in half.
+
+### Phase 12, part 12g: the PII protection switch
+- `guardrail_settings.pii_protection` (master, on) and `knowledge_bases.pii_protection` (inherit / on / off). Both are
+  changed with a reason (at least 10 characters), Admins only, audited as `pii.protection`; while any knowledge base is
+  unprotected a *Needs your attention* alert names them and its KB card shows **Unprotected**.
+- Off for a knowledge base: its passages are revealed before the AI model sees them, the search filter skips them and
+  everyone sees the values. Question masking and answer redaction stop only when every knowledge base a channel can
+  search is off. Other guardrails keep running; files stay encrypted; indexing still tokenises, so switching applies
+  within seconds and the search index never holds raw values.
+- What cannot be undone is said on screen: questions and answers stored while protection was off keep the real values.
+  *Guardrails → PII protection → Mask stored conversations again* re-runs masking over a date range (with a reason,
+  audited as `conversation.mask`).
+- Tests: 6 more in `tests/test_storage_pii.py`; the Admin-only rules in `tests/test_security_pass.py`.
 
 ## How to run
 

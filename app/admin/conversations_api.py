@@ -13,7 +13,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy import func, select
 
-from app import global_settings, memory, retention
+from app import global_settings, memory, pii, retention
 from app.config import settings
 from app.admin.api import AdminContext, Session, admin_session, get_ctx
 from app.db import Conversation, Message
@@ -123,7 +123,7 @@ def export(body: ExportBody, sess: Session = Depends(admin_session), ctx: AdminC
             last = batch[-1][0]
             for r in batch:
                 yield {"time": r[1].isoformat(), "conversation": hashlib.sha256(r[2].encode()).hexdigest()[:12], "person": _pseudonym(r[6]),
-                       "department": r[7], "channel": r[8], "role": r[3], "complete": r[4], "text": r[5]}
+                       "department": r[7], "channel": r[8], "role": r[3], "complete": r[4], "text": pii.label(r[5])}
 
     def stream():
         count = 0
@@ -166,3 +166,21 @@ def delete_conversation(conv_id: str, sess: Session = Depends(admin_session), ct
         raise HTTPException(404, "No such conversation.")
     ctx.store.record(sess.email, "conversation.delete", conv_id)
     return {"ok": True}
+
+
+# ---- mask stored conversations again (12g): what was typed or written while PII protection was off -------------
+class RemaskBody(BaseModel):
+    reason: str
+    date_from: str = ""
+    date_to: str = ""
+
+
+@router.post("/conversations/mask")
+def remask(body: RemaskBody, sess: Session = Depends(admin_session), ctx: AdminContext = Depends(get_ctx)):
+    reason = (body.reason or "").strip()
+    if len(reason) < 10:
+        raise HTTPException(422, "Give a reason (at least 10 characters). It is recorded in the audit log.")
+    n = memory.remask(_day(body.date_from), _day(body.date_to, end=True), ctx.db)
+    ctx.store.record(sess.email, "conversation.mask", f"{body.date_from or 'start'} to {body.date_to or 'now'}",
+                     f"{n} messages masked; reason: {reason[:300]}")
+    return {"masked": n}

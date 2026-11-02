@@ -1158,7 +1158,7 @@
     "guardrails.update": "Changed guardrails", "pii_type.create": "Added a personal-data type", "pii_type.update": "Changed a personal-data type", "pii_type.delete": "Deleted a personal-data type", "prompt.save": "Saved a prompt draft", "prompt.publish": "Published a prompt", "prompt.rollback": "Rolled a prompt back", "prompt.preview": "Tried a prompt",
     "kb.create": "Created a knowledge base", "kb.update": "Changed a knowledge base", "kb.delete": "Deleted a knowledge base", "kb.access": "Changed who can ask a knowledge base",
     "kb.reindex": "Reprocessed a knowledge base", "kb.rollback": "Rolled back a knowledge base", "kb.rebuild.start": "Started a rebuild", "kb.rebuild.finish": "Finished a rebuild",
-    "kb.rebuild.fail": "A rebuild failed", "kb.rebuild.cancel": "Cancelled a rebuild", "document.upload": "Uploaded a document", "document.download_redacted": "Downloaded a redacted copy", "document.download_original": "Downloaded an original", "document.replace": "Replaced a document",
+    "kb.rebuild.fail": "A rebuild failed", "kb.rebuild.cancel": "Cancelled a rebuild", "document.upload": "Uploaded a document", "document.download_redacted": "Downloaded a redacted copy", "document.download_original": "Downloaded an original", "pii.protection": "Changed PII protection", "pii.reveal": "Saw real personal data", "kb.pii_viewers": "Changed who sees personal data", "conversation.mask": "Masked stored conversations", "document.replace": "Replaced a document",
     "document.delete": "Deleted a document", "document.move": "Moved a document", "document.reindex": "Reprocessed a document", "document.access": "Changed who can read a document",
     "embedding.download": "Downloaded a search model", "conversation.view": "Opened a conversation", "conversation.delete": "Deleted a conversation",
     "conversation.export": "Started an export", "conversation.export.done": "Finished an export", "retention.run": "Ran automatic deletion", "alert.resolve": "Dismissed an alert",
@@ -2323,7 +2323,8 @@
             + "The types and keywords are the ones on the Guardrails screen. Each file keeps a redacted copy to download. Changes apply after a rebuild."),
           h("div", { class: "opt" }, h("label", { class: "switch" }, maskBox), h("b", {}, "Mask personal data in documents")),
           canMask ? null : hint("Only an Admin can change this."),
-          h("div", { class: "actions" }, maskSave), maskOut),
+          h("div", { class: "actions" }, maskSave), maskOut,
+          piiAccessPane(k, canMask)),
         rebuild: parts.rebuild.pane, access: parts.access.pane       // keys in tab order: the remembered tab is found by position
       };
       var tabs = tabBar([["general", "General"], ["splitting", "Splitting"], ["search", "Search model"], ["storage", "Search storage"],
@@ -2331,6 +2332,45 @@
       tabs.el.addEventListener("click", function (e) { var b = e.target.closest("button[role=tab]"); if (b) state.kbTab = Object.keys(panes)[Array.prototype.indexOf.call(tabs.el.children, b)]; });
       return h("section", { class: "panel kb-card" }, kbHead(k), out, tabs.el,
         panes.general, panes.splitting, panes.search, panes.storage, panes.personal, panes.rebuild, panes.access);
+    }
+
+    // Personal data tab, lower half: PII protection for this knowledge base, and who sees the real values (Admins change both).
+    function piiAccessPane(k, canEdit) {
+      var box = h("div", { class: "stack-sm" }, msg("wait", "Loading…"));
+      Promise.all([api("GET", "/kbs/" + k.id + "/pii"), loadChoices()]).then(function (r) {
+        var cur = r[0], ch = r[1];
+        var mode = selectOf([["inherit", "As the Guardrails setting (" + (cur.master ? "on" : "off") + ")"], ["on", "On"], ["off", "Off"]], cur.mode, null, "PII protection");
+        mode.id = "pm" + k.id; mode.disabled = !canEdit;
+        var reason = h("input", { type: "text", id: "pr" + k.id, placeholder: "Why (at least 10 characters)", disabled: !canEdit });
+        var mOut = h("div", { "aria-live": "polite" });
+        var mSave = h("button", { type: "button", class: "btn primary", hidden: !canEdit, onclick: async function () {
+          try { var v = await api("PUT", "/kbs/" + k.id + "/pii-protection", { mode: mode.value, reason: reason.value }); reason.value = "";
+                mOut.replaceChildren(msg(v.protected ? "ok" : "warn", v.protected ? "Saved. Personal data is protected." : "Saved. Personal data in this knowledge base is NOT protected.")); }
+          catch (err) { mOut.replaceChildren(msg("bad", err.message)); }
+        } }, "Save");
+        function checks(list, chosen, text) {
+          return list.map(function (x) { return { id: x.id, cb: h("input", { type: "checkbox", checked: chosen.indexOf(x.id) >= 0, disabled: !canEdit }), label: text(x) }; });
+        }
+        var g = checks(ch.groups, cur.group_ids, function (x) { return x.name; });
+        var u = checks(ch.people, cur.user_ids, function (x) { return (x.name || x.email) + " · " + x.email; });
+        var vOut = h("div", { "aria-live": "polite" });
+        var vSave = h("button", { type: "button", class: "btn primary", hidden: !canEdit, onclick: async function () {
+          var pick = function (l) { return l.filter(function (b) { return b.cb.checked; }).map(function (b) { return b.id; }); };
+          try { await api("PUT", "/kbs/" + k.id + "/pii-viewers", { group_ids: pick(g), user_ids: pick(u) }); vOut.replaceChildren(msg("ok", "Saved. Applies from the next question.")); }
+          catch (err) { vOut.replaceChildren(msg("bad", err.message)); }
+        } }, "Save");
+        var list = function (l) { return h("div", { class: "kbpick" }, l.map(function (b) { return h("label", { class: "check" }, b.cb, b.label); })); };
+        box.replaceChildren(
+          h("h4", {}, "PII protection", tip("Off: everyone sees the real values from this knowledge base's documents, and the AI model receives them. Applies within seconds.")),
+          h("div", { class: "form" }, h("div", { class: "field" }, fieldLabel("pm" + k.id, "Protection"), mode), h("div", { class: "field" }, fieldLabel("pr" + k.id, "Reason"), reason)),
+          h("div", { class: "actions" }, mSave), mOut,
+          h("h4", {}, "Can see personal data", tip("While protection is on, these groups and people see the real values in answers and sources; everyone else sees labels such as <EMAIL_ADDRESS>. Every reveal is recorded in the audit log.")),
+          h("span", { class: "l" }, "Groups"), g.length ? list(g) : hint("No groups yet."),
+          h("span", { class: "l" }, "People"), list(u),
+          canEdit ? null : hint("Only an Admin can change these."),
+          h("div", { class: "actions" }, vSave), vOut);
+      }, function (err) { box.replaceChildren(msg("bad", err.message)); });
+      return h("div", { class: "subpanel" }, box);
     }
 
     // The sub-sections were built as collapsible <details>; inside a tab they become a plain pane with a heading.
@@ -2344,7 +2384,8 @@
 
     function kbHead(k) {
       return h("div", { class: "head" },
-        h("div", {}, h("h3", {}, k.name, k.is_default ? h("span", { class: "pill ok" }, "Default") : null),
+        h("div", {}, h("h3", {}, k.name, k.is_default ? h("span", { class: "pill ok" }, "Default") : null,
+            k.pii_protected === false ? h("span", { class: "pill bad", title: "PII protection is off: everyone sees real personal data" }, "Unprotected") : null),
           h("div", { class: "meta" }, k.department + " · " + (k.documents === null ? "?" : k.documents) + " documents · " + (k.chunks === null ? "?" : k.chunks) + " passages")),
         h("div", { class: "head-right" }, k.bound_channels.length
           ? h("div", { class: "chips-static" }, k.bound_channels.map(function (c) { return h("span", { class: "pill off" }, c); }))
@@ -2745,7 +2786,7 @@
       var bar = h("div", { class: "savebar" }, count, h("div", { class: "actions" }, discard, saveBtn));
       redraw.push(function () { var n = changed().length; count.textContent = n ? n + " unsaved change" + (n === 1 ? "" : "s") : "No unsaved changes"; saveBtn.disabled = !n; discard.disabled = !n; bar.classList.toggle("dirty", n > 0); });
 
-      var page = h("div", { class: "gr-page" }, master, warn,
+      var page = h("div", { class: "gr-page" }, master, warn, protectionPanel(),
         h("div", { class: "gr-cols" },
           h("div", { class: "stack" },
             panel("Question checks", "Run first. A blocked question never reaches the AI model.", null, questionCards),
@@ -2757,6 +2798,47 @@
       holder.replaceChildren(page);
       redraw.forEach(function (fn) { fn(); });
     }
+    // ---- PII protection (12g): changed with a reason, saved straight away; and masking stored conversations again ----
+    function protectionPanel() {
+      var state_ = h("div", {}, msg("wait", "Loading…"));
+      var out = h("div", { "aria-live": "polite" });
+      var reason = h("textarea", { id: "pp-reason", rows: "2", placeholder: "Why (at least 10 characters). Recorded in the audit log." });
+      var btn = h("button", { type: "button", class: "btn" });
+      var cur = null;
+      function paint(r) {
+        cur = r;
+        state_.replaceChildren(h("div", { class: "opt" }, h("span", { class: "pill " + (r.enabled ? "ok" : "bad") }, r.enabled ? "Protected" : "Not protected"),
+          h("span", { class: "meta" }, r.unprotected.length ? "Not protected now: " + r.unprotected.join(", ") : "Every knowledge base is protected.")),
+          r.enabled ? null : msg("warn", "Everyone sees real personal data from documents, and the AI model receives it. What people type now is stored and sent unmasked."));
+        btn.textContent = r.enabled ? "Turn protection off" : "Turn protection on";
+        btn.className = "btn " + (r.enabled ? "danger" : "primary");
+      }
+      btn.addEventListener("click", async function () {
+        out.replaceChildren(msg("wait", "Saving…"));
+        try { paint(await api("PUT", "/guardrails/pii-protection", { enabled: !cur.enabled, reason: reason.value })); reason.value = ""; out.replaceChildren(msg("ok", "Saved. Applies within seconds.")); }
+        catch (err) { out.replaceChildren(msg("bad", err.message)); }
+      });
+      api("GET", "/guardrails/pii-protection").then(paint, function (err) { state_.replaceChildren(msg("bad", err.message)); });
+
+      var from = h("input", { type: "date", id: "rm-from" }), to = h("input", { type: "date", id: "rm-to" });
+      var why = h("input", { type: "text", id: "rm-reason", placeholder: "Why (at least 10 characters)" });
+      var rmOut = h("div", { "aria-live": "polite" });
+      var rmBtn = h("button", { type: "button", class: "btn", onclick: async function () {
+        rmOut.replaceChildren(msg("wait", "Masking…"));
+        try { var r = await api("POST", "/conversations/mask", { date_from: from.value, date_to: to.value, reason: why.value }); rmOut.replaceChildren(msg("ok", r.masked + " stored messages masked.")); why.value = ""; }
+        catch (err) { rmOut.replaceChildren(msg("bad", err.message)); }
+      } }, "Mask stored conversations");
+      var rmFold = fold("Mask stored conversations again", "Questions and answers stored while protection was off keep the real values. This runs masking over the messages in a date range (empty = all).");
+      rmFold.append(h("div", { class: "form" },
+          h("div", { class: "field" }, fieldLabel("rm-from", "From"), from), h("div", { class: "field" }, fieldLabel("rm-to", "To"), to),
+          h("div", { class: "field wide" }, fieldLabel("rm-reason", "Reason"), why)),
+        h("div", { class: "actions" }, rmBtn), rmOut);
+      return panel("PII protection", "Master switch for personal data. Off: everyone sees real values, the AI model receives them, and questions and answers are no longer masked where every knowledge base a channel uses is off. Each knowledge base can override it under KB configuration → Personal data. Files stay encrypted either way.", null,
+        state_,
+        h("div", { class: "stack-sm" }, h("div", { class: "field" }, fieldLabel("pp-reason", "Reason"), reason), h("div", { class: "actions" }, btn), out),
+        rmFold);
+    }
+
     // ---- personal-data types an Admin defines, and a Try it box (saved straight away, not with the Save bar) ----
     function piiTypesPanel() {
       var list = h("div", { class: "stack-sm" }, msg("wait", "Loading…"));

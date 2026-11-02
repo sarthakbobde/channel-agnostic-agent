@@ -23,7 +23,7 @@ def _view(kb: KnowledgeBase) -> dict:
             "collection": kb.collection, "chunk_size": kb.chunk_size, "chunk_overlap": kb.chunk_overlap,
             "chunk_strategy": kb.chunk_strategy or "recursive", "embedding": kb.embedding or "chroma-default",
             "embedding_config": kb.embedding_config or {}, "store": kb.store or "chroma", "store_config": kb.store_config or {},
-            "pii_mask": bool(kb.pii_mask), "is_default": kb.is_default, "created_at": kb.created_at, "updated_at": kb.updated_at}
+            "pii_mask": bool(kb.pii_mask), "pii_protection": kb.pii_protection or "inherit", "is_default": kb.is_default, "created_at": kb.created_at, "updated_at": kb.updated_at}
 
 
 # ---- reading ------------------------------------------------------------------------------
@@ -296,6 +296,8 @@ def run_startup() -> None:
             log.info("completed metadata on %d existing chunks", n)
         from app.knowledge import documents
         documents.secure_at_start()
+        from app.knowledge import pii_access
+        pii_access.refresh_alert(get_db())
         made = documents.import_existing()
         if made:
             log.info("recorded %d documents that were already indexed", made)

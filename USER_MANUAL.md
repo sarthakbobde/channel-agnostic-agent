@@ -331,6 +331,12 @@ Below it, two columns, one row per check with its own switch; a check's settings
   applies after a rebuild). *KB documents* then shows how many items each file had masked, and the ⋯ menu offers
   *Download redacted copy* (and, for Admins, *Download original*; every download is recorded). A file marked
   **Needs re-index** had personal data found at search time that indexing missed; choose *Re-index* in its ⋯ menu.
+- **PII protection** (top): the master switch for personal data. Turning it off needs a reason; while it is off for any
+  knowledge base, Home shows a warning and the knowledge base is marked **Unprotected**. Off means everyone sees the
+  real values and the AI model receives them; questions are stored unmasked. *Mask stored conversations again* masks
+  what was stored in a date range. Each knowledge base can override the switch (*KB configuration → Personal data*),
+  where Admins also choose who **Can see personal data**: those groups and people see real values in answers and
+  sources; everyone else sees labels such as `<EMAIL_ADDRESS>`. Every reveal is recorded in the audit log.
 - **Your own personal-data types** (left, below): numbers or codes only your organisation uses, such as `EMP-12345`. Give a
   name (`EMPLOYEE_ID`), a regular expression (`\bEMP-\d{5}\b`), optional context words and a confidence; **Try pattern**
   shows what it matches in the *Try it* text. A new type is masked straight away. **Try it** shows what the saved settings

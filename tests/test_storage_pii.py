@@ -531,3 +531,113 @@ def test_with_guardrails_off_search_results_pass_unchanged(new_db):
     pii_filter.clear_cache()
     chunks = [{"text": "Salary: 1,00,000", "kb_id": 4, "id": "z", "doc_id": "doc-1"}]
     assert pii_filter.clean(chunks, db)[0]["text"] == "Salary: 1,00,000"
+
+
+# ---- 12d and 12g: who sees values, and the protection switch -------------------------------------------------------
+def _kb_world(new_db, name):
+    """A database with keyword masking on, one knowledge base, a group and two people."""
+    from sqlalchemy import select
+    from app.db import Department, Group, GroupMember, User
+    from app.knowledge import kbs
+    db = new_db(name)
+    _keywords_only(db)
+    with db.session() as s:
+        s.add(Department(name="HR", retention_days=30, banned_topics="", is_default=False))
+    with db.session() as s:
+        dept = s.scalar(select(Department.id))
+        s.add_all([User(email="payroll@sysfore.com", name="Pay", role="viewer", department_id=dept),
+                   User(email="other@sysfore.com", name="Other", role="viewer", department_id=dept),
+                   Group(name="Payroll", department_id=dept)])
+    with db.session() as s:
+        pay = s.scalar(select(User.id).where(User.email == "payroll@sysfore.com"))
+        other = s.scalar(select(User.id).where(User.email == "other@sysfore.com"))
+        gid = s.scalar(select(Group.id))
+        s.add(GroupMember(group_id=gid, user_id=pay))
+    kb = kbs.create_kb(db, "Pay", "", dept)
+    text = "Salary: 12,40,000."
+    tok, _ = pii.tokenise(text, kb["id"], 1, guardrails.detect(text, (), keywords=("Salary",)), db)
+    return db, kb, tok, gid, pay, other
+
+
+def _who(user_id, groups=()):
+    from app.identity import Identity
+    return Identity(email=f"u{user_id}@sysfore.com", user_id=user_id, group_ids=tuple(groups), known=True)
+
+
+def test_values_are_shown_only_to_the_people_on_the_list(new_db):
+    from app.knowledge import pii_access
+    db, kb, tok, gid, pay, other = _kb_world(new_db, "reveal_list")
+    assert pii_access.for_viewer(tok, [kb["id"]], _who(pay, [gid]), db) == "Salary: <SENSITIVE_VALUE>."     # nobody by default
+    pii_access.set_viewers(db, kb["id"], [gid], [])
+    assert pii_access.for_viewer(tok, [kb["id"]], _who(pay, [gid]), db) == "Salary: 12,40,000."
+    assert pii_access.for_viewer(tok, [kb["id"]], _who(other), db) == "Salary: <SENSITIVE_VALUE>."
+    assert pii_access.for_viewer(tok, [kb["id"] + 1], _who(pay, [gid]), db) == "Salary: <SENSITIVE_VALUE>."  # other KBs' tokens
+    pii_access.set_viewers(db, kb["id"], [], [other])
+    assert pii_access.for_viewer(tok, [kb["id"]], _who(other), db) == "Salary: 12,40,000."
+    assert pii_access.for_viewer(tok, [kb["id"]], _who(pay, [gid]), db) == "Salary: <SENSITIVE_VALUE>."
+    with pytest.raises(ValueError):
+        pii_access.set_viewers(db, kb["id"], [999], [])
+
+
+def test_the_protection_switch_and_its_overrides(new_db):
+    from app.knowledge import kbs, pii_access
+    db, kb, tok, gid, pay, other = _kb_world(new_db, "protection")
+    assert pii_access.protected(db, kb["id"]) and pii_access.unprotected(db) == []
+    with pytest.raises(ValueError, match="reason"):
+        pii_access.set_master(db, False, "short", "admin@x.com")
+    pii_access.set_master(db, False, "Audit week: payroll checks", "admin@x.com")
+    assert not pii_access.protected(db, kb["id"]) and pii_access.unprotected(db) == ["Pay"]
+    assert pii_access.for_viewer(tok, [kb["id"]], _who(other), db) == "Salary: 12,40,000."                   # everyone sees values
+    pii_access.set_kb_mode(db, kb["id"], "on", "HR stays protected always", "admin@x.com")
+    assert pii_access.protected(db, kb["id"]) and pii_access.for_viewer(tok, [kb["id"]], _who(other), db) == "Salary: <SENSITIVE_VALUE>."
+    pii_access.set_master(db, True, "Audit week is over now", "admin@x.com")
+    pii_access.set_kb_mode(db, kb["id"], "off", "Public FAQ has no personal data", "admin@x.com")
+    assert not pii_access.protected(db, kb["id"]) and pii_access.all_off(db, [kbs.get_kb(db, kb["id"])])
+    with pytest.raises(ValueError):
+        pii_access.set_kb_mode(db, kb["id"], "maybe", "a long enough reason", "admin@x.com")
+
+
+def test_an_unprotected_knowledge_base_is_opened_before_the_model_and_not_filtered(new_db):
+    from app.knowledge import pii_access, pii_filter
+    db, kb, tok, gid, pay, other = _kb_world(new_db, "open_passages")
+    pii_filter.clear_cache()
+    raw = [{"text": "DOB 12/03/1990", "kb_id": kb["id"], "id": "a", "doc_id": "doc-1"}]
+    assert "1990" not in pii_filter.clean([dict(raw[0])], db)[0]["text"]                           # protected: filtered
+    assert pii_access.open_passages([{"text": tok, "kb_id": kb["id"]}], db)[0]["text"] == tok      # protected: tokens stay
+    pii_access.set_kb_mode(db, kb["id"], "off", "Public FAQ has no personal data", "admin@x.com")
+    pii_filter.clear_cache()
+    assert pii_filter.clean([dict(raw[0])], db)[0]["text"] == "DOB 12/03/1990"                      # off: not filtered
+    assert pii_access.open_passages([{"text": tok, "kb_id": kb["id"]}], db)[0]["text"] == "Salary: 12,40,000."
+
+
+def test_questions_and_answers_are_not_masked_when_protection_is_off(new_db, monkeypatch):
+    db = new_db("switch_guard")
+    _keywords_only(db)
+    assert guardrails.guard_input("My salary: 5,00,000. Ok?", db).text == "My salary: <SENSITIVE_VALUE>. Ok?"
+    assert guardrails.guard_input("My salary: 5,00,000. Ok?", db, mask=False).text == "My salary: 5,00,000. Ok?"
+    assert "<SENSITIVE_VALUE>" in guardrails.guard_output("Salary: 5,00,000. Ok.", 0, False, db)
+    assert guardrails.guard_output("Salary: 5,00,000. Ok.", 0, False, db, redact=False) == "Salary: 5,00,000. Ok."
+
+
+def test_reopened_conversations_follow_the_same_rule(new_db):
+    from app import memory
+    from app.knowledge import pii_access
+    db, kb, tok, gid, pay, other = _kb_world(new_db, "reopen")
+    memory.add("web-1-x", "assistant", tok, {"kb_ids": [kb["id"]], "sources": [{"n": 1, "snippet": tok}]}, db=db)
+    pii_access.set_viewers(db, kb["id"], [], [pay])
+    mine = memory.get_messages("web-1-x", db, who=_who(pay))[0]
+    assert mine["content"] == "Salary: 12,40,000." and mine["meta"]["sources"][0]["snippet"] == "Salary: 12,40,000."
+    assert memory.get_messages("web-1-x", db, who=_who(other))[0]["content"] == "Salary: <SENSITIVE_VALUE>."
+    assert memory.get_messages("web-1-x", db)[0]["content"] == "Salary: <SENSITIVE_VALUE>."                 # the Admin viewer
+
+
+def test_stored_conversations_can_be_masked_again(new_db):
+    from app import memory
+    db = new_db("remask")
+    _keywords_only(db)
+    memory.add("web-1-y", "user", "My salary: 5,00,000. It is wrong", db=db)
+    memory.add("web-1-y", "assistant", "Salary: <SENSITIVE_VALUE_7f3a9c21> is on file.", db=db)
+    assert memory.remask(db=db) == 1
+    msgs = memory.get_messages("web-1-y", db)
+    assert msgs[0]["content"] == "My salary: <SENSITIVE_VALUE>. It is wrong" and msgs[1]["content"] == "Salary: <SENSITIVE_VALUE> is on file."
+    assert memory.remask(db=db) == 0

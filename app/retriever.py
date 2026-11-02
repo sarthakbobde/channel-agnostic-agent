@@ -123,6 +123,6 @@ def retrieve_scored(query: str, top_k: int | None = None, kb_ids=None) -> list[d
 
 def retrieve(query: str, kb_ids=None) -> list[dict]:
     """Top-k passages that pass the score threshold, checked for personal data before anything else sees them."""
-    from app.knowledge import pii_filter
+    from app.knowledge import pii_access, pii_filter
     scored = retrieve_scored(query, kb_ids=kb_ids) if kb_ids else retrieve_scored(query)
-    return pii_filter.clean([c for c in scored if c["score"] >= global_settings.current().score_threshold])
+    return pii_access.open_passages(pii_filter.clean([c for c in scored if c["score"] >= global_settings.current().score_threshold]))

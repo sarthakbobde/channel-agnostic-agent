@@ -1,6 +1,6 @@
 # Phase 12 plan: file storage and personal data in documents
 
-Status: **12a, 12b, 12c and 12c+ built** (2 Nov 2026); 12d, 12f and 12g are planned.
+Status: **12a, 12b, 12c, 12c+, 12d and 12g built** (2 Nov 2026); 12f is planned.
 
 ## Where we start
 

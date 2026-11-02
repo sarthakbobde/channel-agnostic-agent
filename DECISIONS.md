@@ -116,4 +116,9 @@ this file.
 | 12c | Guardrails off | No masking at indexing or search. | Mask anyway: the master switch is meant to turn every check off (12g formalises this). |
 | 12c | Until reveal exists | Tokens are shown as plain labels; stored text keeps tokens. | Store labels: the values could then never be revealed. |
 | 12c+ | Failure | No passage is used and an alert is raised. | Use the passages unchecked: could send personal data to an external model. |
+| 12d | Who sees values | A list of groups and people per knowledge base, empty by default; Admins choose it. | Admins and the KB's Editors automatically: wider than needed. |
+| 12d | Admin conversation viewer and exports | Always labels. | Reveal to Admins: the list is the only way to see values, and it is audited. |
+| 12d | Reveal audit | One audit row per answer that revealed values (count and KBs). | One per value: noisy; none: no trace of who saw what. |
+| 12g | Scope of "off" | Stops all masking for that scope (questions, answers, documents to the model), other guardrails stay on. | Keep masking questions: chosen by the project owner on 2 Nov 2026. |
+| 12g | Questions with several KBs | Masked unless every KB the channel can search is off. | The question is masked before anyone knows which KB answers. |
 | 8c | Store health cadence | Every 5 minutes. | Quick enough to catch an outage, light enough not to load the stores. |

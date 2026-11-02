@@ -113,6 +113,7 @@ class KnowledgeBase(Base):
     store: Mapped[str] = mapped_column(String(20), default="chroma")
     store_config: Mapped[dict] = mapped_column(JSON, default=dict)
     pii_mask: Mapped[bool] = mapped_column(Boolean, default=True)          # mask personal data in documents at indexing
+    pii_protection: Mapped[str] = mapped_column(String(8), default="inherit")   # inherit | on | off (12g)
     is_default: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)
@@ -197,6 +198,14 @@ class DocumentAccess(Base):
     ref_id: Mapped[int] = mapped_column(Integer, primary_key=True)
 
 
+class KBPiiViewer(Base):
+    """Groups and people who see the real values behind a knowledge base's personal-data tokens. None by default."""
+    __tablename__ = "kb_pii_viewers"
+    kb_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    kind: Mapped[str] = mapped_column(String(8), primary_key=True)         # group | user
+    ref_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+
+
 class KBAccess(Base):
     """Groups allowed to ask a knowledge base questions. No rows = everyone on a channel bound to it."""
     __tablename__ = "kb_access"
@@ -245,6 +254,7 @@ class GuardrailSettings(Base):
     pii_threshold: Mapped[int] = mapped_column(Integer, default=40)                 # detection confidence, percent
     keywords_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     sensitive_keywords: Mapped[list] = mapped_column(JSON, default=list)
+    pii_protection: Mapped[bool] = mapped_column(Boolean, default=True)              # master switch (12g), changed with a reason
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)
     updated_by: Mapped[str] = mapped_column(String(254), default="system")
 

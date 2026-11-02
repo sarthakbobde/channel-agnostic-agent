@@ -64,6 +64,7 @@ class Snapshot:
     pii_threshold: int = 40
     keywords_enabled: bool = True
     sensitive_keywords: tuple = ()
+    pii_protection: bool = True
 
     @property
     def keywords(self) -> tuple:
@@ -133,13 +134,14 @@ def defaults() -> dict:
             "output_checks_enabled": True, "output_redaction": True, "allow_list": [],
             "injection_enabled": True, "injection_sensitivity": "medium", "injection_phrases": [],
             "toxicity_enabled": True, "toxicity_sensitivity": "medium", "toxicity_words": [], "toxicity_allow": [],
-            "leak_check_enabled": True, "pii_threshold": 40, "keywords_enabled": True, "sensitive_keywords": list(DEFAULT_KEYWORDS)}
+            "leak_check_enabled": True, "pii_threshold": 40, "keywords_enabled": True, "sensitive_keywords": list(DEFAULT_KEYWORDS),
+            "pii_protection": True}
 
 
 _COLUMNS = ("enabled", "max_input_tokens", "blocked_reply", "mask_enabled", "masked_types", "mask_names",
             "banned_topics_enabled", "output_checks_enabled", "output_redaction", "allow_list", "injection_enabled",
             "injection_sensitivity", "injection_phrases", "toxicity_enabled", "toxicity_sensitivity", "toxicity_words",
-            "toxicity_allow", "leak_check_enabled", "pii_threshold", "keywords_enabled", "sensitive_keywords", "updated_at", "updated_by")
+            "toxicity_allow", "leak_check_enabled", "pii_threshold", "keywords_enabled", "sensitive_keywords", "pii_protection", "updated_at", "updated_by")
 
 
 def _snapshot(row: dict) -> Snapshot:
@@ -149,7 +151,7 @@ def _snapshot(row: dict) -> Snapshot:
                     row["injection_enabled"], row["injection_sensitivity"], tuple(row["injection_phrases"] or ()),
                     row["toxicity_enabled"], row["toxicity_sensitivity"], tuple(row["toxicity_words"] or ()),
                     tuple(row["toxicity_allow"] or ()), row["leak_check_enabled"], row["pii_threshold"], row["keywords_enabled"],
-                    tuple(row["sensitive_keywords"] or ()))
+                    tuple(row["sensitive_keywords"] or ()), row["pii_protection"])
 
 
 def _row(db: Database) -> dict:
@@ -431,7 +433,7 @@ class Decision:
     reply: str = ""           # what to send back when blocked or failed
 
 
-def guard_input(message: str, db: Database | None = None) -> Decision:
+def guard_input(message: str, db: Database | None = None, mask: bool = True) -> Decision:
     db = db or get_db()
     try:
         s = current(db)
@@ -450,7 +452,7 @@ def guard_input(message: str, db: Database | None = None) -> Decision:
         if s.banned_topics_enabled and topic_hit(message, banned_topics_for(db, who.department_id)):
             record(db, "banned_topic", "input", "blocked")
             return Decision("", True, s.blocked_reply)
-        if s.mask_enabled:
+        if s.mask_enabled and mask:
             masked, counts = mask_with(message, s)
             if counts:
                 record(db, "personal_data", "input", "masked", sum(counts.values()))
@@ -487,7 +489,7 @@ def canary_line() -> str:
 _CITE = re.compile(r"\[(\d+)\]")
 
 
-def guard_output(answer: str, n_sources: int, searched: bool, db: Database | None = None) -> str:
+def guard_output(answer: str, n_sources: int, searched: bool, db: Database | None = None, redact: bool = True) -> str:
     db = db or get_db()
     try:
         s = current(db)
@@ -503,7 +505,7 @@ def guard_output(answer: str, n_sources: int, searched: bool, db: Database | Non
         if s.banned_topics_enabled and topic_hit(answer, banned_topics_for(db, who.department_id)):
             record(db, "banned_topic", "output", "blocked")
             return s.blocked_reply
-        if s.output_redaction and (s.masked_types or s.keywords):
+        if s.output_redaction and redact and (s.masked_types or s.keywords):
             answer, counts = mask_with(answer, s, s.allow_list)
             if counts:
                 record(db, "personal_data", "output", "redacted", sum(counts.values()))

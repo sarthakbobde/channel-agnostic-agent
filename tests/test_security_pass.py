@@ -370,3 +370,20 @@ def test_only_an_admin_changes_document_masking(world):
     r = world.admin.put(f"{P}/kbs/{kb['id']}", headers=world.ah, json={"pii_mask": not kb["pii_mask"]})
     assert r.status_code == 200 and r.json()["pii_mask"] is (not kb["pii_mask"]) and "rebuild" in r.json()["note"]
     world.admin.put(f"{P}/kbs/{kb['id']}", headers=world.ah, json={"pii_mask": kb["pii_mask"]})
+
+
+def test_only_an_admin_changes_pii_protection_or_who_sees_values(world):
+    kb = world.kb_hr
+    body = {"mode": "off", "reason": "testing the permission check"}
+    assert world.edhr.get(f"{P}/kbs/{kb['id']}/pii").status_code == 200
+    assert world.edhr.put(f"{P}/kbs/{kb['id']}/pii-protection", headers=world.eh, json=body).status_code == 403
+    assert world.edhr.put(f"{P}/kbs/{kb['id']}/pii-viewers", headers=world.eh, json={"user_ids": [world.ed_hr["id"]]}).status_code == 403
+    assert world.edhr.put(f"{P}/guardrails/pii-protection", headers=world.eh, json={"enabled": False, "reason": "x" * 20}).status_code == 403
+    assert world.admin.put(f"{P}/kbs/{kb['id']}/pii-protection", headers=world.ah, json={**body, "reason": "short"}).status_code == 422
+    r = world.admin.put(f"{P}/kbs/{kb['id']}/pii-protection", headers=world.ah, json=body)
+    assert r.status_code == 200 and r.json()["protected"] is False
+    r = world.admin.put(f"{P}/kbs/{kb['id']}/pii-protection", headers=world.ah, json={"mode": "inherit", "reason": "testing the permission check"})
+    assert r.status_code == 200 and r.json()["protected"] is True
+    r = world.admin.put(f"{P}/kbs/{kb['id']}/pii-viewers", headers=world.ah, json={"user_ids": [world.ed_hr["id"]]})
+    assert r.status_code == 200 and r.json()["user_ids"] == [world.ed_hr["id"]]
+    world.admin.put(f"{P}/kbs/{kb['id']}/pii-viewers", headers=world.ah, json={})
