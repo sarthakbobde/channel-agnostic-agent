@@ -78,9 +78,16 @@ def main() -> None:
         step(f"Hindi messages: {r['approved']} drafts approved")
     else:
         step("Hindi messages: already approved")
-    a.call("PUT", "/settings", {"values": {"catalog_languages": ["hi"], "accepted_languages": ["en", "hi"],
+    # Add Hindi to the lists without removing languages added in the admin center since (for example Telugu).
+    now = {f["name"]: f["value"] for f in a.call("GET", "/settings")["fields"]}
+    messages = list(now.get("catalog_languages") or [])
+    accepted = list(now.get("accepted_languages") or [])
+    messages += [l for l in ["hi"] if l not in messages]
+    accepted += [l for l in ["en", "hi"] if l not in accepted]
+    a.call("PUT", "/settings", {"values": {"catalog_languages": messages, "accepted_languages": accepted,
                                            "suggestions_dedup_threshold": 0.95}})
-    step("Message languages: hi; questions accepted in: en, hi; suggestion repeat cut-off 0.95 (measured on the policies)")
+    step(f"Message languages: {', '.join(messages)}; questions accepted in: {', '.join(accepted)}; "
+         "suggestion repeat cut-off 0.95 (measured on the policies)")
 
     # 2. The HR knowledge base on the multilingual model -------------------------------------------------------------
     kb = pick(a.call("GET", "/kbs")["kbs"], args.kb, "knowledge base kb")
