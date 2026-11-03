@@ -36,8 +36,9 @@ prompts, guardrails, people and retention. Changes apply within seconds, with no
 | **Knowledge bases** | Several per organisation, each owned by a department and bound to channels. Chunking strategies (fixed size, per page, by heading, semantic) with a preview; embedding models (local MiniLM, local multilingual, OpenAI, Azure OpenAI, Cohere); vector stores (Chroma, pgvector, Azure AI Search). Changes rebuild into a new versioned index with one-click rollback. |
 | **Document access** | Each document is visible to everyone, selected groups or selected people. Enforced inside the search, so blocked content never reaches the model. |
 | **Prompts** | Locked base prompts (Admin) plus a prompt per department (its Editors). Draft, test, publish, version history and rollback. |
-| **Guardrails** | Question length, prompt injection, toxic language, banned topics per department, personal-data masking on questions and redaction on answers (built-in types, your own types, and values after sensitive keywords such as *Salary*), protection of the hidden instructions. |
-| **File storage** | Every uploaded file is encrypted with the master key, on local disk or in Azure Blob Storage; parsing never leaves a plain copy behind. |
+| **Guardrails** | Question length, prompt injection, toxic language, banned topics per department, protection of the hidden instructions. |
+| **Personal data** | Masked in questions, answers, stored chats **and documents**: built-in types (email, phone, card, Aadhaar, PAN…), your own types (e.g. employee IDs) and values after sensitive keywords such as *Salary*. Documents are masked when indexed and search results are checked again. Real values are kept in an encrypted vault and shown only to the groups and people you list per knowledge base; every reveal is audited. A **PII protection** switch (global, with per-KB overrides) turns it off where you decide, with a reason. |
+| **File storage** | Every uploaded file is encrypted with the master key, on local disk or in Azure Blob Storage; parsing never leaves a plain copy behind. Each document keeps an encrypted redacted copy; only Admins can download an original. |
 | **Conversations** | Stored in the database (personal data masked), long chats summarised in the background, retention per department, audited export. |
 | **Monitoring** | Home dashboard, usage and cost per provider/model/department/knowledge base, guardrail and knowledge-base reports, alerts (banner, webhook, email), a full audit log. |
 | **People** | Admin, Editor and Viewer roles; departments; groups; one-time set-password links; profile photos; sign in with Microsoft or Google (admin center). |
@@ -52,9 +53,9 @@ icons with the ☰ button.
 | Menu | Screens |
 |---|---|
 | **Home** | Greeting, a *Finish setting up* checklist checked against the real configuration, this week's numbers against last week's, channel status and *Needs your attention*. |
-| **Settings** | **Channels** (official platform logos, status, credentials, test, enable) · **LLM providers** (which model answers, connections, allowed providers) · **KB configuration** (create knowledge bases; splitting, search model, search storage, rebuilds, who can ask) · **RAG settings** (retrieval, retention, limits, alert notifications) · **Guardrails** · **Sign-in** (Sign in with Microsoft / Google) |
+| **Settings** | **Channels** (official platform logos, status, credentials, test, enable) · **LLM providers** (which model answers, connections, allowed providers) · **KB configuration** (create knowledge bases; splitting, search model, search storage, personal data, rebuilds, who can ask) · **RAG settings** (retrieval, retention, limits, alert notifications) · **Guardrails** (checks, PII protection, your own personal-data types, sensitive keywords) · **Sign-in** (Sign in with Microsoft / Google) |
 | **User management** | **Users** (search and filters, roles, departments, how each person signs in, password links) · **Groups** · **Departments** (retention, banned topics, Editors) |
-| **Input** | **Prompts** (prompt list with Edit, Test and History tabs) · **KB documents** (drag-and-drop upload, file list with type icons, who can see each file) |
+| **Input** | **Prompts** (prompt list with Edit, Test and History tabs) · **KB documents** (drag-and-drop upload, file list with type icons, who can see each file, personal data masked per file, redacted and original downloads) |
 | **Monitoring** | **Reports** · **Audit log** · **Conversations** · **Usage and cost** |
 | **Account** (your name, top right) | Profile photo, department and groups, light/dark theme, accent colour, password |
 
@@ -177,7 +178,11 @@ The answer comes back with its sources (file, page, score). Webhooks for the cha
   one Entra tenant or one Workspace domain) only signs in people already under Users; email and password stay as a fallback.
 - **Chat API**: bearer token required; per-person rate limit; `/docs` only from the server itself.
 - **Document access** is applied inside the vector search, so restricted passages never reach the model.
-- **Personal data** is masked before it reaches the model, the conversation history or any log.
+- **Uploaded files** are encrypted with `APP_SECRET_KEY` before they are written (local disk or Azure Blob); they are
+  decrypted only into a private working folder while parsed, and `secretstore rotate` re-encrypts them.
+- **Personal data** is masked before it reaches the model, the search index, the conversation history or any log. Real
+  values sit in an encrypted vault behind per-knowledge-base tokens, revealed only to listed people (audited). Turning
+  PII protection off needs an Admin and a reason, is audited, and raises a warning until it is back on.
 - **Profile photos** accept PNG, JPEG or WebP only, checked by their bytes (SVG refused), up to 512 KB.
 - **Audit log**: every sign-in, configuration change, prompt version, document change, export and retention run.
 
@@ -189,13 +194,15 @@ The answer comes back with its sources (file, page, score). Webhooks for the cha
  Slack ──(Socket Mode)──┐
  Teams ──(HTTPS)────────┤      ┌──────────────────────── FastAPI server ────────────────────────┐
  Google Chat ─(HTTPS)───┼────► │ channel adapters ─► answering core                              │
- Web UI ──(chat API)────┘      │                      ├─ guardrails (input / output)             │
-                               │                      ├─ router + retrieval ─► vector store       │──► Chroma / pgvector / Azure AI Search
+ Web UI ──(chat API)────┘      │                      ├─ guardrails (input / output, PII masking)│
+                               │                      ├─ router + retrieval ─► PII filter ─► store│──► Chroma / pgvector / Azure AI Search
+                               │ documents ─► encrypted file store ─► masked indexing            │──► local disk / Azure Blob
  Admin center (/admin) ──────► │ admin API            ├─ prompts (base + department)             │
                                │ (roles, CSRF, audit) └─ LLM with fallback ─────────────────────│──► Anthropic / OpenAI / Azure OpenAI / Gemini / Grok / DeepSeek
                                │ scheduler: retention, store health, summaries                   │
                                └──────────────── SQLite or PostgreSQL (settings, people, prompts, │
-                                                  conversations, usage, audit, encrypted secrets) ┘
+                                                  conversations, usage, audit, encrypted secrets,
+                                                  personal-data vault)                            ┘
 ```
 
 ---
@@ -207,16 +214,18 @@ app/
   api.py              FastAPI app: chat API, channel webhooks, admin mounting
   chat_service.py     The answering core every channel calls
   rag.py, retriever.py, llm.py, memory.py, summaries.py, guardrails.py, prompts.py
+  pii.py              Personal-data engine: your own types, sensitive keywords, tokens and the encrypted vault
   channels/           Slack, Teams, Google Chat, Web UI adapters and the channel manager
   providers/          LLM provider adapters, approval and model settings
-  knowledge/          Knowledge bases, documents, chunkers, embeddings, vector store adapters, index versions, access
+  knowledge/          Knowledge bases, documents, chunkers, embeddings, vector store adapters, index versions, access,
+                      filestore.py (encrypted files), pii_filter.py (search-time check), pii_access.py (reveal, switch)
   admin/              Admin API routers, roles, sessions, CLI
   admin/ui/           The admin center (index.html, admin.js, admin.css; no build step, no framework)
   jobs/               Scheduled jobs (retention, store health)
   migrations/         Alembic migrations (upgrade automatically on start)
 webchat/             Optional Web UI (Chainlit): chat.py, backend.py, theme and logos
 tests/                Unit, API, security, migration and end-to-end scenario tests
-docs/                 Architecture, one-pager, BRD-vs-build
+docs/                 Architecture, one-pager, BRD-vs-build, phase plans (phase-12-plan.md: storage and personal data)
 ```
 
 ---
@@ -242,7 +251,8 @@ Tests marked `live` need a real Microsoft tenant or Google Workspace and are ski
   [DEPLOYMENT.md](DEPLOYMENT.md).
 - Run **one** server process: the scheduler and the per-person rate limit live in memory.
 - Containers (for example Azure Container Apps): one replica, always on, persistent storage for the database, uploaded files
-  and vectors (or PostgreSQL + pgvector / Azure AI Search), and `APP_SECRET_KEY` from a secret store such as Key Vault.
+  and vectors (or PostgreSQL + pgvector / Azure AI Search, and Azure Blob for files), and `APP_SECRET_KEY` from a secret
+  store such as Key Vault. Back the key up apart from the data: without it, stored files and personal data cannot be read.
 
 ---
 
@@ -252,7 +262,8 @@ Tests marked `live` need a real Microsoft tenant or Google Workspace and are ski
 |---|---|
 | [USER_MANUAL.md](USER_MANUAL.md) | Configuring everything: providers (Azure OpenAI and others), embeddings, vector stores, channels, people, prompts, guardrails, settings |
 | [RUNNING.md](RUNNING.md) | Set up, run, test, update, push |
-| [ADMIN.md](ADMIN.md) | The admin center in depth, master key rotation, security model |
+| [ADMIN.md](ADMIN.md) | The admin center in depth, master key rotation, stored files, security model |
+| [docs/phase-12-plan.md](docs/phase-12-plan.md) | File storage and personal-data protection: design, decisions and what is left (Excel and images) |
 | [DEPLOYMENT.md](DEPLOYMENT.md) | Exposing the agent safely: tunnel, TLS, reverse proxy |
 | [PLATFORM_RUNBOOK.md](PLATFORM_RUNBOOK.md), [TEAMS_SETUP.md](TEAMS_SETUP.md), [GCHAT_SETUP.md](GCHAT_SETUP.md) | Connecting Teams and Google Chat |
 | [PROGRESS.md](PROGRESS.md), [DECISIONS.md](DECISIONS.md), [ACCEPTANCE.md](ACCEPTANCE.md), [TRACEABILITY.md](TRACEABILITY.md) | What is built, why, and how it maps to the requirements |
