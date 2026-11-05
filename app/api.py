@@ -8,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-from app import catalog, suggestions, channels, chat_auth, chat_service, global_settings, guardrails, identity, language, memory, prompts, ratelimit, retention, summaries
+from app import catalog, feedback, suggestions, channels, chat_auth, chat_service, global_settings, guardrails, identity, language, memory, prompts, ratelimit, retention, summaries
 from app.knowledge import storehealth
 from app.channels import health as channel_health
 from app.jobs import scheduler
@@ -37,11 +37,22 @@ class ChatResponse(BaseModel):
     language: str = ""                # the language the answer is written in (D19)
     rejected: str | None = None       # "language" when the question's language is not accepted (D39)
     suggestions: list[dict] = []      # [{text, suggestion_id, payload}]; payload None = show as plain text (D26, D37)
+    feedback: dict | None = None      # {payload, answer_id, reasons, labels} when the answer can be rated (Release 3)
 
 
 class ActionRequest(BaseModel):
     conv_id: str
     payload: str
+
+
+class FeedbackRequest(BaseModel):
+    conv_id: str
+    payload: str = ""                 # a rating button's signed payload, or
+    answer_id: int | None = None      # the answer, when the Web UI's own thumbs are used (the caller is signed in)
+    rating: str
+    reason: str = ""
+    comment: str = ""
+    attachments: list[str] = []
 
 
 class ConversationSummary(BaseModel):
@@ -202,6 +213,7 @@ def _answer(request: MessageRequest, caller: Caller, suggestion: dict | None = N
             language=meta.get("language", ""),
             rejected=meta.get("rejected"),
             suggestions=meta.get("suggestions") or [],
+            feedback=meta.get("feedback"),
         )
     except Exception as e:
         if _refused_by_provider(e):
@@ -227,6 +239,45 @@ def chat_action(request: ActionRequest, caller: Caller = Depends(require_chat_ca
     if not suggestions.record_click(data):
         raise HTTPException(409, "Already asked.")
     return _answer(MessageRequest(message=data["t"], conv_id=request.conv_id), caller, data)
+
+
+@app.post("/chat/feedback")
+def chat_feedback(request: FeedbackRequest, caller: Caller = Depends(require_chat_caller)):
+    """A rating of an answer (D49, D50): the signed payload is checked (only the asker, not expired), then it is stored.
+    -> {message, state, form} where `form` asks for a reason and comment after a thumbs-down that came without them."""
+    conv = _conv(caller, request.conv_id)
+    lang = memory.last_language(conv)
+    asker = suggestions.asker_key(_asker(caller))
+    try:
+        if request.payload:
+            data = feedback.verify(request.payload, asker)
+        elif request.answer_id and caller.prefix:
+            data = feedback.authorize_answer(request.answer_id, conv, asker)
+        else:
+            raise suggestions.PayloadError("feedback_invalid")
+    except feedback.FeedbackOff:
+        return {"message": "", "state": "off", "form": None}
+    except suggestions.PayloadError as e:
+        raise HTTPException(403 if e.key == "feedback_not_yours" else 410 if e.key == "feedback_expired" else 400, catalog.t(e.key, lang))
+    who = identity.resolve(caller.email)
+    if not who.active:
+        raise HTTPException(403, catalog.t("denied", lang))
+    token = identity.bind(who)
+    try:
+        saved = feedback.capture(data, request.rating, request.reason, request.comment, request.attachments, who=who)
+    except ValueError:
+        raise HTTPException(400, catalog.t("feedback_invalid", lang))
+    except Exception:
+        log.error("could not store feedback", exc_info=True)
+        raise HTTPException(500, "Internal error")
+    finally:
+        identity.unbind(token)
+    detailed = bool(request.reason or request.comment)
+    form = None
+    if saved["intent"] != "positive" and request.rating == feedback.DOWN and not detailed:
+        form = {"payload": request.payload, "answer_id": data["a"], "reasons": feedback.reasons_offered(), "labels": feedback.labels(lang)} if request.payload else None
+    return {"message": catalog.t("feedback_updated" if detailed or not saved["created"] else "feedback_thanks", lang),
+            "state": saved["state"], "form": form}
 
 
 @app.get("/catalog/{lang}")

@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from functools import lru_cache
 from pathlib import Path
 
-from sqlalchemy import (JSON, Boolean, DateTime, Float, ForeignKey, Integer, LargeBinary, String, Text, UniqueConstraint,
+from sqlalchemy import (JSON, Boolean, DateTime, Float, ForeignKey, Index, Integer, LargeBinary, String, Text, UniqueConstraint,
                         create_engine, event, inspect)
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -408,6 +408,34 @@ class GlobalSettings(Base):
     suggestions_mode: Mapped[str] = mapped_column(String(12), default="same_call")  # same_call | second_call
     suggestions_max_searches: Mapped[int] = mapped_column(Integer, default=3)
     suggestions_payload_days: Mapped[int] = mapped_column(Integer, default=14)
+    feedback_enabled: Mapped[bool] = mapped_column(Boolean, default=False)         # Release 3, Phase 1: off by default
+    feedback_reasons: Mapped[list | None] = mapped_column(JSON, nullable=True)     # reason codes offered; empty = all five
+    feedback_comment_max_chars: Mapped[int] = mapped_column(Integer, default=1000)
+    feedback_payload_days: Mapped[int] = mapped_column(Integer, default=14)
+
+
+class Feedback(Base):
+    """A rating of one answer (Release 3, D49): one open record per rater and answer, updated while it is still being looked at.
+    The comment is the MASKED text, attachments are links only. Deleted with its conversation."""
+    __tablename__ = "feedbacks"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    answer_id: Mapped[int] = mapped_column(Integer, index=True)
+    conversation_id: Mapped[str] = mapped_column(String(200), index=True)
+    rater_key: Mapped[str] = mapped_column(String(32), default="")             # hash of who rated: only the asker may rate (D50)
+    user_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    kb_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    department_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    channel: Mapped[str] = mapped_column(String(16), default="other")
+    rating: Mapped[str] = mapped_column(String(4))                             # up | down
+    reason: Mapped[str] = mapped_column(String(24), default="")
+    comment: Mapped[str] = mapped_column(Text, default="")
+    attachments: Mapped[list] = mapped_column(JSON, default=list)              # links only, never content
+    intent: Mapped[str | None] = mapped_column(String(10), nullable=True)      # positive | negative; NULL until decided
+    intent_source: Mapped[str | None] = mapped_column(String(10), nullable=True)   # rating | comment | trace
+    state: Mapped[str] = mapped_column(String(20), default="captured", index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)
+    __table_args__ = (Index("ix_feedbacks_rater_answer", "rater_key", "answer_id"),)
 
 
 class JobLock(Base):

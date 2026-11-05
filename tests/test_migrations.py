@@ -11,9 +11,9 @@ from app.db import Database
 from app.secretstore import FernetSecretStore, generate_key
 from tests.conftest import TEST_DB
 
-HEAD = "0033"
+HEAD = "0034"
 TABLES = {"meta", "channels", "secrets", "users", "departments", "department_editors", "set_password_tokens", "knowledge_bases", "documents", "kb_index_versions", "groups", "group_members", "document_access", "kb_access", "prompts", "guardrail_settings", "guardrail_events", "conversations", "messages", "audit_log", "global_settings", "job_locks",
-          "alembic_version", "scoped_settings", "answer_traces", "message_catalog", "glossaries", "glossary_versions", "glossary_terms", "suggestions",
+          "alembic_version", "scoped_settings", "answer_traces", "message_catalog", "glossaries", "glossary_versions", "glossary_terms", "suggestions", "feedbacks",
           "llm_providers", "model_settings", "model_prices", "usage_records", "alerts", "pii_custom_types", "pii_vault", "pii_vault_refs", "kb_pii_viewers"}
 
 # The schema exactly as it was before migrations existed (captured from the live database).

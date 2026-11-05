@@ -40,6 +40,7 @@ REGISTRY = {k.name: k for k in (
     Key("summary_enabled", (KB,)),                    # D46
     Key("glossary_mode", (KB, DEPARTMENT)),           # D22
     Key("suggestions_enabled", (CHANNEL, KB, DEPARTMENT)),   # D26: on only when the channel and the knowledge base are both on
+    Key("feedback_enabled", (CHANNEL, KB, DEPARTMENT)),      # Release 3: same rule as suggestions
 )}
 RETRIEVAL_KEYS = ("retrieval_strategy", "hybrid_keyword_weight", "diversity", "top_k")
 

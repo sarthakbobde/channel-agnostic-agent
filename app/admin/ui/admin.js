@@ -350,6 +350,7 @@
     scoped: "M4 6h10M18 6h2M4 12h2M10 12h10M4 18h8M16 18h4M14 4v4M6 10v4M12 16v4",
     languages: "M12 3a9 9 0 100 18 9 9 0 000-18zM3 12h18M12 3c2.5 2.7 3.8 5.7 3.8 9s-1.3 6.3-3.8 9c-2.5-2.7-3.8-5.7-3.8-9S9.5 5.7 12 3z",
     conversations: "M8 10h8M8 14h5M21 12a9 9 0 0 1-13.3 7.9L3 21l1.1-4.7A9 9 0 1 1 21 12z",
+    feedback: "M7 11v9H4v-9h3zM7 11l4-8a2 2 0 0 1 2 2v4h6a2 2 0 0 1 2 2.3l-1.3 7a2 2 0 0 1-2 1.7H7",
     usage: "M4 20V10M10 20V4M16 20v-8M22 20H2",
     reports: "M14 3H6v18h12V7zM14 3v4h4M9 13h6M9 17h6",
     audit: "M12 7v5l3 2M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18z",
@@ -508,14 +509,14 @@
   var TABS = [["home", "Home"], ["channels", "Channels"], ["providers", "LLM providers"], ["kbconfig", "KB configuration", "knowledge"], ["settings", "RAG settings"], ["scoped", "Scoped settings"], ["languages", "Languages"], ["guardrails", "Guardrails"], ["signin", "Sign-in"],
               ["users", "Users"], ["groups", "Groups"], ["departments", "Departments"],
               ["prompts", "Prompts"], ["glossary", "Glossary"], ["kbdocs", "KB documents", "knowledge"],
-              ["reports", "Reports"], ["audit", "Audit log"], ["conversations", "Conversations"], ["usage", "Usage and cost"],
+              ["reports", "Reports"], ["audit", "Audit log"], ["conversations", "Conversations"], ["feedback", "Feedback"], ["usage", "Usage and cost"],
               ["account", "Account"]];
   // The side menu, in the order an admin works: configure the assistant, add people, give it content, then watch it run.
   var NAV_GROUPS = [["", ["home"]],
                     ["Settings", ["channels", "providers", "kbconfig", "settings", "scoped", "languages", "guardrails", "signin"]],
                     ["User management", ["users", "groups", "departments"]],
                     ["Input", ["prompts", "glossary", "kbdocs"]],
-                    ["Monitoring", ["reports", "audit", "conversations", "usage"]]];
+                    ["Monitoring", ["reports", "audit", "conversations", "feedback", "usage"]]];
   function tabLabel(k) { var t = TABS.filter(function (x) { return x[0] === k; })[0]; return t ? t[1] : k; }
   function canSee(k) {
     var t = TABS.filter(function (x) { return x[0] === k; })[0];
@@ -627,7 +628,7 @@
     mount(app);
     var view = { home: viewHome, channels: viewChannels, settings: viewSettings, scoped: viewScoped, languages: viewLanguages, providers: viewProviders,
       kbconfig: viewKnowledge, kbdocs: viewKbDocs,
-      groups: viewGroups, prompts: viewPrompts, glossary: viewGlossary, guardrails: viewGuardrails, conversations: viewConversations, usage: viewUsage, reports: viewReports,
+      groups: viewGroups, prompts: viewPrompts, glossary: viewGlossary, guardrails: viewGuardrails, conversations: viewConversations, feedback: viewFeedback, usage: viewUsage, reports: viewReports,
       departments: viewDepartments, users: viewUsers, audit: viewAudit, account: viewAccount, signin: viewSignin }[state.tab] || viewAccount;
     view(main);
     loadAlerts(main);
@@ -833,7 +834,8 @@
       ["Limits", "Caps on question length and on how fast one person can ask.", ["prompt_max_chars", "chat_rate_per_minute"]],
       ["Languages", "Answers are always written in the language of the question. Language codes are two letters, for example en or hi.", ["accepted_languages", "default_language", "document_languages", "language_confidence", "catalog_languages"]],
       ["Document summaries", "A short summary of each document, shown in KB documents. Display only: never used to answer.", ["summary_enabled", "summary_max_input_tokens"]],
-      ["Glossary", "Expand searches with the terms in Input > Glossary. Off by default.", ["glossary_mode", "glossary_max_terms", "glossary_max_aliases"]]
+      ["Glossary", "Expand searches with the terms in Input > Glossary. Off by default.", ["glossary_mode", "glossary_max_terms", "glossary_max_aliases"]],
+      ["Feedback", "Rating buttons under each answer. Switch them on or off for one channel, knowledge base or department under Scoped settings. Comments are masked before they are stored.", ["feedback_enabled", "feedback_reasons", "feedback_comment_max_chars", "feedback_payload_days"]]
     ];
 
     function show(data, notice) {
@@ -3461,6 +3463,108 @@
     main.appendChild(h("div", { class: "cols" }, retBox, exBox));
     loadRetention();
     loadExport();
+  }
+
+  // ---- feedback ----------------------------------------------------------------------
+  var REASON_NAMES = { data_mismatch: "Does not match the documents", data_not_found: "In the documents, not found", data_not_access: "Cannot see a document",
+                       experience: "Slow or hard to use", other: "Something else" };
+  var STATE_NAMES = { captured: "Captured", no_ticket: "No ticket needed", human_review: "Waiting for a person", ready_for_ticket: "Ready for a ticket", ticketed: "Ticket raised" };
+  async function viewFeedback(main) {
+    var isAdmin = state.perm && state.perm.can_manage_all;
+    pageHead(main, "Feedback", (isAdmin ? "Ratings people gave to answers, from every channel." : "Ratings on the answers of your departments' knowledge bases.")
+      + " Comments are masked before they are stored. Switch rating buttons on under RAG settings, then per channel or knowledge base under Scoped settings.");
+    var filters = h("div", { class: "filters" });
+    var rating = selectOf([["", "Any rating"], ["down", "Not helpful"], ["up", "Helpful"]], "", null, "Rating"); rating.id = "fb_rating";
+    var chan = selectOf([["", "All channels"], ["web", "Web UI"], ["slack", "Slack"], ["teams", "Teams"], ["gchat", "Google Chat"], ["other", "Other"]], "", null, "Channel"); chan.id = "fb_chan";
+    var stateSel = h("select", { id: "fb_state", "aria-label": "State" }, h("option", { value: "", text: "Any state" }));
+    var kbSel = h("select", { id: "fb_kb", "aria-label": "Knowledge base" }, h("option", { value: "", text: "All knowledge bases" }));
+    var reasonSel = h("select", { id: "fb_reason", "aria-label": "Reason" }, h("option", { value: "", text: "Any reason" }));
+    var dr = dateRange("fb", function () { page = 0; load(); }, false);
+    var summary = h("div", {});
+    var list = h("div", {});
+    var detail = h("div", {});
+    var page = 0, size = 25, filled = false;
+
+    function pct(n, total) { return total ? Math.round(100 * n / total) + "%" : "–"; }
+    function splitTable(title, first, rows, nameOf) {
+      if (!rows.length) return null;
+      return h("div", {}, h("h4", {}, title), h("div", { class: "tablewrap" }, h("table", {}, h("thead", {}, h("tr", {},
+        [first, "Helpful", "Not helpful", "Share helpful"].map(function (t) { return h("th", {}, t); }))),
+        h("tbody", {}, rows.map(function (x) {
+          return h("tr", {}, h("td", { "data-label": first }, nameOf(x.name)), h("td", { class: "nw", "data-label": "Helpful" }, String(x.up)),
+            h("td", { class: "nw", "data-label": "Not helpful" }, String(x.down)), h("td", { class: "nw", "data-label": "Share helpful" }, pct(x.up, x.total)));
+        })))));
+    }
+    async function loadReport() {
+      try {
+        var r = await api("GET", "/feedback/report?date_from=" + dr.from.value + "&date_to=" + dr.to.value);
+        summary.replaceChildren(panel("Overview", null, null,
+          h("div", { class: "meta" }, r.total + " ratings · " + r.up + " helpful · " + r.down + " not helpful" + (r.positive_share === null ? "" : " · " + Math.round(r.positive_share * 100) + "% helpful")),
+          r.total ? h("div", { class: "cols" },
+            splitTable("Ratings by channel", "Channel", r.by_channel, function (n) { return channelName(n); }),
+            splitTable("Ratings by knowledge base", "Knowledge base", r.by_kb, function (n) { return n; }),
+            r.by_reason.length ? h("div", {}, h("h4", {}, "Reasons for “not helpful”"), h("ul", {}, r.by_reason.map(function (x) {
+              return h("li", {}, (REASON_NAMES[x.name] || (x.name === "(none)" ? "No reason given" : x.name)) + ": " + x.count); }))) : null,
+            r.by_state.length ? h("div", {}, h("h4", {}, "Where they stand"), h("ul", {}, r.by_state.map(function (x) {
+              return h("li", {}, (STATE_NAMES[x.name] || x.name) + ": " + x.count); }))) : null)
+            : h("p", { class: "empty" }, "No ratings yet. Turn on “Let people rate answers” under RAG settings.")));
+      } catch (err) { if (me) summary.replaceChildren(msg("bad", err.message)); }
+    }
+    async function load() {
+      var q = "?limit=" + size + "&offset=" + (page * size) + "&rating=" + rating.value + "&channel=" + chan.value + "&state=" + stateSel.value + "&kb_id=" + (kbSel.value || 0)
+        + "&reason=" + reasonSel.value + "&date_from=" + dr.from.value + "&date_to=" + dr.to.value;
+      try {
+        var r = await api("GET", "/feedback" + q);
+        if (!filled) {
+          filled = true;
+          r.states.forEach(function (s) { stateSel.appendChild(h("option", { value: s, text: STATE_NAMES[s] || s })); });
+          r.knowledge_bases.forEach(function (k) { kbSel.appendChild(h("option", { value: String(k.id), text: k.name })); });
+          r.reasons.forEach(function (x) { reasonSel.appendChild(h("option", { value: x, text: REASON_NAMES[x] || x })); });
+        }
+        var body = h("tbody", {});
+        r.items.forEach(function (f) {
+          body.appendChild(h("tr", {},
+            h("td", { class: "nw", "data-label": "Rating" }, h("span", { class: "pill " + (f.rating === "up" ? "ok" : "bad") }, f.rating === "up" ? "Helpful" : "Not helpful")),
+            h("td", { class: "wrap", "data-label": "Reason and comment" }, h("b", {}, REASON_NAMES[f.reason] || f.reason || ""),
+              f.comment ? h("div", {}, f.comment) : null,
+              (f.attachments || []).length ? h("div", { class: "meta" }, "Links: " + f.attachments.join(", ")) : null),
+            h("td", { "data-label": "Channel" }, channelName(f.channel)),
+            h("td", { class: "wrap", "data-label": "Knowledge base" }, f.kb || "–", h("div", { class: "meta" }, f.person)),
+            h("td", { class: "nw", "data-label": "State" }, h("span", { class: "pill off" }, STATE_NAMES[f.state] || f.state)),
+            h("td", { class: "nw", "data-label": "When" }, when(f.created_at)),
+            h("td", { class: "act" }, h("button", { type: "button", class: "btn small", onclick: async function () {
+              detail.replaceChildren(msg("wait", "Loading…"));
+              try {
+                detail.replaceChildren(panel("Why this answer?", null,
+                  h("button", { type: "button", class: "btn small", onclick: function () { detail.replaceChildren(); } }, "Close"),
+                  traceView(await api("GET", "/traces/" + f.answer_id))));
+              } catch (err) { if (me) detail.replaceChildren(msg("bad", err.message)); }
+            } }, "Why this answer?"))));
+        });
+        var pages = Math.max(1, Math.ceil(r.total / size));
+        list.replaceChildren(
+          r.items.length ? h("div", { class: "tablewrap" }, h("table", {}, h("thead", {}, h("tr", {},
+            ["Rating", "Reason and comment", "Channel", "Knowledge base", "State", "When", ""].map(function (t) { return h("th", {}, t); }))), body))
+            : h("p", { class: "empty" }, "No feedback matches."),
+          h("div", { class: "pager" }, h("span", { class: "meta" }, "Page " + (page + 1) + " of " + pages + " · " + r.total + " ratings"),
+            h("div", { class: "actions" },
+              h("button", { type: "button", class: "btn", disabled: page === 0, onclick: function () { page--; load(); } }, "Previous"),
+              h("button", { type: "button", class: "btn", disabled: page + 1 >= pages, onclick: function () { page++; load(); } }, "Next"))));
+      } catch (err) { if (me) list.replaceChildren(msg("bad", err.message)); }
+    }
+    function apply() { page = 0; load(); loadReport(); }
+    filters.appendChild(h("div", { class: "field" }, fieldLabel("fb_rating", "Rating"), rating));
+    filters.appendChild(h("div", { class: "field" }, fieldLabel("fb_chan", "Channel"), chan));
+    filters.appendChild(h("div", { class: "field" }, fieldLabel("fb_kb", "Knowledge base"), kbSel));
+    filters.appendChild(h("div", { class: "field" }, fieldLabel("fb_state", "State"), stateSel));
+    filters.appendChild(h("div", { class: "field" }, fieldLabel("fb_reason", "Reason"), reasonSel));
+    main.appendChild(summary);
+    main.appendChild(h("section", { class: "panel filterbar" }, filters, h("div", { class: "filterrow" }, dr.el,
+      h("button", { type: "button", class: "btn primary", onclick: apply }, "Apply"))));
+    main.appendChild(detail);
+    main.appendChild(h("section", { class: "panel" }, list));
+    load();
+    loadReport();
   }
 
   // ---- usage and cost -------------------------------------------------------------------

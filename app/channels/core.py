@@ -1,7 +1,7 @@
 """The single entry point every adapter uses."""
 import logging
 import re
-from app import catalog, chat_service, global_settings, identity, ratelimit, suggestions
+from app import catalog, chat_service, feedback, global_settings, identity, ratelimit, suggestions
 from app.channels.base import Envelope
 
 log = logging.getLogger(__name__)
@@ -46,9 +46,39 @@ def handle(env: Envelope, suggestion: dict | None = None) -> dict:
         identity.unbind(token)
 
 
-def handle_action(env: Envelope, payload: str) -> dict:
+def handle_rating(env: Envelope, payload: str, rating: str, reason: str = "", comment: str = "", attachments=None) -> dict:
+    """A click on a rating button, or the details form that follows a thumbs-down (D49, D50). The answer text is the thanks.
+    `feedback_form` asks for the reason and comment after a thumbs-down that came without them."""
+    who = identity.resolve(env.email)
+    if not who.active:
+        return _reply("denied", env)
+    try:
+        data = feedback.verify(payload, suggestions.asker_key(asker_of(env)))
+    except suggestions.PayloadError as e:
+        return _reply(e.key, env)
+    lang = chat_service.reply_language(env.text, env.conv_id)
+    token = identity.bind(who)
+    try:
+        saved = feedback.capture(data, rating, reason, comment, attachments, who=who)
+    except ValueError:
+        return _reply("feedback_invalid", env)
+    except Exception:
+        log.exception("could not store feedback for %s", env.conv_id)
+        return _reply("error", env)
+    finally:
+        identity.unbind(token)
+    detailed = bool(reason or comment)
+    out = {**_reply("feedback_updated" if detailed or not saved["created"] else "feedback_thanks", env), "feedback": saved}
+    if saved["intent"] != "positive" and rating == feedback.DOWN and not detailed:
+        out["feedback_form"] = {"payload": payload, "answer_id": data["a"], "reasons": feedback.reasons_offered(), "labels": feedback.labels(lang)}
+    return out
+
+
+def handle_action(env: Envelope, payload: str, rating: str = "", reason: str = "", comment: str = "", attachments=None) -> dict:
     """A click on a suggestion button: verify the signed payload (D37), then ask it as an ordinary question in the same
-    conversation. A replay is ignored (`ignored: True`, nothing to send)."""
+    conversation. A replay is ignored (`ignored: True`, nothing to send). A rating payload goes to handle_rating()."""
+    if feedback.is_rating(payload):
+        return handle_rating(env, payload, rating, reason, comment, attachments)
     try:
         data = suggestions.verify(payload, suggestions.asker_key(asker_of(env)))
     except suggestions.PayloadError as e:
@@ -67,6 +97,12 @@ def sources_footer(result: dict) -> str:
 def suggestion_controls(result: dict) -> list[dict]:
     """The presenters' controls: [{type: suggestion_chip, text, payload}] (payload None = show as plain text)."""
     return [{"type": "suggestion_chip", "text": s["text"], "payload": s.get("payload")} for s in result.get("suggestions") or []]
+
+
+def rating_buttons(result: dict) -> dict | None:
+    """The presenters' rating control: {payload, labels, reasons} when the answer can be rated, else None."""
+    ctl = result.get("feedback")
+    return ctl if isinstance(ctl, dict) and ctl.get("payload") else None
 
 
 def suggestions_text(result: dict) -> str:

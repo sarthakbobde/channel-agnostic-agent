@@ -12,7 +12,7 @@ from fastapi.concurrency import run_in_threadpool
 from botbuilder.core import BotFrameworkAdapter, BotFrameworkAdapterSettings, TurnContext
 from botbuilder.schema import Activity, ActivityTypes, Attachment
 from app.channels.base import Adapter, ChannelPresenter, Envelope, Field
-from app.channels.core import handle, handle_action, sources_footer, suggestion_controls, suggestions_text
+from app.channels.core import handle, handle_action, rating_buttons, sources_footer, suggestion_controls, suggestions_text
 from app.identity import TTLCache, lookup_ok, lookup_problem
 
 log = logging.getLogger(__name__)
@@ -30,12 +30,30 @@ class TeamsPresenter(ChannelPresenter):
         plain = [c for c in chips if not c["payload"]]
         if plain:
             out += suggestions_text({**result, "suggestions": plain})
-        if not buttons:
+        rate = rating_buttons(result)
+        if not buttons and not rate:
             return out
-        card = {"type": "AdaptiveCard", "$schema": "http://adaptivecards.io/schemas/adaptive-card.json", "version": "1.4",
-                "body": [{"type": "TextBlock", "text": out, "wrap": True}],
-                "actions": [{"type": "Action.Submit", "title": c["text"][:100], "data": {"caa_action": c["payload"]}} for c in buttons]}
+        actions = [{"type": "Action.Submit", "title": c["text"][:100], "data": {"caa_action": c["payload"]}} for c in buttons]
+        if rate:
+            labels = rate["labels"]
+            actions += [{"type": "Action.Submit", "title": "\U0001F44D " + labels["up"], "data": {"caa_action": rate["payload"], "caa_rating": "up"}},
+                        {"type": "Action.Submit", "title": "\U0001F44E " + labels["down"], "data": {"caa_action": rate["payload"], "caa_rating": "down"}}]
+        return self.card(out, actions)
+
+    @staticmethod
+    def card(text: str, actions: list, extra: list | None = None) -> Activity:
+        body = [{"type": "TextBlock", "text": text, "wrap": True}] + (extra or [])
+        card = {"type": "AdaptiveCard", "$schema": "http://adaptivecards.io/schemas/adaptive-card.json", "version": "1.4", "body": body, "actions": actions}
         return Activity(type=ActivityTypes.message, attachments=[Attachment(content_type="application/vnd.microsoft.card.adaptive", content=card)])
+
+    def form(self, form: dict) -> Activity:
+        """After a thumbs-down: a card with the reason list and a comment box. Teams sends the inputs back with the submit."""
+        labels = form["labels"]
+        inputs = [{"type": "Input.ChoiceSet", "id": "reason", "style": "compact", "placeholder": labels["reason"],
+                   "choices": [{"title": labels["reason_labels"][r], "value": r} for r in form["reasons"]]},
+                  {"type": "Input.Text", "id": "comment", "isMultiline": True, "placeholder": labels["comment"]}]
+        return self.card(labels["reason"], [{"type": "Action.Submit", "title": labels["submit"],
+                                             "data": {"caa_action": form["payload"], "caa_rating": "down"}}], inputs)
 
 
 class TeamsAdapter(Adapter):
@@ -113,6 +131,7 @@ class TeamsAdapter(Adapter):
         if act.type != ActivityTypes.message:
             return
         payload = act.value.get("caa_action") if isinstance(act.value, dict) else None    # an Action.Submit: a value, no text
+        fields = {k: (act.value.get(a) or "") for k, a in (("rating", "caa_rating"), ("reason", "reason"), ("comment", "comment"))} if payload else {}
         if not act.text and not payload:
             return
         if act.text:
@@ -128,17 +147,20 @@ class TeamsAdapter(Adapter):
                        tuple(self.cfg.get("kb_ids") or ()), await self._email_for(ctx, sender))
         await ctx.send_activity(Activity(type=ActivityTypes.typing))
         ref = TurnContext.get_conversation_reference(act)
-        task = asyncio.create_task(self._answer(ref, env, payload))     # ack now, answer later
+        task = asyncio.create_task(self._answer(ref, env, payload, fields))     # ack now, answer later
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
 
-    async def _answer(self, ref, env: Envelope, payload: str | None = None) -> None:
-        result = await run_in_threadpool(handle_action, env, payload) if payload else await run_in_threadpool(handle, env)
+    async def _answer(self, ref, env: Envelope, payload: str | None = None, fields: dict | None = None) -> None:
+        result = (await run_in_threadpool(lambda: handle_action(env, payload, **{k: v for k, v in (fields or {}).items() if v})) if payload else await run_in_threadpool(handle, env))
         if result.get("ignored"):
             return
         out = self.presenter.render(result, self.show_sources)
+        form = result.get("feedback_form")
 
         async def send(ctx: TurnContext):
             await ctx.send_activity(out)
+            if form:
+                await ctx.send_activity(self.presenter.form(form))
 
         await self.bf.continue_conversation(ref, send, self.app_id)

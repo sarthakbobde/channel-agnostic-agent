@@ -47,7 +47,7 @@ ok(ed, ed.post(P + "/auth/set-password", json={"token": token, "password": "edit
 ok(ed, ed.post(P + "/auth/set-password", json={"token": token, "password": "editor password 2"}).status_code == 400, "link is single use")
 r = ed.post(P + "/auth/login", json={"email": "ed@sysfore.com", "password": "editor password 1"})
 eh = {"X-CSRF-Token": r.json()["csrf"]}
-ok(ed, ed.get(P + "/me/permissions").json()["screens"] == ["knowledge", "groups", "prompts", "glossary", "conversations", "scoped", "usage", "departments", "account"], "editor sees the Editor screens only (no channels, providers, users, audit, reports)")
+ok(ed, ed.get(P + "/me/permissions").json()["screens"] == ["knowledge", "groups", "prompts", "glossary", "conversations", "feedback", "scoped", "usage", "departments", "account"], "editor sees the Editor screens only (no channels, providers, users, audit, reports)")
 ds = ed.get(P + "/departments").json()["departments"]
 ok(ed, [d["name"] for d in ds] == ["HR"], "editor sees only own department")
 r = ed.put(f"{P}/departments/{hr}", json={"banned_topics": "salaries\n\nSalaries\nlayoffs", "retention_days": 45}, headers=eh)

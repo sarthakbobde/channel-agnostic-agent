@@ -260,10 +260,23 @@ class BackendDataLayer(BaseDataLayer):
             _owners[thread_id] = user_id
 
     async def upsert_feedback(self, feedback: Feedback) -> str:
-        # Kept in the service log for the UAT review until the API stores ratings. The comment itself is never logged:
-        # it is free text that may hold personal data.
+        """Chainlit's own thumbs (value 1 = up, 0 = down) and comment box: sent to the API, which stores them when rating is on for
+        this answer. The comment itself is never logged: it is free text that may hold personal data."""
         log.info("feedback %s on thread %s, message %s, %s", feedback.value, feedback.threadId, feedback.forId,
                  "with a comment" if feedback.comment else "no comment")
+        owner = _owners.get(feedback.threadId or "")
+        token = _tokens.get(owner or "")
+        answer_id = str(feedback.forId or "").removeprefix("msg-")
+        if token and answer_id.isdigit():
+            try:
+                async with _client() as c:
+                    r = await c.post("/chat/feedback", headers={"Authorization": f"Bearer {token}"},
+                                     json={"conv_id": feedback.threadId, "answer_id": int(answer_id), "rating": "up" if feedback.value else "down",
+                                           "comment": feedback.comment or ""})
+                if r.status_code >= 400:
+                    log.warning("the API did not take the feedback (HTTP %s)", r.status_code)
+            except httpx.HTTPError as e:
+                log.warning("feedback request failed: %s", type(e).__name__)
         return feedback.id or str(uuid.uuid4())
 
     async def delete_feedback(self, feedback_id: str) -> bool:

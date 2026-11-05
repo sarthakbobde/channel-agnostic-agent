@@ -10,7 +10,7 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import delete, func, select
 
 from app import global_settings
-from app.db import AnswerTrace, Conversation, Database, Department, Message, Suggestion, get_db
+from app.db import AnswerTrace, Conversation, Database, Department, Feedback, Message, Suggestion, get_db
 
 log = logging.getLogger(__name__)
 ACTOR = "system (retention job)"
@@ -64,6 +64,7 @@ def run(db: Database | None = None, actor: str = ACTOR, now: datetime | None = N
                 chunk = ids[i:i + 500]
                 s.execute(delete(AnswerTrace).where(AnswerTrace.conversation_id.in_(chunk)))
                 s.execute(delete(Suggestion).where(Suggestion.conversation_id.in_(chunk)))
+                s.execute(delete(Feedback).where(Feedback.conversation_id.in_(chunk)))
                 messages += s.execute(delete(Message).where(Message.conversation_id.in_(chunk))).rowcount or 0
                 s.execute(delete(Conversation).where(Conversation.id.in_(chunk)))
         per_dept[name] = len(ids)

@@ -18,6 +18,7 @@ to change one you type a new value, and leaving the box empty keeps the stored o
 | Add people, departments, roles | **User management → Users**, **Departments** | 7 |
 | Change the assistant's instructions, safety checks | **Input → Prompts**, **Settings → Guardrails** | 8 |
 | Tune search, retention, the question limit | **Settings → RAG settings** | 9 |
+| Let people rate answers, see the ratings | **RAG settings → Feedback**, **Monitoring → Feedback** | 10b |
 | Get alerts by webhook or email | **RAG settings → Alert notifications** | 10 |
 | Your photo, theme (light or dark), accent colour, password | **Account** (your name, top right) | 1 |
 | Server addresses, ports, database | the `.env` file | 11 |
@@ -435,6 +436,30 @@ To also receive each **new** alert elsewhere: **RAG settings → Alert notificat
 Use **Send a test** to check. A failing notification never stops the banner.
 
 ---
+
+## 10b. Feedback on answers
+
+People can rate each answer with a thumbs-up or thumbs-down, and say what went wrong. This is **off by default**.
+
+**Switch it on**
+1. **RAG settings → Feedback → Let people rate answers**: on. (This is the global default.)
+2. To limit it to one channel, knowledge base or department, use **Scoped settings** (the key is *Let people rate answers*). Rating buttons appear only when the channel **and** one of the knowledge bases asked are on.
+3. Optional on the same screen: which reasons are offered, how long a comment may be (default 1000 characters) and for how many days the buttons keep working (default 14).
+
+**What people see**
+| Channel | Thumbs | After a thumbs-down |
+|---|---|---|
+| Web UI | The page's own thumbs and comment box | A comment (no reason list) |
+| Slack | Two buttons under the answer | A form with a reason list and a comment box |
+| Teams | Two buttons on a card | A second card with a reason list and a comment box |
+| Google Chat | Two buttons on a card | A card with a reason list and a comment box |
+
+Only the person who asked a question can rate its answer. A second click, or a reason or comment added afterwards, updates the same rating. A thumbs-up with no comment needs no follow-up. A thumbs-down, or any rating with a comment, is kept as **Captured** until the processing added in a later phase looks at it.
+
+**Privacy.** Comments are masked like questions (see Guardrails → Mask personal data) before they are stored; web links can be attached but are kept as links only. Ratings are deleted together with their conversation. Get the privacy sign-off before switching this on.
+
+**Look at the ratings.** **Monitoring → Feedback** lists ratings with filters (rating, channel, knowledge base, state, reason, dates) and shows a short report by channel, knowledge base and reason. *Why this answer?* opens the answer's trace. Admins see everything; an Editor sees the knowledge bases of their own departments. Viewers have no access.
+
 
 ## 11. Server settings: the `.env` file
 

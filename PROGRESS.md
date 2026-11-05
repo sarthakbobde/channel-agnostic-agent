@@ -885,6 +885,47 @@ The results are in `DECISIONS.md` ("Re-check on the real Sysfore HR policies").
 - **Repeat check:** the suggestion repeat cut-off is now 0.95 on UAT.
 - **HR review still needed:** the 35 English and 35 Hindi questions are in `../eval/questions.csv`, outside the repository. HR should review them, especially the Hindi wording.
 
+## 28. Release 3, Phase 1: feedback capture and rating controls (2026-11-05)
+
+This follows `docs/development-plan-v5-release-3-feedback-ticketing.md`, on branch `r3/phase-1-feedback-capture`, built on the latest `main` (which holds Release 2 and the file storage and personal-data work). Deviations are marked R3-1 in `DECISIONS.md`; decisions D48 to D60 are added there as Proposed.
+
+- **Data (migration 0034).**
+  - `feedbacks`: the rating (up or down), the reason, the masked comment, attachment links, the intent (set to positive at once for a thumbs-up with no comment), the state, the channel, the knowledge base, the rater's hash and the answer and conversation ids.
+  - Global Settings gain `feedback_enabled` (off), `feedback_reasons`, `feedback_comment_max_chars` (1000) and `feedback_payload_days` (14).
+  - Plain index on rater and answer, not a unique key: see R3-1.
+- **Settings.**
+  - One scoped key, `feedback_enabled` (channel, knowledge base, department). Rating is on only when the channel and a knowledge base asked are both on, the same rule as suggestions.
+  - RAG settings has a Feedback section. Everything is off until an Admin turns it on.
+- **Capture (`app/feedback.py`).**
+  - A signed payload per answer (HMAC with the suggestion buttons' keys, bound to the asker, with an expiry). Only the asker can rate. A tampered, forged or expired payload is refused, and a suggestion button does not pass as a rating button.
+  - One open record per rater and answer, updated while its state is captured, no_ticket or human_review. A rating after `ticketed` makes a new record. A person's review is never undone by a later click.
+  - A thumbs-up with no comment ends as `no_ticket`; everything else stays `captured`.
+  - The comment is cut to the limit and masked by the existing masking step. Attachments are kept as links only (http or https, at most 5), never downloaded.
+  - A failing write gives the apology text and never affects the answer already delivered.
+  - The records are deleted with their conversation, by hand or by the retention job.
+- **Controls per channel (all through `core.handle_action`).**
+  - **Web UI:** Chainlit's own thumbs and comment box now reach `POST /chat/feedback` by answer id. The answer must belong to the caller's conversation. A normal answer also carries the signed controls for other clients.
+  - **Slack:** thumbs under the answer; a thumbs-down also opens a modal with a reason list and a comment box. The thanks is an ephemeral message.
+  - **Teams:** thumbs on the card; a thumbs-down sends a second card with a reason list and a comment box.
+  - **Google Chat:** thumbs on a card; a thumbs-down returns a card with a dropdown and a text box, read from `formInputs` in both event formats.
+- **Messages.** 16 new catalogue keys (button labels, the five reasons, thanks, three refusals), English, with Hindi as Drafts.
+- **Admin.** Monitoring → Feedback: a list with filters (rating, channel, knowledge base, state, reason, dates) and a report by channel, knowledge base, reason and state. "Why this answer?" opens the trace. An Editor sees only their own departments' knowledge bases; a Viewer has no panel. The Feedback screen is in the Admin and Editor screen lists and `/admin/api/feedback` in the Editor routes (pinned lists updated on purpose).
+- **Tests.**
+  - `tests/test_feedback_capture.py` has 31 tests: the controls and their settings, every state rule, masking, links, the limit, the reasons list, forged and expired payloads, the core entry point, a failing write, a deactivated person, the Web API (payload and answer id, other person, wrong conversation, switched off), the three presenters and the Google Chat click parsing, the admin API by role, and deletion with the conversation.
+  - Updated on purpose: the migration head and tables, the Global Settings fields and the Editor routes and screens.
+  - Fixed while getting the suite green (test-only): two tests that left the shared database or document folder in a state other tests did not expect (guardrail switches after the multilingual tests; the key command-line test now has its own document folder).
+- **Results.** **SQLite:** the first full run gave 611 passed, 15 skipped and 4 failed; all four were fixed (see Tests) and the full suite was re-run. The re-run's result is recorded below once it finishes. **PostgreSQL:** not run, Docker Desktop is not running.
+- **Spike (D50, Phase 1 task 1).** Written up in `DECISIONS.md` ("Release 3, Phase 1 spike"). Decided from the platforms' documented behaviour; nothing was tried live.
+- **Not done and not tried.**
+  - **PostgreSQL:** not run, Docker Desktop is not running.
+  - **Live chat apps:** Slack (Interactivity on, modal), Teams (card inputs in the test tenant) and Google Chat (card clicks, form inputs) were checked only on the payloads they would send and receive. The Web UI was not opened with a real Chainlit session; its data-layer call and the API are tested.
+  - **Web UI reason list:** the Web UI collects a rating and a comment, not a reason (R3-1).
+- **Still needed from people.**
+  - The privacy sign-off for storing comments and attachment links, and how long ticket evidence may outlive its conversation (D49, D55).
+  - Slack: Interactivity on (Release 2) and a reinstall. Teams: confirm the rating card needs no new approval. Google Chat: card clicks and form inputs on in the Chat app.
+  - Confirm the five reason codes (D50) and the full fields of your `feedbacks`, `ticket_types` and `ticket_groups` (open question 3 in the plan).
+- **Questions the plan raised while building** (see the notes in the review): the unique key against "a rating after ticketed is a new record" (handled, R3-1); retention deleting the trace and conversation of an item still waiting in `human_review`; the shared agent runtime being first needed in Phase 2 but scheduled in Phase 3; tickets left `assigned` when the agent is switched off; the sweeper against a run still in progress; shadow mode against the claim step; and ticket events being both "never deleted" and deleted by retention. They are for you to settle before Phases 2 to 4.
+
 ## How to run
 
 ```powershell

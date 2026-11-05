@@ -18,7 +18,7 @@ from fastapi.concurrency import run_in_threadpool
 from google.auth.transport import requests as g_requests
 from google.oauth2 import id_token
 from app.channels.base import Adapter, ChannelPresenter, Envelope, Field
-from app.channels.core import handle, handle_action, sources_footer, suggestion_controls, suggestions_text, to_mrkdwn
+from app.channels.core import handle, handle_action, rating_buttons, sources_footer, suggestion_controls, suggestions_text, to_mrkdwn
 
 log = logging.getLogger(__name__)
 CHAT_ISSUER = "chat@system.gserviceaccount.com"
@@ -29,6 +29,9 @@ TIMEOUT_REPLY = "That took too long. Please try again, or ask a shorter question
 
 
 FUNCTION = "caa_suggest"
+RATE = "caa_rate"              # a thumbs-up or thumbs-down
+RATE_FORM = "caa_rate_form"    # the reason and comment after a thumbs-down
+FUNCTIONS = (FUNCTION, RATE, RATE_FORM)
 
 
 class GChatPresenter(ChannelPresenter):
@@ -49,7 +52,29 @@ class GChatPresenter(ChannelPresenter):
         cards = [{"cardId": "caa-suggestions", "card": {"sections": [{"widgets": [{"buttonList": {"buttons": [
             {"text": c["text"][:100], "onClick": {"action": {"function": FUNCTION, "parameters": [{"key": "payload", "value": c["payload"]}]}}}
             for c in buttons]}}]}]}}] if buttons else []
+        rate = rating_buttons(result)
+        if rate:
+            labels = rate["labels"]
+            cards.append({"cardId": "caa-rating", "card": {"sections": [{"header": labels["prompt"], "widgets": [{"buttonList": {"buttons": [
+                {"text": "\U0001F44D " + labels["up"], "onClick": {"action": {"function": RATE, "parameters": [
+                    {"key": "payload", "value": rate["payload"]}, {"key": "rating", "value": "up"}]}}},
+                {"text": "\U0001F44E " + labels["down"], "onClick": {"action": {"function": RATE, "parameters": [
+                    {"key": "payload", "value": rate["payload"]}, {"key": "rating", "value": "down"}]}}}]}}]}]}})
+        form = result.get("feedback_form")
+        if form:
+            cards.append(self.form_card(form))
         return out, cards
+
+    @staticmethod
+    def form_card(form: dict) -> dict:
+        """After a thumbs-down: a card with a reason dropdown and a comment box. Google sends the inputs back with the button click."""
+        labels = form["labels"]
+        return {"cardId": "caa-rating-form", "card": {"sections": [{"header": labels["reason"], "widgets": [
+            {"selectionInput": {"name": "reason", "label": labels["reason"], "type": "DROPDOWN",
+                                "items": [{"text": labels["reason_labels"][r], "value": r, "selected": False} for r in form["reasons"]]}},
+            {"textInput": {"name": "comment", "label": labels["comment"], "type": "MULTIPLE_LINE"}},
+            {"buttonList": {"buttons": [{"text": labels["submit"], "onClick": {"action": {"function": RATE_FORM, "parameters": [
+                {"key": "payload", "value": form["payload"]}, {"key": "rating", "value": "down"}]}}}]}}]}]}}
 
 
 class GChatAdapter(Adapter):
@@ -105,16 +130,34 @@ class GChatAdapter(Adapter):
                 raise PermissionError("unexpected service account")
 
     # ---- event parsing / response -----------------------------------------
-    @staticmethod
-    def click_payload(body: dict) -> str | None:
+    @classmethod
+    def click_payload(cls, body: dict) -> str | None:
         """The signed payload of a suggestion button click, in either event format; None for anything else."""
+        return cls._click(body)[1].get("payload")
+
+    @staticmethod
+    def _click(body: dict) -> tuple[str | None, dict]:
+        """(function, parameters) of a button click in either event format; (None, {}) for anything else."""
         common = body.get("commonEventObject") or {}
-        if common.get("invokedFunction") == FUNCTION:                         # add-on shape
-            return (common.get("parameters") or {}).get("payload")
+        if common.get("invokedFunction") in FUNCTIONS:                        # add-on shape
+            return common["invokedFunction"], dict(common.get("parameters") or {})
         action = body.get("action") or {}
-        if body.get("type") == "CARD_CLICKED" and action.get("actionMethodName") == FUNCTION:   # classic shape
-            return next((p.get("value") for p in action.get("parameters") or [] if p.get("key") == "payload"), None)
-        return None
+        if body.get("type") == "CARD_CLICKED" and action.get("actionMethodName") in FUNCTIONS:   # classic shape
+            return action["actionMethodName"], {p.get("key"): p.get("value") for p in action.get("parameters") or []}
+        return None, {}
+
+    @classmethod
+    def click_fields(cls, body: dict) -> dict:
+        """What a rating click carries: the rating, and for the form the reason and comment typed into it."""
+        function, params = cls._click(body)
+        if function not in (RATE, RATE_FORM):
+            return {}
+        out = {"rating": params.get("rating", "")}
+        inputs = ((body.get("commonEventObject") or {}).get("formInputs") or (body.get("common") or {}).get("formInputs") or {}) if function == RATE_FORM else {}
+        for name in ("reason", "comment"):
+            values = ((inputs.get(name) or {}).get("stringInputs") or {}).get("value") or []
+            out[name] = values[0] if values else ""
+        return out
 
     @classmethod
     def _parse(cls, body: dict):
@@ -173,7 +216,7 @@ class GChatAdapter(Adapter):
         env = Envelope("gchat", "g", space, thread or space, user, text, tuple(self.cfg.get("kb_ids") or ()), sender.get("email", ""))
         try:
             if kind == "click":
-                result = await asyncio.wait_for(run_in_threadpool(handle_action, env, self.click_payload(body)), TIMEOUT_S)
+                result = await asyncio.wait_for(run_in_threadpool(lambda: handle_action(env, self.click_payload(body), **self.click_fields(body))), TIMEOUT_S)
                 if result.get("ignored"):
                     return {}
             else:

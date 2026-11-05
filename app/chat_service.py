@@ -3,7 +3,7 @@ import logging
 import re
 from typing import Iterator
 from langchain_core.messages import HumanMessage, SystemMessage
-from app import (catalog, global_settings, guardrails, identity, language, memory, pii, rag, scoped_settings, suggestions,
+from app import (catalog, feedback, global_settings, guardrails, identity, language, memory, pii, rag, scoped_settings, suggestions,
                  summaries, trace, usage)
 from app.knowledge import pii_access
 from app.llm import get_chat_model
@@ -146,6 +146,7 @@ def chat_stream(message: str, conv_id: str | None, kb_ids=None, preview: bool = 
         if len(kept) != len(targets):                          # a knowledge base that does not accept it is not searched
             kb_ids = [kb["id"] for kb in kept]
     offer = not preview and suggestions.enabled(conv_id, kept)        # D26: off unless the channel and a KB are on
+    rate = not preview and feedback.enabled(conv_id, kept)             # Release 3: same rule for the rating buttons
     g = global_settings.current()
     wanted = g.suggestions_requested if offer else 0
     inline = wanted if g.suggestions_mode == "same_call" else 0
@@ -179,7 +180,7 @@ def chat_stream(message: str, conv_id: str | None, kb_ids=None, preview: bool = 
             trace.save(rec, turn, complete=False, found=False, searched=False)
         raise
 
-    meta = {"searched": decision["search"], "query": decision["query"], "sources": sources, "language": ctx.resolved, "suggestions": []}
+    meta = {"searched": decision["search"], "query": decision["query"], "sources": sources, "language": ctx.resolved, "suggestions": [], "feedback": None}
     if turn:
         meta["question_id"] = turn.question_id
     asking = inline if decision["search"] else 0
@@ -258,10 +259,15 @@ def chat_stream(message: str, conv_id: str | None, kb_ids=None, preview: bool = 
                 except Exception as e:
                     log.warning("suggestion checks failed (%s); the answer is shown alone", type(e).__name__)
             if turn:
-                memory.finish_turn(turn, final, {k: v for k, v in meta.items() if k not in ("answer_id", "suggestions", "question_id")})   # saved before it is handed over
+                memory.finish_turn(turn, final, {k: v for k, v in meta.items() if k not in ("answer_id", "suggestions", "question_id", "feedback")})   # saved before it is handed over
                 trace.save(rec, turn, complete=True, found=found, searched=decision["search"])
                 if rows:
                     meta["suggestions"] = suggestions.controls(answer_id, rows, suggestions.store(turn, rows, asker_key), asker_key)
+                if rate:
+                    try:
+                        meta["feedback"] = feedback.controls(answer_id, asker_key, ctx.resolved)
+                    except Exception:
+                        log.warning("could not prepare the rating buttons; the answer is shown without them", exc_info=True)
                 summaries.schedule(conv_id, identity.current().department)
             # tokens stay stored; each person sees the real values they may (12d). Unchecked answers show plain labels.
             ids = [k["id"] for k in kept] if targets else []

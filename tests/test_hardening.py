@@ -123,7 +123,7 @@ def test_the_key_command_line(tmp_path):
     db = Database(path)
     make_secrets(db, secretstore.FernetSecretStore(old), 2)
     db.engine.dispose()
-    env = {**os.environ, "ADMIN_DB_PATH": str(path), "DATABASE_URL": "", "APP_SECRET_KEY": f"{new},{old}"}
+    env = {**os.environ, "ADMIN_DB_PATH": str(path), "DATABASE_URL": "", "DOCS_DIR": str(tmp_path / "files"), "APP_SECRET_KEY": f"{new},{old}"}
 
     def run(*a):
         return subprocess.run([sys.executable, "-m", "app.secretstore", *a], capture_output=True, text=True, env=env, timeout=120)

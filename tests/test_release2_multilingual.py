@@ -73,6 +73,7 @@ def world():
     catalog.seed(db)
     global_settings.update({"summary_enabled": True}, "t", db)          # off by default; these tests are about summaries
     w = types.SimpleNamespace(db=db)
+    w.guard0 = {k: getattr(guardrails.current(db), k) for k in ("enabled", "mask_enabled")}       # put back afterwards: the database is shared by every test module
     with db.session() as s:
         s.add(Department(name="MlHR", retention_days=30, banned_topics="", is_default=False))
         s.add(Department(name="MlIT", retention_days=30, banned_topics="", is_default=False))
@@ -100,6 +101,8 @@ def world():
     w.doc_hi = upload(w.kb_hi, "avkash-niti.txt", HINDI_DOC)
     w.doc_it = upload(w.kb_it, "it-notes.txt", "The laptop refresh cycle is three years for every employee.")
     yield w
+    guardrails.update(w.guard0, "t", db)
+    guardrails.invalidate()
     documents.shutdown()
     doc_summary.shutdown()
 
