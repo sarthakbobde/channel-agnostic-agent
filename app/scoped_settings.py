@@ -41,6 +41,9 @@ REGISTRY = {k.name: k for k in (
     Key("glossary_mode", (KB, DEPARTMENT)),           # D22
     Key("suggestions_enabled", (CHANNEL, KB, DEPARTMENT)),   # D26: on only when the channel and the knowledge base are both on
     Key("feedback_enabled", (CHANNEL, KB, DEPARTMENT)),      # Release 3: same rule as suggestions
+    Key("ticket_assignment", (KB, DEPARTMENT)),              # Release 3: who receives new tickets (D58, Phase 2)
+    Key("ticket_alert_channels", (DEPARTMENT,)),
+    Key("ticket_alert_events", (DEPARTMENT,)),
 )}
 RETRIEVAL_KEYS = ("retrieval_strategy", "hybrid_keyword_weight", "diversity", "top_k")
 

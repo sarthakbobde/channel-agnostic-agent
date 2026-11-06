@@ -6,6 +6,7 @@ reaches every reader within seconds, with no restart. If the database cannot be 
 values are used and a warning is logged, so answering never stops because of this table.
 """
 import logging
+import re
 import threading
 import time
 from dataclasses import asdict, dataclass
@@ -56,12 +57,23 @@ class Snapshot:
     feedback_comment_max_chars: int = 1000
     feedback_payload_days: int = 14
     feedback_masking: str = "always"
+    admin_agent_mode: str = "off"
+    ticket_assignment: str = "department"
+    ticket_related_window_days: int = 0
+    ticket_retention_days: int = 0
+    ticket_alert_channels: tuple = ("admin_screen",)
+    ticket_alert_events: tuple = ("assigned", "approval", "queue_released")
 
 
+AGENT_MODES = {"off": "Off", "live": "Live"}
+ALERT_CHANNELS = {"admin_screen": "Admin screen", "email": "Email"}
+ALERT_EVENTS = {"assigned": "A ticket is assigned to a person or group", "approval": "A proposal is waiting for approval",
+                "evidence_added": "New evidence is added to an open ticket", "queue_released": "The agent's queue is released to people"}
+LIST_CHOICES = {"ticket_alert_channels": ALERT_CHANNELS, "ticket_alert_events": ALERT_EVENTS}
 FEEDBACK_MASKING = {"always": "Always (recommended)", "follow_switch": "Only while personal-data masking is on"}
 SUGGESTION_MODES = {"same_call": "In the same AI call as the answer", "second_call": "In a second AI call (for models that cannot follow the format)"}
 GLOSSARY_MODES = {"off": "Off", "query": "Expand questions (recommended)", "index": "Also add stable terms to passages when indexing"}
-LIST_FIELDS = ("accepted_languages", "document_languages", "catalog_languages")
+LIST_FIELDS = ("accepted_languages", "document_languages", "catalog_languages", "ticket_alert_channels", "ticket_alert_events")
 
 STRATEGIES = {
     "similarity": "Similarity (meaning)",
@@ -143,6 +155,18 @@ SPEC = (
      "help": "After this, the rating buttons of an old answer stop working. Default 14."},
     {"name": "feedback_masking", "label": "Feedback: when comments are masked", "kind": "choice", "choices": list(FEEDBACK_MASKING), "choice_labels": FEEDBACK_MASKING,
      "help": "Comments, and later the summaries and ticket evidence, are read by more people and kept longer than conversations, so they are masked even when question masking is off. Choose the second option only if comments must follow the question-masking switch. Default always."},
+    {"name": "admin_agent_mode", "label": "Autonomous admin agent", "kind": "choice", "choices": list(AGENT_MODES), "choice_labels": AGENT_MODES,
+     "help": "Off by default. Live lets tickets go to the agent's queue (the agent itself is added in a later phase). While it is off, a ticket that a rule would send to the agent goes to the person or group instead. Switching from Live to Off releases every ticket still waiting in the agent's queue to people."},
+    {"name": "ticket_assignment", "label": "Who receives new tickets", "kind": "text",
+     "help": "department (the default: the department's Editors and Admins see it and take it), autonomous (the agent's queue, only while the agent is Live), user:<id> or group:<id>. Set it per knowledge base or department under Scoped settings."},
+    {"name": "ticket_related_window_days", "label": "Related tickets: look back (days)", "min": 0, "max": 3650, "step": 1, "integer": True,
+     "help": "A new ticket is linked to an earlier closed ticket for the same person, knowledge base and document if that one was closed within this many days. 0 means no limit. Default 0."},
+    {"name": "ticket_retention_days", "label": "Tickets: keep closed tickets for (days)", "min": 0, "max": 3650, "step": 1, "integer": True,
+     "help": "Closed tickets older than this are retired together with their events (hidden from screens and reports); open tickets never are. 0 keeps them for ever. Default 0."},
+    {"name": "ticket_alert_channels", "label": "Ticket alerts: where they go", "kind": "list",
+     "help": "Comma-separated: admin_screen, email. An alert holds the ticket number and a link, never the evidence. Default admin_screen."},
+    {"name": "ticket_alert_events", "label": "Ticket alerts: which events", "kind": "list",
+     "help": "Comma-separated: assigned, approval, evidence_added, queue_released. Default assigned, approval, queue_released."},
 )
 _BY_NAME = {f["name"]: f for f in SPEC}
 
@@ -162,7 +186,9 @@ def defaults() -> Snapshot:
                     summary_enabled=False, summary_max_input_tokens=6000, glossary_mode="off", glossary_max_terms=5, glossary_max_aliases=3,
                     suggestions_enabled=False, suggestions_requested=3, suggestions_shown=2, suggestions_dedup_threshold=0.9,
                     suggestions_mode="same_call", suggestions_max_searches=3, suggestions_payload_days=14,
-                    feedback_enabled=False, feedback_comment_max_chars=1000, feedback_payload_days=14, feedback_masking="always")
+                    feedback_enabled=False, feedback_comment_max_chars=1000, feedback_payload_days=14, feedback_masking="always",
+                    admin_agent_mode="off", ticket_assignment="department", ticket_related_window_days=0, ticket_retention_days=0,
+                    ticket_alert_channels=("admin_screen",), ticket_alert_events=("assigned", "approval", "queue_released"))
 
 
 def _snapshot(row: GlobalSettings) -> Snapshot:
@@ -177,7 +203,9 @@ def _snapshot(row: GlobalSettings) -> Snapshot:
                     row.suggestions_dedup_threshold or 0.9, row.suggestions_mode or "same_call", row.suggestions_max_searches or 3,
                     row.suggestions_payload_days or 14,
                     bool(row.feedback_enabled), row.feedback_comment_max_chars or 1000, row.feedback_payload_days or 14,
-                    row.feedback_masking or "always")
+                    row.feedback_masking or "always", row.admin_agent_mode or "off", row.ticket_assignment or "department",
+                    row.ticket_related_window_days or 0, row.ticket_retention_days or 0,
+                    tuple(row.ticket_alert_channels or ("admin_screen",)), tuple(row.ticket_alert_events if row.ticket_alert_events is not None else ("assigned", "approval", "queue_released")))
 
 
 def _read(db: Database) -> tuple[Snapshot, GlobalSettings]:
@@ -214,6 +242,16 @@ def _languages(f: dict, raw, check_catalog: bool = True) -> list[str]:
             raise ValueError("These languages cannot be accepted yet, because not all their system messages are approved "
                              "(Message catalogue): " + ", ".join(missing) + ".")
     return codes
+
+
+def _choices(f: dict, raw, allowed: dict) -> list[str]:
+    if not isinstance(raw, (list, tuple)) or not all(isinstance(x, str) for x in raw):
+        raise ValueError(f"{f['label']} must be a list.")
+    items = list(dict.fromkeys(x.strip().lower() for x in raw if x.strip()))
+    bad = [c for c in items if c not in allowed]
+    if bad:
+        raise ValueError(f"{f['label']}: not an option: " + ", ".join(bad) + ". Choose from: " + ", ".join(allowed) + ".")
+    return items
 
 
 def invalidate() -> None:
@@ -261,7 +299,13 @@ def validate(values: dict, base: Snapshot, check_catalog: bool = True) -> dict:
             clean[name] = raw
             continue
         if f.get("kind") == "list":
-            clean[name] = tuple(_languages(f, raw, check_catalog))
+            clean[name] = tuple(_choices(f, raw, LIST_CHOICES[name]) if name in LIST_CHOICES else _languages(f, raw, check_catalog))
+            continue
+        if name == "ticket_assignment":
+            value = raw.strip().lower() if isinstance(raw, str) else raw
+            if not (value in ("department", "autonomous") or (isinstance(value, str) and re.fullmatch(r"(user|group):[1-9][0-9]{0,9}", value))):
+                raise ValueError(f"{f['label']} must be department, autonomous, user:<number> or group:<number>.")
+            clean[name] = value
             continue
         if f.get("kind") == "text":
             from app import language

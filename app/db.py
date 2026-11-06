@@ -413,6 +413,12 @@ class GlobalSettings(Base):
     feedback_comment_max_chars: Mapped[int] = mapped_column(Integer, default=1000)
     feedback_payload_days: Mapped[int] = mapped_column(Integer, default=14)
     feedback_masking: Mapped[str] = mapped_column(String(16), default="always")   # always | follow_switch (D61)
+    admin_agent_mode: Mapped[str] = mapped_column(String(8), default="off")        # off | live (D60, D63)
+    ticket_assignment: Mapped[str] = mapped_column(String(24), default="department")   # department | autonomous | user:<id> | group:<id>
+    ticket_related_window_days: Mapped[int] = mapped_column(Integer, default=0)    # 0 = no limit
+    ticket_retention_days: Mapped[int] = mapped_column(Integer, default=0)         # 0 = keep closed tickets for ever
+    ticket_alert_channels: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    ticket_alert_events: Mapped[list | None] = mapped_column(JSON, nullable=True)
 
 
 class Feedback(Base):
@@ -434,11 +440,65 @@ class Feedback(Base):
     intent: Mapped[str | None] = mapped_column(String(10), nullable=True)      # positive | negative; NULL until decided
     intent_source: Mapped[str | None] = mapped_column(String(10), nullable=True)   # rating | comment | trace
     state: Mapped[str] = mapped_column(String(20), default="captured", index=True)
+    ticket_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)      # NULL until ticketed (D55)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)
     # one OPEN record per rater and answer (any state but ticketed): a rating after `ticketed` is a new record (D49)
     __table_args__ = (Index("uq_feedbacks_open", "rater_key", "answer_id", unique=True,
                             sqlite_where=text("state != 'ticketed'"), postgresql_where=text("state != 'ticketed'")),)
+
+
+class TicketType(Base):
+    """A kind of ticket (D66). This release has one, `feedback`; a later kind adds its own row and its own rule for `ref_id`."""
+    __tablename__ = "ticket_types"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(32), unique=True)
+    label: Mapped[str] = mapped_column(String(80), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class TicketGroup(Base):
+    """Grouping tickets is not built in this release (D48). The empty table exists because `tickets.group_id` points at it."""
+    __tablename__ = "ticket_groups"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(80), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class Ticket(Base):
+    """One ticket (D55, D56, D67). `status` always equals the latest state event in `ticket_events`; `evidence` is a list of masked
+    items, one per feedback."""
+    __tablename__ = "tickets"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    type_id: Mapped[int] = mapped_column(Integer, ForeignKey("ticket_types.id"), index=True)
+    ref_id: Mapped[int | None] = mapped_column(Integer, nullable=True)         # the first feedback id; may point at a deleted feedback
+    kb_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    department_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)   # the knowledge base's department, for who may work it
+    category: Mapped[str] = mapped_column(String(32), default="")              # empty for now (D66)
+    title: Mapped[str] = mapped_column(String(200), default="")                # masked
+    evidence: Mapped[list] = mapped_column(JSON, default=list)                 # masked items (D67)
+    status: Mapped[str] = mapped_column(String(20), index=True)
+    group_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("ticket_groups.id"), nullable=True)
+    assignee_type: Mapped[str] = mapped_column(String(12), default="")         # autonomous | user | group
+    assignee_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    raised_by: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)   # the user; NULL when the system raises it
+    related_ticket_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("tickets.id"), nullable=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)
+    closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class TicketEvent(Base):
+    """What happened to a ticket. Never updated. State events change the ticket's status; others (evidence_added, reassigned, comment) do not."""
+    __tablename__ = "ticket_events"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    ticket_id: Mapped[int] = mapped_column(Integer, ForeignKey("tickets.id"), index=True)
+    event: Mapped[str] = mapped_column(String(24))
+    actor_type: Mapped[str] = mapped_column(String(12), default="manual")      # autonomous | manual | system
+    actor_id: Mapped[int | None] = mapped_column(Integer, nullable=True)       # NULL when autonomous or system
+    note: Mapped[str] = mapped_column(Text, default="")
+    detail: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, index=True)
 
 
 class JobLock(Base):
