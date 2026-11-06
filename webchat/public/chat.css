@@ -1,0 +1,7 @@
+/* Chainlit's own thumbs under an answer are hidden. They name a step id that cannot be tied to the answer, cannot be switched off per
+   answer and cannot collect a reason. The rating control under each answer (public/elements/FeedbackRating.jsx) replaces them, and
+   is shown only where rating is on. The selector follows Chainlit 2.12 (pinned in pyproject.toml): the copy button comes first and
+   the thumbs pair is the second child of that row. */
+.step[data-step-type="assistant_message"] .-ml-1\.5 > div.flex.items-center {
+  display: none;
+}

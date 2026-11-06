@@ -449,14 +449,14 @@ People can rate each answer with a thumbs-up or thumbs-down, and say what went w
 **What people see**
 | Channel | Thumbs | After a thumbs-down |
 |---|---|---|
-| Web UI | The page's own thumbs and comment box | A comment (no reason list) |
-| Slack | Two buttons under the answer | A form with a reason list and a comment box |
-| Teams | Two buttons on a card | A second card with a reason list and a comment box |
-| Google Chat | Two buttons on a card | A card with a reason list and a comment box |
+| Web UI | Thumbs under the answer (the page's own thumbs are hidden) | A reason list, a comment box and a link box |
+| Slack | Two buttons under the answer | A form with a reason list, a comment box and a link box |
+| Teams | Two buttons on a card | A second card with a reason list, a comment box and a link box |
+| Google Chat | Two buttons on a card (follows the *Buttons on cards* switch of the channel) | A card with a reason list, a comment box and a link box |
 
 Only the person who asked a question can rate its answer. A second click, or a reason or comment added afterwards, updates the same rating. A thumbs-up with no comment needs no follow-up. A thumbs-down, or any rating with a comment, is kept as **Captured** until the processing added in a later phase looks at it.
 
-**Privacy.** Comments are masked like questions (see Guardrails → Mask personal data) before they are stored; web links can be attached but are kept as links only. Ratings are deleted together with their conversation. Get the privacy sign-off before switching this on.
+**Privacy.** Comments are always masked before they are stored, even when question masking is switched off; web links can be added but are kept as links only. Ratings are deleted together with their conversation. Get the privacy sign-off before switching this on.
 
 **Look at the ratings.** **Monitoring → Feedback** lists ratings with filters (rating, channel, knowledge base, state, reason, dates) and shows a short report by channel, knowledge base and reason. *Why this answer?* opens the answer's trace. Admins see everything; an Editor sees the knowledge bases of their own departments. Viewers have no access.
 

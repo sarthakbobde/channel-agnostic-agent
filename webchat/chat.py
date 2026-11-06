@@ -45,6 +45,28 @@ def _suggestions(items: list[dict], title: str) -> list:
     return [cl.CustomElement(name="Suggestions", props={"title": title, "items": live}, display="inline")] if live else []
 
 
+def _rating(fb: dict | None) -> list:
+    """Under an answer that can be rated: thumbs, and after a thumbs-down a reason list, a comment and a link (public/elements/FeedbackRating.jsx).
+    It replaces Chainlit's own thumbs (hidden by public/chat.css): those name a step id that cannot be tied to the answer, and they
+    cannot be switched off per answer or collect a reason."""
+    if not fb or not fb.get("payload"):
+        return []
+    labels = fb.get("labels") or {}
+    return [cl.CustomElement(name="FeedbackRating", display="inline", props={
+        "payload": fb["payload"], "reasons": fb.get("reasons") or [], "labels": labels})]
+
+
+@cl.action_callback("caa_rate")
+async def rated(action: cl.Action):
+    token = backend.token_for(cl.user_session.get("user"))
+    p = action.payload or {}
+    status, body = await backend.rate(token, cl.context.session.thread_id, p.get("payload", ""), p.get("rating", ""), p.get("reason", ""),
+                                      p.get("comment", ""), [p["link"]] if p.get("link") else None)
+    if status != 200:
+        texts = await backend.texts(token, cl.user_session.get("lang") or "")
+        await cl.ErrorMessage(content=body.get("detail", texts["web_try_again"])).send()
+
+
 @cl.on_chat_resume
 async def resume(thread):
     # The conversation itself lives in the API. The last answer's suggestions come back as buttons until they expire.
@@ -90,7 +112,7 @@ async def _show(token: str, status: int, body: dict) -> None:
                    + backend.suggestions_text([s for s in items if not s.get("payload")], texts["suggested"]))
         msg = cl.Message(content="", **({"id": backend.step_id(body["answer_id"], "")} if body.get("answer_id") else {}))
         await _type(msg, content)
-        msg.elements = _suggestions(items, texts["suggested"])     # the suggestions appear once the answer is complete
+        msg.elements = _suggestions(items, texts["suggested"]) + _rating(body.get("feedback"))     # they appear once the answer is complete
         await msg.send()
     elif status in (400, 403, 409, 410):                     # a suggestion button that is not valid, not yours, used or expired
         await cl.ErrorMessage(content=body.get("detail", texts["web_try_again"])).send()

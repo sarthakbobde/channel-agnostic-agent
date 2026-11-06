@@ -61,7 +61,9 @@ class SlackPresenter(ChannelPresenter):
                     {"type": "input", "block_id": "reason", "optional": True, "label": {"type": "plain_text", "text": labels["reason"][:200]},
                      "element": {"type": "static_select", "action_id": "reason", "options": options}},
                     {"type": "input", "block_id": "comment", "optional": True, "label": {"type": "plain_text", "text": labels["comment"][:200]},
-                     "element": {"type": "plain_text_input", "action_id": "comment", "multiline": True}}]}
+                     "element": {"type": "plain_text_input", "action_id": "comment", "multiline": True}},
+                    {"type": "input", "block_id": "link", "optional": True, "label": {"type": "plain_text", "text": labels["link"][:200]},
+                     "element": {"type": "plain_text_input", "action_id": "link"}}]}
 
 
 class SlackAdapter(Adapter):
@@ -200,11 +202,12 @@ class SlackAdapter(Adapter):
         values = view.get("state", {}).get("values", {})
         reason = (((values.get("reason") or {}).get("reason") or {}).get("selected_option") or {}).get("value", "")
         comment = ((values.get("comment") or {}).get("comment") or {}).get("value") or ""
+        link = ((values.get("link") or {}).get("link") or {}).get("value") or ""
         user = (body.get("user") or {}).get("id", "")
-        if not meta.get("c") or not (reason or comment):
+        if not meta.get("c") or not (reason or comment or link):
             return
         result = handle_action(self._rate_env(meta["c"], meta.get("t", ""), meta.get("w") or "t", user), meta.get("p", ""),
-                               rating="down", reason=reason, comment=comment)
+                               rating="down", reason=reason, comment=comment, attachments=[link] if link else None)
         self._acknowledge(client, meta["c"], user, meta.get("t", ""), result)
 
     @staticmethod

@@ -47,8 +47,7 @@ class ActionRequest(BaseModel):
 
 class FeedbackRequest(BaseModel):
     conv_id: str
-    payload: str = ""                 # a rating button's signed payload, or
-    answer_id: int | None = None      # the answer, when the Web UI's own thumbs are used (the caller is signed in)
+    payload: str
     rating: str
     reason: str = ""
     comment: str = ""
@@ -249,14 +248,7 @@ def chat_feedback(request: FeedbackRequest, caller: Caller = Depends(require_cha
     lang = memory.last_language(conv)
     asker = suggestions.asker_key(_asker(caller))
     try:
-        if request.payload:
-            data = feedback.verify(request.payload, asker)
-        elif request.answer_id and caller.prefix:
-            data = feedback.authorize_answer(request.answer_id, conv, asker)
-        else:
-            raise suggestions.PayloadError("feedback_invalid")
-    except feedback.FeedbackOff:
-        return {"message": "", "state": "off", "form": None}
+        data = feedback.verify(request.payload, asker)
     except suggestions.PayloadError as e:
         raise HTTPException(403 if e.key == "feedback_not_yours" else 410 if e.key == "feedback_expired" else 400, catalog.t(e.key, lang))
     who = identity.resolve(caller.email)
@@ -275,7 +267,7 @@ def chat_feedback(request: FeedbackRequest, caller: Caller = Depends(require_cha
     detailed = bool(request.reason or request.comment)
     form = None
     if saved["intent"] != "positive" and request.rating == feedback.DOWN and not detailed:
-        form = {"payload": request.payload, "answer_id": data["a"], "reasons": feedback.reasons_offered(), "labels": feedback.labels(lang)} if request.payload else None
+        form = {"payload": request.payload, "answer_id": data["a"], "reasons": feedback.reasons_offered(), "labels": feedback.labels(lang)}
     return {"message": catalog.t("feedback_updated" if detailed or not saved["created"] else "feedback_thanks", lang),
             "state": saved["state"], "form": form}
 

@@ -52,7 +52,7 @@ class GChatPresenter(ChannelPresenter):
         cards = [{"cardId": "caa-suggestions", "card": {"sections": [{"widgets": [{"buttonList": {"buttons": [
             {"text": c["text"][:100], "onClick": {"action": {"function": FUNCTION, "parameters": [{"key": "payload", "value": c["payload"]}]}}}
             for c in buttons]}}]}]}}] if buttons else []
-        rate = rating_buttons(result)
+        rate = rating_buttons(result) if self.buttons else None        # with buttons off there is no rating either: it needs the card
         if rate:
             labels = rate["labels"]
             cards.append({"cardId": "caa-rating", "card": {"sections": [{"header": labels["prompt"], "widgets": [{"buttonList": {"buttons": [
@@ -60,7 +60,7 @@ class GChatPresenter(ChannelPresenter):
                     {"key": "payload", "value": rate["payload"]}, {"key": "rating", "value": "up"}]}}},
                 {"text": "\U0001F44E " + labels["down"], "onClick": {"action": {"function": RATE, "parameters": [
                     {"key": "payload", "value": rate["payload"]}, {"key": "rating", "value": "down"}]}}}]}}]}]}})
-        form = result.get("feedback_form")
+        form = result.get("feedback_form") if self.buttons else None
         if form:
             cards.append(self.form_card(form))
         return out, cards
@@ -73,6 +73,7 @@ class GChatPresenter(ChannelPresenter):
             {"selectionInput": {"name": "reason", "label": labels["reason"], "type": "DROPDOWN",
                                 "items": [{"text": labels["reason_labels"][r], "value": r, "selected": False} for r in form["reasons"]]}},
             {"textInput": {"name": "comment", "label": labels["comment"], "type": "MULTIPLE_LINE"}},
+            {"textInput": {"name": "link", "label": labels["link"], "type": "SINGLE_LINE"}},
             {"buttonList": {"buttons": [{"text": labels["submit"], "onClick": {"action": {"function": RATE_FORM, "parameters": [
                 {"key": "payload", "value": form["payload"]}, {"key": "rating", "value": "down"}]}}}]}}]}]}}
 
@@ -93,8 +94,8 @@ class GChatAdapter(Adapter):
         Field("kb_ids", "Knowledge bases", kind="kbs",
               help="Which knowledge bases this channel answers from. Empty = the default knowledge base."),
         Field("show_sources", "Show sources", kind="bool", default=True),
-        Field("suggestion_buttons", "Suggestions as buttons", kind="bool", default=True,
-              help="Off shows suggested questions as text, for spaces where card buttons do not work."),
+        Field("suggestion_buttons", "Buttons on cards", kind="bool", default=True,
+              help="Off shows suggested questions as text and hides the rating buttons, for spaces where card buttons do not work."),
     )
 
     def __init__(self, cfg: dict):
@@ -154,9 +155,12 @@ class GChatAdapter(Adapter):
             return {}
         out = {"rating": params.get("rating", "")}
         inputs = ((body.get("commonEventObject") or {}).get("formInputs") or (body.get("common") or {}).get("formInputs") or {}) if function == RATE_FORM else {}
-        for name in ("reason", "comment"):
+        for name in ("reason", "comment", "link"):
             values = ((inputs.get(name) or {}).get("stringInputs") or {}).get("value") or []
             out[name] = values[0] if values else ""
+        link = out.pop("link")
+        if link:
+            out["attachments"] = [link]
         return out
 
     @classmethod

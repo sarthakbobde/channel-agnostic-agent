@@ -315,19 +315,6 @@ def test_the_web_api_carries_the_controls_and_takes_a_rating_by_payload(world, m
     assert c.post("/chat/feedback", headers=h, json={"conv_id": "api-fb", "payload": "junk", "rating": "up"}).status_code == 400
 
 
-def test_the_web_uis_own_thumbs_rate_an_answer_by_id(world, monkeypatch):
-    c, h = web("fb-asker@sysfore.com", monkeypatch, world)
-    r = c.post("/chat", headers=h, json={"message": "Can I carry over my leave?", "conv_id": "api-fb2"}).json()
-    ok = c.post("/chat/feedback", headers=h, json={"conv_id": "api-fb2", "answer_id": r["answer_id"], "rating": "down", "comment": "Not what I asked"}).json()
-    assert ok["state"] == "captured" and ok["form"] is None and records()[0].comment == "Not what I asked"
-    c2, h2 = web("fb-other@sysfore.com", monkeypatch, world)                       # someone else's answer, or the wrong conversation
-    assert c2.post("/chat/feedback", headers=h2, json={"conv_id": "api-fb2", "answer_id": r["answer_id"], "rating": "up"}).status_code == 400
-    assert c.post("/chat/feedback", headers=h, json={"conv_id": "api-other", "answer_id": r["answer_id"], "rating": "up"}).status_code == 400
-    scoped_settings.put("channel", "web", {"feedback_enabled": False}, "t", world.db)
-    off = c.post("/chat/feedback", headers=h, json={"conv_id": "api-fb2", "answer_id": r["answer_id"], "rating": "up"}).json()
-    assert off["state"] == "off" and len(records()) == 1                           # quietly ignored while rating is off
-
-
 # ---- what each chat app shows and sends --------------------------------------------------------------------------------------------
 def result_with_controls(world):
     r = ask(world, conv="web-1-fb-pres")
@@ -343,7 +330,7 @@ def test_slack_shows_thumbs_and_opens_a_form_for_a_thumbs_down(world):
     assert SlackPresenter().render({**r, "feedback": None}, True) == {"text": r["answer"]}            # no blocks when rating is off
     form = {"payload": "p", "answer_id": 1, "reasons": ["other"], "labels": feedback.labels()}
     view = SlackPresenter.form_view(form, {"p": "p"})
-    assert view["callback_id"] == "caa_rate_form" and [b["block_id"] for b in view["blocks"]] == ["reason", "comment"]
+    assert view["callback_id"] == "caa_rate_form" and [b["block_id"] for b in view["blocks"]] == ["reason", "comment", "link"]
     assert view["blocks"][0]["element"]["options"][0]["value"] == "other"
 
 
@@ -355,7 +342,7 @@ def test_teams_shows_thumbs_and_a_form_card(world):
     assert all(a["data"]["caa_action"] == r["feedback"]["payload"] for a in card["actions"])
     assert TeamsPresenter().render({**r, "feedback": None}, True) == r["answer"]
     form = TeamsPresenter().form({"payload": "p", "answer_id": 1, "reasons": ["data_mismatch", "other"], "labels": feedback.labels()}).attachments[0].content
-    assert [i["id"] for i in form["body"][1:]] == ["reason", "comment"] and form["actions"][0]["data"] == {"caa_action": "p", "caa_rating": "down"}
+    assert [i["id"] for i in form["body"][1:]] == ["reason", "comment", "link"] and form["actions"][0]["data"] == {"caa_action": "p", "caa_rating": "down"}
 
 
 def test_google_chat_shows_thumbs_and_reads_a_click_and_a_form(world):
@@ -375,7 +362,13 @@ def test_google_chat_shows_thumbs_and_reads_a_click_and_a_form(world):
     assert GChatAdapter.click_fields(suggestion_click) == {}
     form = GChatPresenter.form_card({"payload": payload, "answer_id": 1, "reasons": ["other"], "labels": feedback.labels()})
     widgets = form["card"]["sections"][0]["widgets"]
-    assert "selectionInput" in widgets[0] and "textInput" in widgets[1] and widgets[2]["buttonList"]["buttons"][0]["onClick"]["action"]["function"] == "caa_rate_form"
+    assert "selectionInput" in widgets[0] and "textInput" in widgets[1] and "textInput" in widgets[2]
+    assert widgets[3]["buttonList"]["buttons"][0]["onClick"]["action"]["function"] == "caa_rate_form"
+    withlink = {"commonEventObject": {"invokedFunction": "caa_rate_form", "parameters": {"payload": payload, "rating": "down"},
+                                      "formInputs": {"link": {"stringInputs": {"value": ["https://example.com/shot.png"]}}}}}
+    assert GChatAdapter.click_fields(withlink) == {"rating": "down", "reason": "", "comment": "", "attachments": ["https://example.com/shot.png"]}
+    off, cards_off = GChatPresenter(buttons=False).render({**r, "feedback_form": {"payload": payload, "answer_id": 1, "reasons": ["other"], "labels": feedback.labels()}}, True)
+    assert cards_off == []                                                  # buttons off: no rating card and no form either
 
 
 # ---- the admin screens -------------------------------------------------------------------------------------------------------------
@@ -418,3 +411,40 @@ def test_the_feedback_screen_is_listed_for_admins_and_editors_only():
     from app.admin import roles
     assert "feedback" in roles.screens_for("admin") and "feedback" in roles.screens_for("editor") and roles.screens_for("viewer") == []
     assert roles.allowed("editor", "/admin/api/feedback") and not roles.allowed("viewer", "/admin/api/feedback")
+
+
+# ---- closing the gaps ---------------------------------------------------------------------------------------------------------------
+def test_a_comment_is_masked_even_when_question_masking_is_off(world):
+    guardrails.update({"mask_enabled": False}, "t", world.db)
+    guardrails.invalidate()
+    rate(world, ask(world, conv="web-1-fb-maskoff"), "down", comment="Write to rita.k@example.net about it")
+    assert "rita.k@example.net" not in records()[0].comment
+
+
+def test_a_link_typed_into_a_form_is_kept_as_a_link(world, monkeypatch):
+    monkeypatch.setattr(core, "asker_of", lambda env: "web:" + env.email)
+    r = ask(world, conv="web-1-fb-link")
+    core.handle_action(envelope(), r["feedback"]["payload"], rating="down", reason="other", attachments=["https://example.com/a.png", "not a link"])
+    assert records()[0].attachments == ["https://example.com/a.png"]
+
+
+def test_every_table_with_a_conversation_id_is_deleted_with_the_conversation():
+    from app import memory
+    from app.db import Base
+    have = {t.__tablename__ for t in memory.CONVERSATION_TABLES}
+    found = {t.name for t in Base.metadata.tables.values() if "conversation_id" in t.c}
+    assert found == have, f"a table keeps rows per conversation but is not deleted with it: {sorted(found - have)}"
+
+
+def test_the_retention_job_removes_feedback_through_the_shared_helper(world):
+    from app import memory
+    r = ask(world, conv="web-1-fb-shared")
+    rate(world, r, "down")
+    with get_db().session() as s:
+        assert memory.delete_stored(s, ["web-1-fb-shared"]) >= 2
+    assert records() == []
+
+
+def test_the_texts_of_the_rating_controls_include_the_link_and_the_thanks():
+    labels = feedback.labels()
+    assert labels["link"].startswith("Link to a screenshot") and labels["thanks"] == "Thank you for your feedback."

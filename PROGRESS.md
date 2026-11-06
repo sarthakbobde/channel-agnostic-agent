@@ -900,26 +900,26 @@ This follows `docs/development-plan-v5-release-3-feedback-ticketing.md`, on bran
   - A signed payload per answer (HMAC with the suggestion buttons' keys, bound to the asker, with an expiry). Only the asker can rate. A tampered, forged or expired payload is refused, and a suggestion button does not pass as a rating button.
   - One open record per rater and answer, updated while its state is captured, no_ticket or human_review. A rating after `ticketed` makes a new record. A person's review is never undone by a later click.
   - A thumbs-up with no comment ends as `no_ticket`; everything else stays `captured`.
-  - The comment is cut to the limit and masked by the existing masking step. Attachments are kept as links only (http or https, at most 5), never downloaded.
+  - The comment is cut to the limit and always masked (not tied to the question-masking switch); if masking fails the rating is refused. Attachments are kept as links only (http or https, at most 5), never downloaded.
   - A failing write gives the apology text and never affects the answer already delivered.
-  - The records are deleted with their conversation, by hand or by the retention job.
+  - The records are deleted with their conversation, by hand or by the retention job, through one shared helper (`memory.delete_stored`) that a test keeps complete.
 - **Controls per channel (all through `core.handle_action`).**
-  - **Web UI:** Chainlit's own thumbs and comment box now reach `POST /chat/feedback` by answer id. The answer must belong to the caller's conversation. A normal answer also carries the signed controls for other clients.
-  - **Slack:** thumbs under the answer; a thumbs-down also opens a modal with a reason list and a comment box. The thanks is an ephemeral message.
-  - **Teams:** thumbs on the card; a thumbs-down sends a second card with a reason list and a comment box.
-  - **Google Chat:** thumbs on a card; a thumbs-down returns a card with a dropdown and a text box, read from `formInputs` in both event formats.
+  - **Web UI:** Chainlit's own thumbs are hidden (their id could not be tied to an answer). A control under each answer (`FeedbackRating.jsx`) sends thumbs, then a reason list, a comment and a link, with the signed payload, to `POST /chat/feedback`. It appears only where rating is on.
+  - **Slack:** thumbs under the answer; a thumbs-down also opens a modal with a reason list, a comment box and an optional link. The thanks is an ephemeral message.
+  - **Teams:** thumbs on the card; a thumbs-down sends a second card with a reason list, a comment box and a link box.
+  - **Google Chat:** thumbs on a card; a thumbs-down returns a card with a dropdown, a comment box and a link box, read from `formInputs` in both event formats. The card follows the "Buttons on cards" switch.
 - **Messages.** 16 new catalogue keys (button labels, the five reasons, thanks, three refusals), English, with Hindi as Drafts.
 - **Admin.** Monitoring → Feedback: a list with filters (rating, channel, knowledge base, state, reason, dates) and a report by channel, knowledge base, reason and state. "Why this answer?" opens the trace. An Editor sees only their own departments' knowledge bases; a Viewer has no panel. The Feedback screen is in the Admin and Editor screen lists and `/admin/api/feedback` in the Editor routes (pinned lists updated on purpose).
 - **Tests.**
   - `tests/test_feedback_capture.py` has 31 tests: the controls and their settings, every state rule, masking, links, the limit, the reasons list, forged and expired payloads, the core entry point, a failing write, a deactivated person, the Web API (payload and answer id, other person, wrong conversation, switched off), the three presenters and the Google Chat click parsing, the admin API by role, and deletion with the conversation.
   - Updated on purpose: the migration head and tables, the Global Settings fields and the Editor routes and screens.
   - Fixed while getting the suite green (test-only): two tests that left the shared database or document folder in a state other tests did not expect (guardrail switches after the multilingual tests; the key command-line test now has its own document folder).
-- **Results.** **SQLite:** the first full run gave 611 passed, 15 skipped and 4 failed; all four were fixed (see Tests) and the full suite was re-run. The re-run's result is recorded below once it finishes. **PostgreSQL:** not run, Docker Desktop is not running.
+- **Results.** **SQLite:** the first full run gave 611 passed, 15 skipped and 4 failed; all four were fixed (see Tests) and the full suite was re-run. The re-run is green: 615 passed, 15 skipped and 2 deselected. After the gap fixes the full suite was run again: 623 passed, 15 skipped and 2 deselected. **PostgreSQL:** not run, Docker Desktop is not running.
 - **Spike (D50, Phase 1 task 1).** Written up in `DECISIONS.md` ("Release 3, Phase 1 spike"). Decided from the platforms' documented behaviour; nothing was tried live.
+- **Gap fixes after the first report.** Web UI reason list (G-1), no thumbs where rating is off (G-2), comments always masked (G-3), an optional link on every form (G-4), the Google Chat card follows its buttons switch (G-5), one shared conversation delete (G-6). Also found and fixed: the Web UI's own thumbs could not be used (R3-1), and `tests/test_platforms.py` left the masking switch off for later tests (the cause of the suggestions test that failed in one order, T-5).
 - **Not done and not tried.**
   - **PostgreSQL:** not run, Docker Desktop is not running.
-  - **Live chat apps:** Slack (Interactivity on, modal), Teams (card inputs in the test tenant) and Google Chat (card clicks, form inputs) were checked only on the payloads they would send and receive. The Web UI was not opened with a real Chainlit session; its data-layer call and the API are tested.
-  - **Web UI reason list:** the Web UI collects a rating and a comment, not a reason (R3-1).
+  - **Live chat apps:** Slack (Interactivity on, modal), Teams (card inputs in the test tenant) and Google Chat (card clicks, form inputs) were checked only on the payloads they would send and receive. The Web UI was run for real on a copy of the app with the Azure model: the control appeared, Chainlit's thumbs were hidden, and a thumbs-down with a reason, a comment and a link was stored with the email masked.
 - **Still needed from people.**
   - The privacy sign-off for storing comments and attachment links, and how long ticket evidence may outlive its conversation (D49, D55).
   - Slack: Interactivity on (Release 2) and a reinstall. Teams: confirm the rating card needs no new approval. Google Chat: card clicks and form inputs on in the Chat app.

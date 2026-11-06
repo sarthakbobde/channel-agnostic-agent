@@ -142,6 +142,44 @@ def test_a_new_chat_belongs_to_its_author_and_can_be_deleted(api):
     assert api.calls[-1][:3] == ("DELETE", "/conversations/t1", "amy-token") and run(dl.get_thread_author("t1")) == ""
 
 
+def test_a_reason_from_the_web_ui_goes_to_the_api_with_the_signed_payload(api):
+    run(backend.sign_in("amy@sysfore.com", "right password 1"))
+    status, body = run(backend.rate("amy-token", "t1", "P.sig", "down", "data_mismatch"))
+    assert status == 404                                              # the fake API has no such route; the point is what was sent
+    call = [c for c in api.calls if c[1] == "/chat/feedback"][0]
+    assert call[0] == "POST" and call[2] == "amy-token"
+    assert call[3] == {"conv_id": "t1", "payload": "P.sig", "rating": "down", "reason": "data_mismatch", "comment": "", "attachments": []}
+
+
+def test_the_rating_control_appears_only_under_an_answer_that_can_be_rated(page, monkeypatch):
+    import chat as webchat_app
+
+    class Element:                                    # a Chainlit element needs a live session; only what is passed to it matters here
+        def __init__(self, **kw):
+            self.__dict__.update(kw)
+    monkeypatch.setattr(webchat_app.cl, "CustomElement", Element)
+    fb = {"payload": "P.sig", "reasons": ["data_mismatch", "other"], "labels": {"down": "Not helpful", "reason": "What went wrong?", "thanks": "Thank you"}}
+    [el] = webchat_app._rating(fb)
+    assert el.name == "FeedbackRating" and el.props["payload"] == "P.sig" and el.props["reasons"] == ["data_mismatch", "other"] and el.display == "inline"
+    assert webchat_app._rating(None) == [] and webchat_app._rating({"payload": "", "reasons": ["other"]}) == []
+
+
+def test_chainlits_own_thumbs_are_hidden_and_the_element_is_shipped():
+    css = (WEBCHAT / "public" / "chat.css").read_text(encoding="utf-8")
+    assert "display: none" in css and "data-step-type" in css
+    assert 'custom_css = "/public/chat.css"' in (WEBCHAT / ".chainlit" / "config.toml").read_text(encoding="utf-8")
+    jsx = (WEBCHAT / "public" / "elements" / "FeedbackRating.jsx").read_text(encoding="utf-8")
+    assert 'name: "caa_rate"' in jsx and "labels.comment" in jsx and "labels.link" in jsx
+
+
+def test_a_native_thumbs_click_is_only_logged(api, caplog):
+    dl = backend.BackendDataLayer()
+    run(backend.sign_in("amy@sysfore.com", "right password 1"))
+    with caplog.at_level("INFO", logger="webchat"):
+        run(dl.upsert_feedback(Feedback(forId="uuid-1", value=1, threadId="t1", comment="x")))
+    assert [c for c in api.calls if c[1] == "/chat/feedback"] == []
+
+
 def test_feedback_is_logged_without_the_comment(api, caplog):
     dl = backend.BackendDataLayer()
     with caplog.at_level("INFO", logger="webchat"):

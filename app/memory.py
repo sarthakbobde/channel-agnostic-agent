@@ -183,12 +183,25 @@ def list_conversations(prefix: str = "", db: Database | None = None) -> list[dic
                 for c in s.scalars(q)]
 
 
+# Every table that keeps rows per conversation. A new one is added HERE, so a manual delete and the retention job both remove it
+# (a test checks that no table with a conversation_id column is missing from this list).
+CONVERSATION_TABLES = (AnswerTrace, Suggestion, Feedback, Message)
+
+
+def delete_stored(s, conv_ids: list[str]) -> int:
+    """Everything stored for these conversations except the conversation rows themselves. `s` is an open session. Returns how many
+    messages were deleted."""
+    n = 0
+    for table in CONVERSATION_TABLES:
+        count = s.execute(sql_delete(table).where(table.conversation_id.in_(conv_ids))).rowcount or 0
+        if table is Message:
+            n = count
+    return n
+
+
 def delete(conv_id: str, db: Database | None = None) -> bool:
     with (db or get_db()).session() as s:
-        s.execute(sql_delete(AnswerTrace).where(AnswerTrace.conversation_id == conv_id))
-        s.execute(sql_delete(Suggestion).where(Suggestion.conversation_id == conv_id))
-        s.execute(sql_delete(Feedback).where(Feedback.conversation_id == conv_id))
-        n = s.execute(sql_delete(Message).where(Message.conversation_id == conv_id)).rowcount
+        n = delete_stored(s, [conv_id])
         c = s.get(Conversation, conv_id)
         if c is not None:
             s.delete(c)

@@ -51,7 +51,8 @@ class TeamsPresenter(ChannelPresenter):
         labels = form["labels"]
         inputs = [{"type": "Input.ChoiceSet", "id": "reason", "style": "compact", "placeholder": labels["reason"],
                    "choices": [{"title": labels["reason_labels"][r], "value": r} for r in form["reasons"]]},
-                  {"type": "Input.Text", "id": "comment", "isMultiline": True, "placeholder": labels["comment"]}]
+                  {"type": "Input.Text", "id": "comment", "isMultiline": True, "placeholder": labels["comment"]},
+                  {"type": "Input.Text", "id": "link", "placeholder": labels["link"]}]
         return self.card(labels["reason"], [{"type": "Action.Submit", "title": labels["submit"],
                                              "data": {"caa_action": form["payload"], "caa_rating": "down"}}], inputs)
 
@@ -132,6 +133,8 @@ class TeamsAdapter(Adapter):
             return
         payload = act.value.get("caa_action") if isinstance(act.value, dict) else None    # an Action.Submit: a value, no text
         fields = {k: (act.value.get(a) or "") for k, a in (("rating", "caa_rating"), ("reason", "reason"), ("comment", "comment"))} if payload else {}
+        if payload and act.value.get("link"):
+            fields["attachments"] = [str(act.value["link"])]
         if not act.text and not payload:
             return
         if act.text:

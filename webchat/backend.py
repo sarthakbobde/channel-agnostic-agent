@@ -100,6 +100,24 @@ async def act(token: str, conv_id: str, payload: str) -> tuple[int, dict]:
     return r.status_code, body if isinstance(body, dict) else {}
 
 
+async def rate(token: str, conv_id: str, payload: str, rating: str, reason: str = "", comment: str = "", attachments=None) -> tuple[int, dict]:
+    """A rating from the control under an answer: the API checks the signed payload (only the asker, not expired)."""
+    try:
+        async with _client(ASK_TIMEOUT) as c:
+            r = await c.post("/chat/feedback", json={"conv_id": conv_id, "payload": payload, "rating": rating, "reason": reason, "comment": comment,
+                                   "attachments": attachments or []},
+                             headers={"Authorization": f"Bearer {token}"})
+    except httpx.TimeoutException:
+        return 0, {"detail": "That took too long. Please try again."}
+    except httpx.HTTPError:
+        return 0, {"detail": "Cannot reach the service. Try again in a minute."}
+    try:
+        body = r.json()
+    except ValueError:
+        body = {}
+    return r.status_code, body if isinstance(body, dict) else {}
+
+
 def suggestions_text(items: list[dict], label: str = "Suggested questions") -> str:
     """Suggestions that cannot be buttons (expired, or an older answer) as plain text."""
     return f"\n\n**{label}**\n" + "\n".join(f"- {s['text']}" for s in items) if items else ""
@@ -260,23 +278,10 @@ class BackendDataLayer(BaseDataLayer):
             _owners[thread_id] = user_id
 
     async def upsert_feedback(self, feedback: Feedback) -> str:
-        """Chainlit's own thumbs (value 1 = up, 0 = down) and comment box: sent to the API, which stores them when rating is on for
-        this answer. The comment itself is never logged: it is free text that may hold personal data."""
+        # Chainlit's own thumbs are hidden (public/chat.css): the rating control under each answer replaces them. If one is still
+        # reached, it is only logged. The comment itself is never logged: it is free text that may hold personal data.
         log.info("feedback %s on thread %s, message %s, %s", feedback.value, feedback.threadId, feedback.forId,
                  "with a comment" if feedback.comment else "no comment")
-        owner = _owners.get(feedback.threadId or "")
-        token = _tokens.get(owner or "")
-        answer_id = str(feedback.forId or "").removeprefix("msg-")
-        if token and answer_id.isdigit():
-            try:
-                async with _client() as c:
-                    r = await c.post("/chat/feedback", headers={"Authorization": f"Bearer {token}"},
-                                     json={"conv_id": feedback.threadId, "answer_id": int(answer_id), "rating": "up" if feedback.value else "down",
-                                           "comment": feedback.comment or ""})
-                if r.status_code >= 400:
-                    log.warning("the API did not take the feedback (HTTP %s)", r.status_code)
-            except httpx.HTTPError as e:
-                log.warning("feedback request failed: %s", type(e).__name__)
         return feedback.id or str(uuid.uuid4())
 
     async def delete_feedback(self, feedback_id: str) -> bool:

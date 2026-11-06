@@ -107,7 +107,7 @@ def controls(answer_id: int | None, asker: str, lang: str = "", shown_at: dateti
 
 def labels(lang: str = "") -> dict:
     """The texts of the rating controls, in the answer's language."""
-    names = ("prompt", "up", "down", "reason", "comment", "submit")
+    names = ("prompt", "up", "down", "reason", "comment", "link", "submit", "thanks")
     out = {n: catalog.t("feedback_" + n, lang) for n in names}
     out["reason_labels"] = {r: catalog.t("feedback_reason_" + r, lang) for r in REASONS}
     return out
@@ -127,10 +127,13 @@ def _masked_comment(text: str, db: Database) -> str:
     text = " ".join((text or "").split())[:global_settings.current(db).feedback_comment_max_chars]
     if not text:
         return ""
-    decision = guardrails.mask_input(text, db)
-    if decision.blocked:
-        raise RuntimeError("the comment could not be masked")     # fails closed, like a question
-    return decision.text
+    try:                                   # not tied to the masking switch: a comment is free text and always masked. Fails closed.
+        masked, counts = guardrails.mask_with(text, guardrails.current(db))
+        if counts:
+            guardrails.record(db, "personal_data", "input", "masked", sum(counts.values()))
+        return masked
+    except Exception as e:
+        raise RuntimeError("the comment could not be masked") from e
 
 
 def capture(data: dict, rating: str, reason: str = "", comment: str = "", attachments=None, *, who=None, db: Database | None = None) -> dict:
@@ -181,24 +184,3 @@ def capture(data: dict, rating: str, reason: str = "", comment: str = "", attach
             row.updated_at = now
         s.flush()
         return {"id": row.id, "state": row.state, "intent": row.intent, "created": created, "changed": changed}
-
-
-class FeedbackOff(Exception):
-    """Rating is not switched on for this answer's channel and knowledge bases."""
-
-
-def authorize_answer(answer_id: int, conv_id: str, asker: str, db: Database | None = None) -> dict:
-    """The fields verify() gives, for a person signed in to the Web UI who rates through the page's own thumbs (no button payload):
-    the answer must belong to this conversation, and rating must be on for its channel and knowledge bases. The caller has already
-    been authenticated, and `conv_id` is the conversation id under their own prefix, so only the asker can reach it (D50)."""
-    from app.knowledge import kbs
-    db = db or get_db()
-    with db.session() as s:
-        msg = s.get(Message, answer_id)
-        if msg is None or msg.role != "assistant" or msg.conversation_id != conv_id:
-            raise PayloadError("feedback_invalid")
-        kb_ids = list((msg.meta or {}).get("kb_ids") or [])
-    targets = [k for k in (kbs.get_kb(db, i) for i in kb_ids) if k]
-    if not enabled(conv_id, targets):
-        raise FeedbackOff()
-    return {"v": 1, "act": ACTION, "a": answer_id, "u": asker, "x": int(time.time()) + 60}

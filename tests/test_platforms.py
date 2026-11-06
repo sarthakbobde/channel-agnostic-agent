@@ -173,6 +173,7 @@ def full_stack(monkeypatch):
     The preferred model fails with a 429 and the fallback answers (that is the fallback rule), so a slow or failed
     model never produces a half answer."""
     from app import chat_service, guardrails, rag
+    before = {k: getattr(guardrails.current(), k) for k in ("enabled", "mask_enabled", "injection_enabled", "output_checks_enabled")}
     guardrails.update({"enabled": True, "mask_enabled": False, "injection_enabled": True, "output_checks_enabled": False}, "tests")
     state = {"delay": 0.0, "calls": []}
 
@@ -187,7 +188,8 @@ def full_stack(monkeypatch):
     monkeypatch.setattr(chat_service, "_decide", decide)
     monkeypatch.setattr(rag, "stream_direct", stream_direct)
     yield state
-    guardrails.update({"enabled": False}, "tests")
+    guardrails.update({**before, "enabled": False}, "tests")      # the switches go back as they were: the database is shared by every test module
+    guardrails.invalidate()
 
 
 def test_gchat_polite_timeout_with_guardrails_on(chat_app, keys, monkeypatch, full_stack):
