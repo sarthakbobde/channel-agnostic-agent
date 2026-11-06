@@ -142,13 +142,13 @@ def test_a_new_chat_belongs_to_its_author_and_can_be_deleted(api):
     assert api.calls[-1][:3] == ("DELETE", "/conversations/t1", "amy-token") and run(dl.get_thread_author("t1")) == ""
 
 
-def test_a_reason_from_the_web_ui_goes_to_the_api_with_the_signed_payload(api):
+def test_a_rating_from_the_web_ui_goes_to_the_api_with_the_signed_payload(api):
     run(backend.sign_in("amy@sysfore.com", "right password 1"))
-    status, body = run(backend.rate("amy-token", "t1", "P.sig", "down", "data_mismatch"))
+    status, body = run(backend.rate("amy-token", "t1", "P.sig", "down", "Not what I asked", ["https://example.com/a.png"]))
     assert status == 404                                              # the fake API has no such route; the point is what was sent
     call = [c for c in api.calls if c[1] == "/chat/feedback"][0]
     assert call[0] == "POST" and call[2] == "amy-token"
-    assert call[3] == {"conv_id": "t1", "payload": "P.sig", "rating": "down", "reason": "data_mismatch", "comment": "", "attachments": []}
+    assert call[3] == {"conv_id": "t1", "payload": "P.sig", "rating": "down", "comment": "Not what I asked", "attachments": ["https://example.com/a.png"]}
 
 
 def test_the_rating_control_appears_only_under_an_answer_that_can_be_rated(page, monkeypatch):
@@ -158,10 +158,10 @@ def test_the_rating_control_appears_only_under_an_answer_that_can_be_rated(page,
         def __init__(self, **kw):
             self.__dict__.update(kw)
     monkeypatch.setattr(webchat_app.cl, "CustomElement", Element)
-    fb = {"payload": "P.sig", "reasons": ["data_mismatch", "other"], "labels": {"down": "Not helpful", "reason": "What went wrong?", "thanks": "Thank you"}}
+    fb = {"payload": "P.sig", "labels": {"down": "Not helpful", "comment": "Add a comment", "thanks": "Thank you"}}
     [el] = webchat_app._rating(fb)
-    assert el.name == "FeedbackRating" and el.props["payload"] == "P.sig" and el.props["reasons"] == ["data_mismatch", "other"] and el.display == "inline"
-    assert webchat_app._rating(None) == [] and webchat_app._rating({"payload": "", "reasons": ["other"]}) == []
+    assert el.name == "FeedbackRating" and el.props["payload"] == "P.sig" and "reasons" not in el.props and el.display == "inline"
+    assert webchat_app._rating(None) == [] and webchat_app._rating({"payload": ""}) == []
 
 
 def test_chainlits_own_thumbs_are_hidden_and_the_element_is_shipped():

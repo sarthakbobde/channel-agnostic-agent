@@ -310,17 +310,25 @@ def test_the_trace_names_the_model_actually_used_including_a_fallback(world, mon
     assert [(u["model"], u["status"]) for u in view["usage"]] == [("m1", "failed"), ("m2", "ok")]       # the linked usage rows
 
 
-def test_retention_and_delete_remove_traces(world, monkeypatch):
+def test_delete_and_retention_move_a_conversation_aside_with_its_trace(world, monkeypatch):
+    """D62: nothing is purged. The conversation, its messages and its trace get a new id, so no screen or list shows them, and the
+    trace is still there for the review queue and the replay."""
     from datetime import datetime, timedelta, timezone
     a = ask(monkeypatch, world, conv="web-tr-del")["answer_id"]
-    assert memory.delete("web-tr-del", world.db) and trace_row(world.db, a) is None
+    assert memory.delete("web-tr-del", world.db)
+    row = trace_row(world.db, a)
+    assert row is not None and row.conversation_id != "web-tr-del" and "web-tr-del" in row.conversation_id
+    assert memory.get_messages("web-tr-del", world.db) == [] and "web-tr-del" not in [c["id"] for c in memory.list_conversations(db=world.db)]
     b = ask(monkeypatch, world, conv="web-tr-old")["answer_id"]
     with world.db.session() as s:
         s.get(Conversation, "web-tr-old").updated_at = datetime.now(timezone.utc) - timedelta(days=4000)
     retention.run(world.db)
-    assert trace_row(world.db, b) is None
+    assert trace_row(world.db, b) is not None and trace_row(world.db, b).conversation_id != "web-tr-old"
     with world.db.session() as s:
-        assert s.get(Conversation, "web-tr-old") is None and not list(s.scalars(select(Message).where(Message.conversation_id == "web-tr-old")))
+        assert s.get(Conversation, "web-tr-old") is None
+        moved = s.scalars(select(Conversation).where(Conversation.deleted_at.is_not(None), Conversation.id.like("%web-tr-old"))).all()
+        assert len(moved) == 1 and list(s.scalars(select(Message).where(Message.conversation_id == moved[0].id)))
+        assert s.scalars(select(Message).where(Message.conversation_id == "web-tr-old")).first() is None
 
 
 # ---- the trace API and who sees what -----------------------------------------------------------------------------------

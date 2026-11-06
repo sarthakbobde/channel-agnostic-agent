@@ -9,12 +9,13 @@ Everything stored is the masked text from the guardrails. The old per-thread tex
 import json
 import logging
 import re
+import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
-from sqlalchemy import delete as sql_delete
 from sqlalchemy import func, select
+from sqlalchemy import update as sql_update
 from sqlalchemy.exc import IntegrityError
 
 from app import global_settings
@@ -176,36 +177,44 @@ def get_messages(conv_id: str, db: Database | None = None, who=None) -> list[dic
 def list_conversations(prefix: str = "", db: Database | None = None) -> list[dict]:
     """Newest first. `prefix` limits to one person's conversations."""
     with (db or get_db()).session() as s:
-        q = select(Conversation).order_by(Conversation.updated_at.desc())
+        q = select(Conversation).where(Conversation.deleted_at.is_(None)).order_by(Conversation.updated_at.desc())
         if prefix:
             q = q.where(Conversation.id.like(prefix.replace("%", "").replace("_", "\\_") + "%", escape="\\"))
         return [{"id": c.id, "title": c.title or "New chat", "updated_at": c.updated_at.isoformat() if c.updated_at else None}
                 for c in s.scalars(q)]
 
 
-# Every table that keeps rows per conversation. A new one is added HERE, so a manual delete and the retention job both remove it
+# Every table that keeps rows per conversation. A new one is added HERE, so the user's own delete and the retention job treat it the same
 # (a test checks that no table with a conversation_id column is missing from this list).
 CONVERSATION_TABLES = (AnswerTrace, Suggestion, Feedback, Message)
 
 
-def delete_stored(s, conv_ids: list[str]) -> int:
-    """Everything stored for these conversations except the conversation rows themselves. `s` is an open session. Returns how many
-    messages were deleted."""
+def _aside(conv_id: str) -> str:
+    """The id a deleted conversation keeps. It cannot clash with a live one, so a chat app that reuses a thread id starts a fresh conversation."""
+    return f"~{uuid.uuid4().hex[:10]}~{conv_id}"[:200]
+
+
+def move_aside(s, conv_ids: list[str]) -> int:
+    """Delete conversations (D62): nothing is purged. Each conversation, and everything stored for it, is moved to a new id and the
+    conversation is marked deleted, so no user screen, search or list ever shows it again. The review queue, the replay and the tickets
+    still reach it through the ids kept on feedback and traces. `s` is an open session. Returns how many messages were moved."""
+    now = datetime.now(timezone.utc)
     n = 0
-    for table in CONVERSATION_TABLES:
-        count = s.execute(sql_delete(table).where(table.conversation_id.in_(conv_ids))).rowcount or 0
-        if table is Message:
-            n = count
+    for conv_id in conv_ids:
+        new = _aside(conv_id)
+        for table in CONVERSATION_TABLES:
+            count = s.execute(sql_update(table).where(table.conversation_id == conv_id).values(conversation_id=new)).rowcount or 0
+            if table is Message:
+                n += count
+        s.execute(sql_update(Conversation).where(Conversation.id == conv_id).values(id=new, deleted_at=now))
     return n
 
 
 def delete(conv_id: str, db: Database | None = None) -> bool:
     with (db or get_db()).session() as s:
-        n = delete_stored(s, [conv_id])
-        c = s.get(Conversation, conv_id)
-        if c is not None:
-            s.delete(c)
-        return bool(c is not None or n)
+        existed = s.get(Conversation, conv_id) is not None
+        n = move_aside(s, [conv_id])
+        return bool(existed or n)
 
 
 clear = delete

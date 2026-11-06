@@ -42,8 +42,8 @@ def conversation_list(ctx: AdminContext, department: str, channel: str, person: 
                       only_departments: set[int] | None = None) -> dict:
     """One page of conversations. `only_departments` limits it to those departments' conversations (an Editor's view)."""
     limit, offset = max(1, min(limit, 200)), max(0, offset)
-    q = select(Conversation)
-    dept_q = select(Conversation.department).distinct().order_by(Conversation.department)
+    q = select(Conversation).where(Conversation.deleted_at.is_(None))
+    dept_q = select(Conversation.department).where(Conversation.deleted_at.is_(None)).distinct().order_by(Conversation.department)
     if only_departments is not None:
         q = q.where(Conversation.department_id.in_(only_departments))
         dept_q = dept_q.where(Conversation.department_id.in_(only_departments))
@@ -112,7 +112,7 @@ def export(body: ExportBody, sess: Session = Depends(admin_session), ctx: AdminC
     if body.format not in ("csv", "json"):
         raise HTTPException(422, "Format must be csv or json.")
     start, end = _day(body.date_from), _day(body.date_to, True)
-    q = select(Message, Conversation).join(Conversation, Conversation.id == Message.conversation_id).order_by(Message.id)
+    q = select(Message, Conversation).join(Conversation, Conversation.id == Message.conversation_id).where(Conversation.deleted_at.is_(None)).order_by(Message.id)
     if body.department:
         q = q.where(Conversation.department == body.department)
     if start:

@@ -7,7 +7,7 @@ department's. The daily job and "Run now" both record what they did in the audit
 import logging
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import func, select
 
 from app import global_settings, memory
 from app.db import Conversation, Database, Department, Message, get_db
@@ -29,7 +29,7 @@ def _expired_query(dept_id: int, days: int, known: list[int], is_default: bool, 
     cond = Conversation.department_id == dept_id
     if is_default:
         cond = cond | Conversation.department_id.is_(None) | ~Conversation.department_id.in_(known)
-    return select(Conversation.id).where(cond, Conversation.updated_at < cutoff)
+    return select(Conversation.id).where(cond, Conversation.updated_at < cutoff, Conversation.deleted_at.is_(None))
 
 
 def plan(db: Database | None = None, now: datetime | None = None) -> list[dict]:
@@ -62,8 +62,7 @@ def run(db: Database | None = None, actor: str = ACTOR, now: datetime | None = N
                 continue
             for i in range(0, len(ids), 500):
                 chunk = ids[i:i + 500]
-                messages += memory.delete_stored(s, chunk)
-                s.execute(delete(Conversation).where(Conversation.id.in_(chunk)))
+                messages += memory.move_aside(s, chunk)
         per_dept[name] = len(ids)
         conversations += len(ids)
     result = {"conversations": conversations, "messages": messages, "by_department": per_dept}

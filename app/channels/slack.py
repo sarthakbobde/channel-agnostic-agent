@@ -41,7 +41,7 @@ class SlackPresenter(ChannelPresenter):
 
     @staticmethod
     def rating_block(rate: dict) -> dict:
-        """Thumbs up and down under the answer. A thumbs-down also opens a form for the reason and comment (modal)."""
+        """Thumbs up and down under the answer. A thumbs-down also opens a form for a comment and a link (modal)."""
         labels = rate["labels"]
         return {"type": "actions", "block_id": "caa_rating", "elements": [
             {"type": "button", "action_id": "caa_rate_up", "value": rate["payload"],
@@ -51,15 +51,12 @@ class SlackPresenter(ChannelPresenter):
 
     @staticmethod
     def form_view(form: dict, meta: dict) -> dict:
-        """The modal that asks for the reason and an optional comment."""
+        """The modal that asks for an optional comment and link."""
         labels = form["labels"]
-        options = [{"text": {"type": "plain_text", "text": labels["reason_labels"][r][:75]}, "value": r} for r in form["reasons"]]
         return {"type": "modal", "callback_id": RATE_FORM, "private_metadata": json.dumps(meta),
                 "title": {"type": "plain_text", "text": labels["down"][:24]}, "submit": {"type": "plain_text", "text": labels["submit"][:24]},
                 "close": {"type": "plain_text", "text": "x"},
                 "blocks": [
-                    {"type": "input", "block_id": "reason", "optional": True, "label": {"type": "plain_text", "text": labels["reason"][:200]},
-                     "element": {"type": "static_select", "action_id": "reason", "options": options}},
                     {"type": "input", "block_id": "comment", "optional": True, "label": {"type": "plain_text", "text": labels["comment"][:200]},
                      "element": {"type": "plain_text_input", "action_id": "comment", "multiline": True}},
                     {"type": "input", "block_id": "link", "optional": True, "label": {"type": "plain_text", "text": labels["link"][:200]},
@@ -173,7 +170,7 @@ class SlackAdapter(Adapter):
         return Envelope("slack", team, channel, thread_ts, user, "", tuple(self.cfg.get("kb_ids") or ()), self._email_for(user))
 
     def _on_rate(self, ack, body, client):
-        """A thumbs-up or thumbs-down. The rating is stored at once; a thumbs-down also opens the form for a reason and comment."""
+        """A thumbs-up or thumbs-down. The rating is stored at once; a thumbs-down also opens the form for a comment and link."""
         ack()
         action = (body.get("actions") or [{}])[0]
         rating = "down" if action.get("action_id") == "caa_rate_down" else "up"
@@ -196,18 +193,17 @@ class SlackAdapter(Adapter):
         self._acknowledge(client, channel, user, thread_ts, result)
 
     def _on_rate_form(self, ack, body, view, client):
-        """The reason and comment from the form (an optional follow-up to the thumbs-down)."""
+        """The comment and link from the form (an optional follow-up to the thumbs-down)."""
         ack()
         meta = json.loads(view.get("private_metadata") or "{}")
         values = view.get("state", {}).get("values", {})
-        reason = (((values.get("reason") or {}).get("reason") or {}).get("selected_option") or {}).get("value", "")
         comment = ((values.get("comment") or {}).get("comment") or {}).get("value") or ""
         link = ((values.get("link") or {}).get("link") or {}).get("value") or ""
         user = (body.get("user") or {}).get("id", "")
-        if not meta.get("c") or not (reason or comment or link):
+        if not meta.get("c") or not (comment or link):
             return
         result = handle_action(self._rate_env(meta["c"], meta.get("t", ""), meta.get("w") or "t", user), meta.get("p", ""),
-                               rating="down", reason=reason, comment=comment, attachments=[link] if link else None)
+                               rating="down", comment=comment, attachments=[link] if link else None)
         self._acknowledge(client, meta["c"], user, meta.get("t", ""), result)
 
     @staticmethod

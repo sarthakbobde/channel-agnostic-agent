@@ -53,15 +53,15 @@ class Snapshot:
     suggestions_max_searches: int = 3
     suggestions_payload_days: int = 14
     feedback_enabled: bool = False
-    feedback_reasons: tuple = ()
     feedback_comment_max_chars: int = 1000
     feedback_payload_days: int = 14
+    feedback_masking: str = "always"
 
 
-FEEDBACK_REASONS = ("data_mismatch", "data_not_found", "data_not_access", "experience", "other")      # the ticket type seed values (D50)
+FEEDBACK_MASKING = {"always": "Always (recommended)", "follow_switch": "Only while personal-data masking is on"}
 SUGGESTION_MODES = {"same_call": "In the same AI call as the answer", "second_call": "In a second AI call (for models that cannot follow the format)"}
 GLOSSARY_MODES = {"off": "Off", "query": "Expand questions (recommended)", "index": "Also add stable terms to passages when indexing"}
-LIST_FIELDS = ("accepted_languages", "document_languages", "catalog_languages", "feedback_reasons")
+LIST_FIELDS = ("accepted_languages", "document_languages", "catalog_languages")
 
 STRATEGIES = {
     "similarity": "Similarity (meaning)",
@@ -137,12 +137,12 @@ SPEC = (
      "help": "A longer document is summarised section by section, and only this much of it is read. A token is about four characters. Default 6000."},
     {"name": "feedback_enabled", "label": "Let people rate answers", "kind": "bool",
      "help": "Off by default. Adds rating buttons under each answer in the chat apps and the Web UI. A rating can carry a reason and a comment; comments are masked before they are stored. Switch it on or off per channel, knowledge base or department in Scoped settings."},
-    {"name": "feedback_reasons", "label": "Feedback: reasons offered", "kind": "list",
-     "help": "Comma-separated codes: data_mismatch, data_not_found, data_not_access, experience, other. Empty offers all five."},
     {"name": "feedback_comment_max_chars", "label": "Feedback: longest comment (characters)", "min": 50, "max": 4000, "step": 50, "integer": True,
      "help": "A longer comment is cut to this length before it is masked and stored. Default 1000."},
     {"name": "feedback_payload_days", "label": "Feedback: rating buttons work for (days)", "min": 1, "max": 90, "step": 1, "integer": True,
      "help": "After this, the rating buttons of an old answer stop working. Default 14."},
+    {"name": "feedback_masking", "label": "Feedback: when comments are masked", "kind": "choice", "choices": list(FEEDBACK_MASKING), "choice_labels": FEEDBACK_MASKING,
+     "help": "Comments, and later the summaries and ticket evidence, are read by more people and kept longer than conversations, so they are masked even when question masking is off. Choose the second option only if comments must follow the question-masking switch. Default always."},
 )
 _BY_NAME = {f["name"]: f for f in SPEC}
 
@@ -162,7 +162,7 @@ def defaults() -> Snapshot:
                     summary_enabled=False, summary_max_input_tokens=6000, glossary_mode="off", glossary_max_terms=5, glossary_max_aliases=3,
                     suggestions_enabled=False, suggestions_requested=3, suggestions_shown=2, suggestions_dedup_threshold=0.9,
                     suggestions_mode="same_call", suggestions_max_searches=3, suggestions_payload_days=14,
-                    feedback_enabled=False, feedback_reasons=(), feedback_comment_max_chars=1000, feedback_payload_days=14)
+                    feedback_enabled=False, feedback_comment_max_chars=1000, feedback_payload_days=14, feedback_masking="always")
 
 
 def _snapshot(row: GlobalSettings) -> Snapshot:
@@ -176,8 +176,8 @@ def _snapshot(row: GlobalSettings) -> Snapshot:
                     bool(row.suggestions_enabled), row.suggestions_requested or 3, row.suggestions_shown or 2,
                     row.suggestions_dedup_threshold or 0.9, row.suggestions_mode or "same_call", row.suggestions_max_searches or 3,
                     row.suggestions_payload_days or 14,
-                    bool(row.feedback_enabled), tuple(row.feedback_reasons or ()), row.feedback_comment_max_chars or 1000,
-                    row.feedback_payload_days or 14)
+                    bool(row.feedback_enabled), row.feedback_comment_max_chars or 1000, row.feedback_payload_days or 14,
+                    row.feedback_masking or "always")
 
 
 def _read(db: Database) -> tuple[Snapshot, GlobalSettings]:
@@ -213,16 +213,6 @@ def _languages(f: dict, raw, check_catalog: bool = True) -> list[str]:
         if missing:
             raise ValueError("These languages cannot be accepted yet, because not all their system messages are approved "
                              "(Message catalogue): " + ", ".join(missing) + ".")
-    return codes
-
-
-def _reasons(f: dict, raw) -> list[str]:
-    if not isinstance(raw, (list, tuple)) or not all(isinstance(x, str) for x in raw):
-        raise ValueError(f"{f['label']} must be a list of reason codes.")
-    codes = list(dict.fromkeys(x.strip().lower() for x in raw if x.strip()))
-    bad = [c for c in codes if c not in FEEDBACK_REASONS]
-    if bad:
-        raise ValueError(f"{f['label']}: unknown reason: " + ", ".join(bad) + ". Choose from: " + ", ".join(FEEDBACK_REASONS) + ".")
     return codes
 
 
@@ -271,7 +261,7 @@ def validate(values: dict, base: Snapshot, check_catalog: bool = True) -> dict:
             clean[name] = raw
             continue
         if f.get("kind") == "list":
-            clean[name] = tuple(_reasons(f, raw) if name == "feedback_reasons" else _languages(f, raw, check_catalog))
+            clean[name] = tuple(_languages(f, raw, check_catalog))
             continue
         if f.get("kind") == "text":
             from app import language

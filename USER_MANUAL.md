@@ -439,26 +439,26 @@ Use **Send a test** to check. A failing notification never stops the banner.
 
 ## 10b. Feedback on answers
 
-People can rate each answer with a thumbs-up or thumbs-down, and say what went wrong. This is **off by default**.
+People can rate each answer with a thumbs-up or thumbs-down, and add a comment and a link. This is **off by default**.
 
 **Switch it on**
 1. **RAG settings → Feedback → Let people rate answers**: on. (This is the global default.)
 2. To limit it to one channel, knowledge base or department, use **Scoped settings** (the key is *Let people rate answers*). Rating buttons appear only when the channel **and** one of the knowledge bases asked are on.
-3. Optional on the same screen: which reasons are offered, how long a comment may be (default 1000 characters) and for how many days the buttons keep working (default 14).
+3. Optional on the same screen: how long a comment may be (default 1000 characters), for how many days the buttons keep working (default 14), and when comments are masked (always, the default, or only while question masking is on).
 
 **What people see**
 | Channel | Thumbs | After a thumbs-down |
 |---|---|---|
-| Web UI | Thumbs under the answer (the page's own thumbs are hidden) | A reason list, a comment box and a link box |
-| Slack | Two buttons under the answer | A form with a reason list, a comment box and a link box |
-| Teams | Two buttons on a card | A second card with a reason list, a comment box and a link box |
-| Google Chat | Two buttons on a card (follows the *Buttons on cards* switch of the channel) | A card with a reason list, a comment box and a link box |
+| Web UI | Thumbs under the answer (the page's own thumbs are hidden) | A comment box and a link box |
+| Slack | Two buttons under the answer | A form with a comment box and a link box |
+| Teams | Two buttons on a card | A second card with a comment box and a link box |
+| Google Chat | Two buttons on a card (follows the *Buttons on cards* switch of the channel) | A card with a comment box and a link box |
 
-Only the person who asked a question can rate its answer. A second click, or a reason or comment added afterwards, updates the same rating. A thumbs-up with no comment needs no follow-up. A thumbs-down, or any rating with a comment, is kept as **Captured** until the processing added in a later phase looks at it.
+Only the person who asked a question can rate its answer. A second click, or a comment or link added afterwards, updates the same rating. A thumbs-up with no comment needs no follow-up. A thumbs-down, or any rating with a comment, is kept as **Captured** until the processing added in a later phase looks at it.
 
-**Privacy.** Comments are always masked before they are stored, even when question masking is switched off; web links can be added but are kept as links only. Ratings are deleted together with their conversation. Get the privacy sign-off before switching this on.
+**Privacy.** Comments are always masked before they are stored, even when question masking is switched off (unless an Admin chooses otherwise in RAG settings); web links can be added but are kept as links only. When a conversation is deleted, by its owner or by retention, it disappears from every screen but nothing is purged: its ratings and the answer behind each rating stay available to the review screens. Get the privacy sign-off before switching this on.
 
-**Look at the ratings.** **Monitoring → Feedback** lists ratings with filters (rating, channel, knowledge base, state, reason, dates) and shows a short report by channel, knowledge base and reason. *Why this answer?* opens the answer's trace. Admins see everything; an Editor sees the knowledge bases of their own departments. Viewers have no access.
+**Look at the ratings.** **Monitoring → Feedback** lists ratings with filters (rating, channel, knowledge base, state, dates) and shows a short report by channel, knowledge base and state. *Why this answer?* opens the answer's trace. Admins see everything; an Editor sees the knowledge bases of their own departments. Viewers have no access.
 
 
 ## 11. Server settings: the `.env` file

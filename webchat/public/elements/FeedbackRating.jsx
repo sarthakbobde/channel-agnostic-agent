@@ -1,16 +1,14 @@
-// Rating under an answer: a thumbs-up and a thumbs-down. After a thumbs-down it opens a reason list, a comment box and an optional link, which
-// are sent with the rating. A click calls the "caa_rate" action (webchat/chat.py) with the signed payload; the server decides whether it counts
-// (only the asker, not expired) and masks the comment before storing it. It appears only where rating is on, and replaces Chainlit's own thumbs.
+// Rating under an answer: a thumbs-up and a thumbs-down. After a thumbs-down it opens a comment box and an optional link, which are sent with
+// the rating. A click calls the "caa_rate" action (webchat/chat.py) with the signed payload; the server decides whether it counts (only the
+// asker, not expired) and masks the comment before storing it. It appears only where rating is on, and replaces Chainlit's own thumbs.
 import { ThumbsDown, ThumbsUp } from "lucide-react";
 import { useState } from "react";
 
 export default function FeedbackRating() {
   const [state, setState] = useState("idle"); // idle | form | done
-  const [reason, setReason] = useState("");
   const [comment, setComment] = useState("");
   const [link, setLink] = useState("");
   const labels = props.labels || {};
-  const reasons = props.reasons || [];
   if (!props.payload) return null;
 
   function send(rating, extra) {
@@ -22,10 +20,10 @@ export default function FeedbackRating() {
   }
   function down() {
     send("down");
-    setState(reasons.length ? "form" : "done");
+    setState("form");
   }
   function submit() {
-    send("down", { reason, comment, link });
+    send("down", { comment, link });
     setState("done");
   }
 
@@ -49,16 +47,6 @@ export default function FeedbackRating() {
         </div>
       ) : (
         <div className="flex w-full flex-col gap-2 rounded-xl border border-border p-3">
-          <div className="text-xs font-medium text-muted-foreground">{labels.reason || ""}</div>
-          <div className="flex flex-wrap gap-2">
-            {reasons.map((code) => (
-              <button key={code} type="button" onClick={() => setReason(code)}
-                className={"rounded-xl border px-3 py-2 text-left text-sm text-foreground transition-colors hover:bg-accent focus:outline-none focus-visible:ring-2 focus-visible:ring-ring " +
-                  (reason === code ? "border-primary bg-accent" : "border-border bg-card")}>
-                {(labels.reason_labels || {})[code] || code}
-              </button>
-            ))}
-          </div>
           <textarea rows={2} value={comment} onChange={(e) => setComment(e.target.value)} placeholder={labels.comment || ""} className={field} />
           <input type="text" value={link} onChange={(e) => setLink(e.target.value)} placeholder={labels.link || ""} className={field} />
           <div className="flex justify-end">

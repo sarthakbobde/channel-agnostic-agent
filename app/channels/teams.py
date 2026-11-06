@@ -47,14 +47,12 @@ class TeamsPresenter(ChannelPresenter):
         return Activity(type=ActivityTypes.message, attachments=[Attachment(content_type="application/vnd.microsoft.card.adaptive", content=card)])
 
     def form(self, form: dict) -> Activity:
-        """After a thumbs-down: a card with the reason list and a comment box. Teams sends the inputs back with the submit."""
+        """After a thumbs-down: a card with a comment box and a link box. Teams sends the inputs back with the submit."""
         labels = form["labels"]
-        inputs = [{"type": "Input.ChoiceSet", "id": "reason", "style": "compact", "placeholder": labels["reason"],
-                   "choices": [{"title": labels["reason_labels"][r], "value": r} for r in form["reasons"]]},
-                  {"type": "Input.Text", "id": "comment", "isMultiline": True, "placeholder": labels["comment"]},
+        inputs = [{"type": "Input.Text", "id": "comment", "isMultiline": True, "placeholder": labels["comment"]},
                   {"type": "Input.Text", "id": "link", "placeholder": labels["link"]}]
-        return self.card(labels["reason"], [{"type": "Action.Submit", "title": labels["submit"],
-                                             "data": {"caa_action": form["payload"], "caa_rating": "down"}}], inputs)
+        return self.card(labels["down"], [{"type": "Action.Submit", "title": labels["submit"],
+                                           "data": {"caa_action": form["payload"], "caa_rating": "down"}}], inputs)
 
 
 class TeamsAdapter(Adapter):
@@ -132,7 +130,7 @@ class TeamsAdapter(Adapter):
         if act.type != ActivityTypes.message:
             return
         payload = act.value.get("caa_action") if isinstance(act.value, dict) else None    # an Action.Submit: a value, no text
-        fields = {k: (act.value.get(a) or "") for k, a in (("rating", "caa_rating"), ("reason", "reason"), ("comment", "comment"))} if payload else {}
+        fields = {k: (act.value.get(a) or "") for k, a in (("rating", "caa_rating"), ("comment", "comment"))} if payload else {}
         if payload and act.value.get("link"):
             fields["attachments"] = [str(act.value["link"])]
         if not act.text and not payload:

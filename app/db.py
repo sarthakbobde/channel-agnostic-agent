@@ -10,7 +10,7 @@ from functools import lru_cache
 from pathlib import Path
 
 from sqlalchemy import (JSON, Boolean, DateTime, Float, ForeignKey, Index, Integer, LargeBinary, String, Text, UniqueConstraint,
-                        create_engine, event, inspect)
+                        create_engine, event, inspect, text)
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -330,6 +330,7 @@ class Conversation(Base):
     summarised_upto: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, index=True)
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)   # set when deleted: the rows are moved aside, not purged (D62)
 
 
 class Message(Base):
@@ -409,9 +410,9 @@ class GlobalSettings(Base):
     suggestions_max_searches: Mapped[int] = mapped_column(Integer, default=3)
     suggestions_payload_days: Mapped[int] = mapped_column(Integer, default=14)
     feedback_enabled: Mapped[bool] = mapped_column(Boolean, default=False)         # Release 3, Phase 1: off by default
-    feedback_reasons: Mapped[list | None] = mapped_column(JSON, nullable=True)     # reason codes offered; empty = all five
     feedback_comment_max_chars: Mapped[int] = mapped_column(Integer, default=1000)
     feedback_payload_days: Mapped[int] = mapped_column(Integer, default=14)
+    feedback_masking: Mapped[str] = mapped_column(String(16), default="always")   # always | follow_switch (D61)
 
 
 class Feedback(Base):
@@ -435,7 +436,9 @@ class Feedback(Base):
     state: Mapped[str] = mapped_column(String(20), default="captured", index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)
-    __table_args__ = (Index("ix_feedbacks_rater_answer", "rater_key", "answer_id"),)
+    # one OPEN record per rater and answer (any state but ticketed): a rating after `ticketed` is a new record (D49)
+    __table_args__ = (Index("uq_feedbacks_open", "rater_key", "answer_id", unique=True,
+                            sqlite_where=text("state != 'ticketed'"), postgresql_where=text("state != 'ticketed'")),)
 
 
 class JobLock(Base):

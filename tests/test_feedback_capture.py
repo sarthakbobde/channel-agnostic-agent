@@ -1,11 +1,14 @@
-"""Release 3, Phase 1: feedback capture (D49, D50), against the real application, real documents and the real Chroma store. The models
-are stand-ins; the channel presenters are checked on the payloads each platform receives."""
+"""Release 3, Phase 1: feedback capture (D49, D50, D61, D62), against the real application, real documents and the real Chroma store.
+The models are stand-ins; the channel presenters are checked on the payloads each platform receives."""
+import pathlib
+import re
 import time
 import types
 from datetime import datetime, timedelta, timezone
 
 import pytest
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, select
+from sqlalchemy.exc import IntegrityError
 
 from app import chat_service, feedback, global_settings, guardrails, identity, memory, prompts, rag, scoped_settings, suggestions
 from app.admin import users
@@ -50,12 +53,15 @@ def setup(world, monkeypatch):
     scoped_settings.put("kb", world.kb["id"], {"feedback_enabled": True, "score_threshold": 0.3}, "t", world.db)
     monkeypatch.setattr(chat_service, "get_chat_model", lambda: FakeModel(reply='{"search": true, "query": "annual leave carry over"}'))
     monkeypatch.setattr(rag, "get_chat_model", lambda: FakeModel(parts=["Up to five days can be carried over [1]."]))
+    before = guardrails.current(world.db).mask_enabled
     yield
     with get_db().session() as s:
         s.execute(delete(ScopedSetting))
         s.execute(delete(Feedback))
     scoped_settings.invalidate()
-    global_settings.update({"feedback_reasons": [], "feedback_comment_max_chars": 1000, "feedback_payload_days": 14}, "t", world.db)
+    global_settings.update({"feedback_comment_max_chars": 1000, "feedback_payload_days": 14, "feedback_masking": "always"}, "t", world.db)
+    guardrails.update({"mask_enabled": before}, "t", world.db)
+    guardrails.invalidate()
 
 
 def ask(world, conv=CONV, email="fb-asker@sysfore.com"):
@@ -70,9 +76,9 @@ def key(email="fb-asker@sysfore.com"):
     return suggestions.asker_key("web:" + email)
 
 
-def rate(world, result, rating, reason="", comment="", attachments=None, email="fb-asker@sysfore.com"):
+def rate(world, result, rating, comment="", attachments=None, email="fb-asker@sysfore.com"):
     data = feedback.verify(result["feedback"]["payload"], key(email))
-    return feedback.capture(data, rating, reason, comment, attachments, who=identity.resolve(email, world.db), db=world.db)
+    return feedback.capture(data, rating, comment, attachments, who=identity.resolve(email, world.db), db=world.db)
 
 
 def records():
@@ -84,8 +90,8 @@ def records():
 def test_an_answer_carries_signed_rating_controls_when_feedback_is_on(world):
     r = ask(world)
     ctl = r["feedback"]
-    assert ctl["answer_id"] == r["answer_id"] and ctl["payload"] and set(ctl["reasons"]) == set(feedback.REASONS)
-    assert ctl["labels"]["up"] == "Helpful" and ctl["labels"]["reason_labels"]["data_mismatch"]
+    assert ctl["answer_id"] == r["answer_id"] and ctl["payload"] and "reasons" not in ctl
+    assert ctl["labels"]["up"] == "Helpful" and ctl["labels"]["link"].startswith("Link to a screenshot") and "reason" not in ctl["labels"]
     assert feedback.is_rating(ctl["payload"])
 
 
@@ -113,7 +119,7 @@ def test_a_positive_rating_with_no_comment_ends_at_once(world):
     assert out["created"] and out["state"] == feedback.NO_TICKET and out["intent"] == "positive"
     [row] = records()
     assert (row.rating, row.state, row.intent, row.intent_source, row.channel, row.kb_id) == ("up", "no_ticket", "positive", "rating", "web", world.kb["id"])
-    assert row.answer_id and row.user_id == world.asker["id"]
+    assert row.answer_id and row.user_id == world.asker["id"] and row.reason == ""
 
 
 def test_a_thumbs_down_waits_for_processing(world):
@@ -129,14 +135,14 @@ def test_a_positive_rating_with_a_comment_is_not_closed(world):
 def test_rating_again_updates_the_same_record(world):
     r = ask(world, conv="web-1-fb-again")
     first = rate(world, r, "down")
-    second = rate(world, r, "down", reason="data_mismatch", comment="It says five days but the policy says ten")
-    third = rate(world, r, "down", reason="data_mismatch", comment="It says five days but the policy says ten")      # a repeated click
+    second = rate(world, r, "down", comment="It says five days but the policy says ten")
+    third = rate(world, r, "down", comment="It says five days but the policy says ten")      # a repeated click
     assert first["id"] == second["id"] == third["id"] and first["created"] and not second["created"]
     assert second["changed"] and not third["changed"]
     [row] = records()
-    assert row.reason == "data_mismatch" and "policy says ten" in row.comment
-    flipped = rate(world, r, "up")                                    # a thumbs-up afterwards: still the same record
-    assert flipped["id"] == first["id"] and records()[0].rating == "up" and records()[0].reason == ""
+    assert "policy says ten" in row.comment
+    flipped = rate(world, r, "up")                                    # a thumbs-up afterwards: still the same record, and the comment keeps it open
+    assert flipped["id"] == first["id"] and records()[0].rating == "up" and flipped["state"] == feedback.CAPTURED
 
 
 def test_a_rating_after_the_record_was_ticketed_is_a_new_record(world):
@@ -144,29 +150,81 @@ def test_a_rating_after_the_record_was_ticketed_is_a_new_record(world):
     first = rate(world, r, "down")
     with get_db().session() as s:
         s.get(Feedback, first["id"]).state = feedback.TICKETED
-    second = rate(world, r, "down", reason="other")
+    second = rate(world, r, "down", comment="Still wrong")
     assert second["created"] and second["id"] != first["id"]
     assert [x.state for x in records()] == ["ticketed", "captured"]
 
 
-def test_a_review_in_progress_is_not_undone_by_a_later_click(world):
-    r = ask(world, conv="web-1-fb-review")
+@pytest.mark.parametrize("state", [feedback.HUMAN_REVIEW, feedback.READY_FOR_TICKET])
+def test_a_review_or_a_feedback_about_to_be_ticketed_is_not_undone_by_a_later_click(world, state):
+    r = ask(world, conv="web-1-fb-" + state)
     first = rate(world, r, "down")
     with get_db().session() as s:
-        s.get(Feedback, first["id"]).state = feedback.HUMAN_REVIEW
-    assert rate(world, r, "up")["state"] == feedback.HUMAN_REVIEW
+        s.get(Feedback, first["id"]).state = state
+    again = rate(world, r, "up")
+    assert again["state"] == state and again["id"] == first["id"] and not again["created"]      # ready_for_ticket is open too (D49)
+
+
+def test_two_open_records_for_one_rater_and_answer_cannot_exist(world):
+    r = ask(world, conv="web-1-fb-unique")
+    first = rate(world, r, "down")
+    with pytest.raises(IntegrityError):
+        with get_db().session() as s:
+            s.add(Feedback(answer_id=r["answer_id"], conversation_id=CONV, rater_key=key(), rating="up", state=feedback.CAPTURED, attachments=[]))
+    assert [x.id for x in records()] == [first["id"]]
+
+
+def test_two_clicks_at_once_end_as_one_record(world, monkeypatch):
+    """The second click looks for an open record before the first one is stored, finds none, and is refused by the database: it is then
+    stored as an update of the first."""
+    r = ask(world, conv="web-1-fb-race")
+    data = feedback.verify(r["feedback"]["payload"], key())
+    real, calls = feedback._open_row, {"n": 0}
+
+    def blind_once(s, d):
+        calls["n"] += 1
+        return None if calls["n"] == 1 else real(s, d)
+    feedback.capture(data, "down", "", None, who=identity.resolve("fb-asker@sysfore.com", world.db), db=world.db)
+    monkeypatch.setattr(feedback, "_open_row", blind_once)
+    out = feedback.capture(data, "down", "Wrong figure", None, who=identity.resolve("fb-asker@sysfore.com", world.db), db=world.db)
+    assert calls["n"] == 2 and not out["created"] and len(records()) == 1 and records()[0].comment == "Wrong figure"
 
 
 def test_the_comment_is_masked_before_it_is_stored(world):
     guardrails.update({"mask_enabled": True}, "t", world.db)
     guardrails.invalidate()
-    try:
-        rate(world, ask(world, conv="web-1-fb-mask"), "down", comment="Call me on rita.k@example.net, my card is 4111 1111 1111 1111")
-        [row] = records()
-        assert "rita.k@example.net" not in row.comment and "4111" not in row.comment
-    finally:
-        guardrails.update({"mask_enabled": False}, "t", world.db)
-        guardrails.invalidate()
+    rate(world, ask(world, conv="web-1-fb-mask"), "down", comment="Call me on rita.k@example.net, my card is 4111 1111 1111 1111")
+    [row] = records()
+    assert "rita.k@example.net" not in row.comment and "4111" not in row.comment
+
+
+def test_a_comment_is_masked_even_when_question_masking_is_off(world):
+    guardrails.update({"mask_enabled": False}, "t", world.db)
+    guardrails.invalidate()
+    rate(world, ask(world, conv="web-1-fb-maskoff"), "down", comment="Write to rita.k@example.net about it")
+    assert "rita.k@example.net" not in records()[0].comment
+
+
+def test_an_admin_can_make_comments_follow_the_masking_switch(world):
+    global_settings.update({"feedback_masking": "follow_switch"}, "t", world.db)
+    guardrails.update({"mask_enabled": False}, "t", world.db)
+    guardrails.invalidate()
+    rate(world, ask(world, conv="web-1-fb-follow"), "down", comment="Write to rita.k@example.net about it")
+    assert "rita.k@example.net" in records()[0].comment                 # documented: with the switch off, the text is stored as typed
+    guardrails.update({"mask_enabled": True}, "t", world.db)
+    guardrails.invalidate()
+    rate(world, ask(world, conv="web-1-fb-follow2"), "down", comment="Write to rita.k@example.net about it")
+    assert "rita.k@example.net" not in records()[1].comment
+    with pytest.raises(ValueError):
+        global_settings.update({"feedback_masking": "sometimes"}, "t", world.db)
+
+
+def test_a_comment_that_cannot_be_masked_is_refused_not_stored(world, monkeypatch):
+    r = ask(world, conv="web-1-fb-failmask")
+    monkeypatch.setattr(guardrails, "mask_with", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("engine down")))
+    with pytest.raises(RuntimeError):
+        rate(world, r, "down", comment="Write to rita.k@example.net")
+    assert records() == []
 
 
 def test_a_long_comment_is_cut_to_the_limit(world):
@@ -181,24 +239,16 @@ def test_attachments_are_kept_as_links_only(world):
     assert records()[0].attachments == ["https://example.com/screenshot.png"]
 
 
-def test_an_unknown_rating_or_reason_is_refused(world):
+def test_an_unknown_rating_is_refused(world):
     r = ask(world, conv="web-1-fb-bad")
     with pytest.raises(ValueError):
         rate(world, r, "meh")
-    with pytest.raises(ValueError):
-        rate(world, r, "down", reason="because")
     assert records() == []
 
 
-def test_only_the_reasons_the_admin_offers_are_accepted(world):
-    global_settings.update({"feedback_reasons": ["data_mismatch", "other"]}, "t", world.db)
-    r = ask(world, conv="web-1-fb-reasons")
-    assert r["feedback"]["reasons"] == ["data_mismatch", "other"]
-    with pytest.raises(ValueError):
-        rate(world, r, "down", reason="experience")
-    assert rate(world, r, "down", reason="other")["state"] == feedback.CAPTURED
-    with pytest.raises(ValueError):
-        global_settings.update({"feedback_reasons": ["nonsense"]}, "t", world.db)
+def test_there_is_no_reason_list(world):
+    assert "feedback_reasons" not in {f["name"] for f in global_settings.SPEC}
+    assert not any(k.startswith("feedback_reason") for k in __import__("app.catalog", fromlist=["TEXTS"]).TEXTS)
 
 
 # ---- who may rate ---------------------------------------------------------------------------------------------------------------
@@ -243,10 +293,12 @@ def test_a_click_through_the_core_stores_the_rating_and_answers_with_thanks(worl
     r = ask(world, conv="web-1-fb-core")
     out = core.handle_action(envelope(), r["feedback"]["payload"], rating="down")
     assert out["answer"] == "Thank you for your feedback." and out["feedback"]["state"] == "captured"
-    assert out["feedback_form"]["payload"] == r["feedback"]["payload"] and out["feedback_form"]["reasons"]     # asks for the reason and comment
-    out2 = core.handle_action(envelope(), r["feedback"]["payload"], rating="down", reason="data_not_found", comment="It is in the policy")
+    form = out["feedback_form"]
+    assert form["payload"] == r["feedback"]["payload"] and "reasons" not in form and form["labels"]["comment"] and form["labels"]["link"]
+    out2 = core.handle_action(envelope(), r["feedback"]["payload"], rating="down", comment="It is in the policy", attachments=["https://example.com/a.png", "not a link"])
     assert out2["answer"] == "Thank you, your feedback was updated." and "feedback_form" not in out2
-    assert len(records()) == 1 and records()[0].reason == "data_not_found"
+    [row] = records()
+    assert row.comment == "It is in the policy" and row.attachments == ["https://example.com/a.png"]
     up = core.handle_action(envelope(), ask(world, conv="web-1-fb-core2")["feedback"]["payload"], rating="up")
     assert "feedback_form" not in up
 
@@ -277,15 +329,47 @@ def test_a_deactivated_person_cannot_rate(world, monkeypatch):
         users.update_user(world.db, world.asker["id"], status="Active")
 
 
-# ---- retention ----------------------------------------------------------------------------------------------------------------------
-def test_deleting_a_conversation_deletes_its_feedback(world):
+# ---- deleting a conversation (D62) --------------------------------------------------------------------------------------------------
+def test_deleting_a_conversation_keeps_its_feedback_and_its_answer_readable_for_review(world):
     r = ask(world, conv="web-1-fb-del")
     rate(world, r, "down", comment="Wrong")
     other = ask(world, conv="web-1-fb-keep")
     rate(world, other, "up")
-    assert len(records()) == 2
-    memory.delete("web-1-fb-del")
-    assert [x.conversation_id for x in records()] == ["web-1-fb-keep"]
+    assert memory.delete("web-1-fb-del")
+    assert len(records()) == 2                                           # nothing is purged
+    deleted = [x for x in records() if x.answer_id == r["answer_id"]][0]
+    assert deleted.conversation_id != "web-1-fb-del" and "web-1-fb-del" in deleted.conversation_id
+    assert memory.get_messages("web-1-fb-del") == [] and "web-1-fb-del" not in [c["id"] for c in memory.list_conversations()]
+    with get_db().session() as s:
+        assert s.get(Message, r["answer_id"]).content and s.get(Message, r["answer_id"]).conversation_id == deleted.conversation_id
+    assert world.admin.get(f"{P}/traces/{r['answer_id']}").status_code == 200       # the review screens still reach it
+    again = ask(world, conv="web-1-fb-del")                              # the same id can start a fresh conversation
+    assert again["answer_id"] != r["answer_id"] and memory.get_messages("web-1-fb-del")
+
+
+def test_the_retention_job_moves_a_conversation_aside_through_the_same_helper(world):
+    r = ask(world, conv="web-1-fb-shared")
+    rate(world, r, "down")
+    with get_db().session() as s:
+        assert memory.move_aside(s, ["web-1-fb-shared"]) >= 2
+    assert len(records()) == 1 and records()[0].conversation_id != "web-1-fb-shared"
+
+
+def test_every_table_with_a_conversation_id_is_moved_aside_with_the_conversation():
+    from app.db import Base
+    have = {t.__tablename__ for t in memory.CONVERSATION_TABLES}
+    found = {t.name for t in Base.metadata.tables.values() if "conversation_id" in t.c}
+    assert found == have, f"a table keeps rows per conversation but is not moved aside with it: {sorted(found - have)}"
+
+
+def test_no_code_deletes_conversations_without_the_helper():
+    root = pathlib.Path(__file__).resolve().parents[1] / "app"
+    bad = []
+    for path in root.rglob("*.py"):
+        text = path.read_text(encoding="utf-8")
+        if re.search(r"\bdelete\((Conversation|Message|AnswerTrace|Suggestion|Feedback)\b", text) or re.search(r"s\.delete\((c|conv|conversation)\)", text):
+            bad.append(str(path.relative_to(root)))
+    assert bad == [], f"conversations must be deleted through memory.move_aside, not directly: {bad}"
 
 
 # ---- the Web API ----------------------------------------------------------------------------------------------------------------------
@@ -307,10 +391,11 @@ def test_the_web_api_carries_the_controls_and_takes_a_rating_by_payload(world, m
     c2, h2 = web("fb-other@sysfore.com", monkeypatch, world)
     assert c2.post("/chat/feedback", headers=h2, json={"conv_id": "api-fb", "payload": ctl["payload"], "rating": "up"}).status_code == 403
     down = c.post("/chat/feedback", headers=h, json={"conv_id": "api-fb", "payload": ctl["payload"], "rating": "down"}).json()
-    assert down["message"] == "Thank you for your feedback." and down["state"] == "captured" and down["form"]["reasons"]
-    again = c.post("/chat/feedback", headers=h, json={"conv_id": "api-fb", "payload": ctl["payload"], "rating": "down", "reason": "other", "comment": "Wrong"}).json()
+    assert down["message"] == "Thank you for your feedback." and down["state"] == "captured" and "reasons" not in down["form"]
+    again = c.post("/chat/feedback", headers=h, json={"conv_id": "api-fb", "payload": ctl["payload"], "rating": "down", "comment": "Wrong",
+                                                       "attachments": ["https://example.com/a.png"]}).json()
     assert again["message"] == "Thank you, your feedback was updated." and again["form"] is None
-    assert len(records()) == 1 and records()[0].reason == "other"
+    assert len(records()) == 1 and records()[0].comment == "Wrong" and records()[0].attachments == ["https://example.com/a.png"]
     assert c.post("/chat/feedback", headers=h, json={"conv_id": "api-fb", "payload": ctl["payload"], "rating": "meh"}).status_code == 400
     assert c.post("/chat/feedback", headers=h, json={"conv_id": "api-fb", "payload": "junk", "rating": "up"}).status_code == 400
 
@@ -328,10 +413,8 @@ def test_slack_shows_thumbs_and_opens_a_form_for_a_thumbs_down(world):
     [row] = [b for b in out["blocks"] if b.get("block_id") == "caa_rating"]
     assert [e["action_id"] for e in row["elements"]] == ["caa_rate_up", "caa_rate_down"] and row["elements"][0]["value"] == r["feedback"]["payload"]
     assert SlackPresenter().render({**r, "feedback": None}, True) == {"text": r["answer"]}            # no blocks when rating is off
-    form = {"payload": "p", "answer_id": 1, "reasons": ["other"], "labels": feedback.labels()}
-    view = SlackPresenter.form_view(form, {"p": "p"})
-    assert view["callback_id"] == "caa_rate_form" and [b["block_id"] for b in view["blocks"]] == ["reason", "comment", "link"]
-    assert view["blocks"][0]["element"]["options"][0]["value"] == "other"
+    view = SlackPresenter.form_view(feedback.form_for("p", 1), {"p": "p"})
+    assert view["callback_id"] == "caa_rate_form" and [b["block_id"] for b in view["blocks"]] == ["comment", "link"]
 
 
 def test_teams_shows_thumbs_and_a_form_card(world):
@@ -341,8 +424,8 @@ def test_teams_shows_thumbs_and_a_form_card(world):
     assert [(a["title"], a["data"]["caa_rating"]) for a in card["actions"]] == [("\U0001F44D Helpful", "up"), ("\U0001F44E Not helpful", "down")]
     assert all(a["data"]["caa_action"] == r["feedback"]["payload"] for a in card["actions"])
     assert TeamsPresenter().render({**r, "feedback": None}, True) == r["answer"]
-    form = TeamsPresenter().form({"payload": "p", "answer_id": 1, "reasons": ["data_mismatch", "other"], "labels": feedback.labels()}).attachments[0].content
-    assert [i["id"] for i in form["body"][1:]] == ["reason", "comment", "link"] and form["actions"][0]["data"] == {"caa_action": "p", "caa_rating": "down"}
+    form = TeamsPresenter().form(feedback.form_for("p", 1)).attachments[0].content
+    assert [i["id"] for i in form["body"][1:]] == ["comment", "link"] and form["actions"][0]["data"] == {"caa_action": "p", "caa_rating": "down"}
 
 
 def test_google_chat_shows_thumbs_and_reads_a_click_and_a_form(world):
@@ -353,21 +436,17 @@ def test_google_chat_shows_thumbs_and_reads_a_click_and_a_form(world):
     assert [b["onClick"]["action"]["function"] for b in rating] == ["caa_rate", "caa_rate"]
     payload = r["feedback"]["payload"]
     classic = {"type": "CARD_CLICKED", "action": {"actionMethodName": "caa_rate", "parameters": [{"key": "payload", "value": payload}, {"key": "rating", "value": "down"}]}}
-    assert GChatAdapter.click_payload(classic) == payload and GChatAdapter.click_fields(classic) == {"rating": "down", "reason": "", "comment": ""}
+    assert GChatAdapter.click_payload(classic) == payload and GChatAdapter.click_fields(classic) == {"rating": "down", "comment": ""}
     addon = {"commonEventObject": {"invokedFunction": "caa_rate_form", "parameters": {"payload": payload, "rating": "down"},
-                                   "formInputs": {"reason": {"stringInputs": {"value": ["data_mismatch"]}}, "comment": {"stringInputs": {"value": ["Wrong policy"]}}}}}
+                                   "formInputs": {"comment": {"stringInputs": {"value": ["Wrong policy"]}}, "link": {"stringInputs": {"value": ["https://example.com/shot.png"]}}}}}
     assert GChatAdapter.click_payload(addon) == payload
-    assert GChatAdapter.click_fields(addon) == {"rating": "down", "reason": "data_mismatch", "comment": "Wrong policy"}
-    suggestion_click = {"commonEventObject": {"invokedFunction": "caa_suggest", "parameters": {"payload": "x"}}}
-    assert GChatAdapter.click_fields(suggestion_click) == {}
-    form = GChatPresenter.form_card({"payload": payload, "answer_id": 1, "reasons": ["other"], "labels": feedback.labels()})
+    assert GChatAdapter.click_fields(addon) == {"rating": "down", "comment": "Wrong policy", "attachments": ["https://example.com/shot.png"]}
+    assert GChatAdapter.click_fields({"commonEventObject": {"invokedFunction": "caa_suggest", "parameters": {"payload": "x"}}}) == {}
+    form = GChatPresenter.form_card(feedback.form_for(payload, 1))
     widgets = form["card"]["sections"][0]["widgets"]
-    assert "selectionInput" in widgets[0] and "textInput" in widgets[1] and "textInput" in widgets[2]
-    assert widgets[3]["buttonList"]["buttons"][0]["onClick"]["action"]["function"] == "caa_rate_form"
-    withlink = {"commonEventObject": {"invokedFunction": "caa_rate_form", "parameters": {"payload": payload, "rating": "down"},
-                                      "formInputs": {"link": {"stringInputs": {"value": ["https://example.com/shot.png"]}}}}}
-    assert GChatAdapter.click_fields(withlink) == {"rating": "down", "reason": "", "comment": "", "attachments": ["https://example.com/shot.png"]}
-    off, cards_off = GChatPresenter(buttons=False).render({**r, "feedback_form": {"payload": payload, "answer_id": 1, "reasons": ["other"], "labels": feedback.labels()}}, True)
+    assert "textInput" in widgets[0] and "textInput" in widgets[1]
+    assert widgets[2]["buttonList"]["buttons"][0]["onClick"]["action"]["function"] == "caa_rate_form"
+    _, cards_off = GChatPresenter(buttons=False).render({**r, "feedback_form": feedback.form_for(payload, 1)}, True)
     assert cards_off == []                                                  # buttons off: no rating card and no form either
 
 
@@ -382,16 +461,16 @@ def test_admin_sees_all_feedback_and_an_editor_only_their_departments(world):
     with world.db.session() as s:
         s.add(DepartmentEditor(department_id=world.hr, user_id=ed["id"]))
     kb2 = world.admin.post(P + "/kbs", headers=world.ah, json={"name": "Fb IT", "department_id": other_dept}).json()
-    rate(world, ask(world, conv="web-1-fb-adm1"), "down", reason="data_mismatch", comment="Wrong")
+    rate(world, ask(world, conv="web-1-fb-adm1"), "down", comment="Wrong")
     with get_db().session() as s:
-        s.add(Feedback(answer_id=999, conversation_id="web-1-elsewhere", rater_key="z", kb_id=kb2["id"], channel="slack", rating="up", state="no_ticket"))
+        s.add(Feedback(answer_id=999, conversation_id="web-1-elsewhere", rater_key="z", kb_id=kb2["id"], channel="slack", rating="up", state="no_ticket", attachments=[]))
     editor, _ = sign_in("fb-ed@sysfore.com")
     mine = editor.get(P + "/feedback").json()
-    assert mine["total"] == 1 and mine["items"][0]["kb"] == "Fb HR" and mine["items"][0]["comment"] == "Wrong"
+    assert mine["total"] == 1 and mine["items"][0]["kb"] == "Fb HR" and mine["items"][0]["comment"] == "Wrong" and "reasons" not in mine and "reason" not in mine["items"][0]
     assert world.admin.get(P + "/feedback").json()["total"] == 2
     assert editor.get(P + "/feedback", params={"kb_id": kb2["id"]}).json()["total"] == 0               # another department's knowledge base
     rep = editor.get(P + "/feedback/report").json()
-    assert (rep["total"], rep["up"], rep["down"], rep["by_reason"][0]["name"]) == (1, 0, 1, "data_mismatch")
+    assert (rep["total"], rep["up"], rep["down"]) == (1, 0, 1) and "by_reason" not in rep
     full = world.admin.get(P + "/feedback/report").json()
     assert {r["name"] for r in full["by_channel"]} == {"web", "slack"} and full["total"] == 2
     assert editor.get(P + "/feedback", params={"state": "nonsense"}).status_code == 422
@@ -413,38 +492,6 @@ def test_the_feedback_screen_is_listed_for_admins_and_editors_only():
     assert roles.allowed("editor", "/admin/api/feedback") and not roles.allowed("viewer", "/admin/api/feedback")
 
 
-# ---- closing the gaps ---------------------------------------------------------------------------------------------------------------
-def test_a_comment_is_masked_even_when_question_masking_is_off(world):
-    guardrails.update({"mask_enabled": False}, "t", world.db)
-    guardrails.invalidate()
-    rate(world, ask(world, conv="web-1-fb-maskoff"), "down", comment="Write to rita.k@example.net about it")
-    assert "rita.k@example.net" not in records()[0].comment
-
-
-def test_a_link_typed_into_a_form_is_kept_as_a_link(world, monkeypatch):
-    monkeypatch.setattr(core, "asker_of", lambda env: "web:" + env.email)
-    r = ask(world, conv="web-1-fb-link")
-    core.handle_action(envelope(), r["feedback"]["payload"], rating="down", reason="other", attachments=["https://example.com/a.png", "not a link"])
-    assert records()[0].attachments == ["https://example.com/a.png"]
-
-
-def test_every_table_with_a_conversation_id_is_deleted_with_the_conversation():
-    from app import memory
-    from app.db import Base
-    have = {t.__tablename__ for t in memory.CONVERSATION_TABLES}
-    found = {t.name for t in Base.metadata.tables.values() if "conversation_id" in t.c}
-    assert found == have, f"a table keeps rows per conversation but is not deleted with it: {sorted(found - have)}"
-
-
-def test_the_retention_job_removes_feedback_through_the_shared_helper(world):
-    from app import memory
-    r = ask(world, conv="web-1-fb-shared")
-    rate(world, r, "down")
-    with get_db().session() as s:
-        assert memory.delete_stored(s, ["web-1-fb-shared"]) >= 2
-    assert records() == []
-
-
-def test_the_texts_of_the_rating_controls_include_the_link_and_the_thanks():
+def test_the_texts_of_the_rating_controls():
     labels = feedback.labels()
-    assert labels["link"].startswith("Link to a screenshot") and labels["thanks"] == "Thank you for your feedback."
+    assert labels["link"].startswith("Link to a screenshot") and labels["thanks"] == "Thank you for your feedback." and "reason" not in labels

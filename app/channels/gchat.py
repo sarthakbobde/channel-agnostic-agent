@@ -30,7 +30,7 @@ TIMEOUT_REPLY = "That took too long. Please try again, or ask a shorter question
 
 FUNCTION = "caa_suggest"
 RATE = "caa_rate"              # a thumbs-up or thumbs-down
-RATE_FORM = "caa_rate_form"    # the reason and comment after a thumbs-down
+RATE_FORM = "caa_rate_form"    # the comment and link after a thumbs-down
 FUNCTIONS = (FUNCTION, RATE, RATE_FORM)
 
 
@@ -67,11 +67,9 @@ class GChatPresenter(ChannelPresenter):
 
     @staticmethod
     def form_card(form: dict) -> dict:
-        """After a thumbs-down: a card with a reason dropdown and a comment box. Google sends the inputs back with the button click."""
+        """After a thumbs-down: a card with a comment box and a link box. Google sends the inputs back with the button click."""
         labels = form["labels"]
-        return {"cardId": "caa-rating-form", "card": {"sections": [{"header": labels["reason"], "widgets": [
-            {"selectionInput": {"name": "reason", "label": labels["reason"], "type": "DROPDOWN",
-                                "items": [{"text": labels["reason_labels"][r], "value": r, "selected": False} for r in form["reasons"]]}},
+        return {"cardId": "caa-rating-form", "card": {"sections": [{"header": labels["down"], "widgets": [
             {"textInput": {"name": "comment", "label": labels["comment"], "type": "MULTIPLE_LINE"}},
             {"textInput": {"name": "link", "label": labels["link"], "type": "SINGLE_LINE"}},
             {"buttonList": {"buttons": [{"text": labels["submit"], "onClick": {"action": {"function": RATE_FORM, "parameters": [
@@ -149,13 +147,13 @@ class GChatAdapter(Adapter):
 
     @classmethod
     def click_fields(cls, body: dict) -> dict:
-        """What a rating click carries: the rating, and for the form the reason and comment typed into it."""
+        """What a rating click carries: the rating, and for the form the comment and link typed into it."""
         function, params = cls._click(body)
         if function not in (RATE, RATE_FORM):
             return {}
         out = {"rating": params.get("rating", "")}
         inputs = ((body.get("commonEventObject") or {}).get("formInputs") or (body.get("common") or {}).get("formInputs") or {}) if function == RATE_FORM else {}
-        for name in ("reason", "comment", "link"):
+        for name in ("comment", "link"):
             values = ((inputs.get(name) or {}).get("stringInputs") or {}).get("value") or []
             out[name] = values[0] if values else ""
         link = out.pop("link")

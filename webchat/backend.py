@@ -100,11 +100,11 @@ async def act(token: str, conv_id: str, payload: str) -> tuple[int, dict]:
     return r.status_code, body if isinstance(body, dict) else {}
 
 
-async def rate(token: str, conv_id: str, payload: str, rating: str, reason: str = "", comment: str = "", attachments=None) -> tuple[int, dict]:
+async def rate(token: str, conv_id: str, payload: str, rating: str, comment: str = "", attachments=None) -> tuple[int, dict]:
     """A rating from the control under an answer: the API checks the signed payload (only the asker, not expired)."""
     try:
         async with _client(ASK_TIMEOUT) as c:
-            r = await c.post("/chat/feedback", json={"conv_id": conv_id, "payload": payload, "rating": rating, "reason": reason, "comment": comment,
+            r = await c.post("/chat/feedback", json={"conv_id": conv_id, "payload": payload, "rating": rating, "comment": comment,
                                    "attachments": attachments or []},
                              headers={"Authorization": f"Bearer {token}"})
     except httpx.TimeoutException:

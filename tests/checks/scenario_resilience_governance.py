@@ -107,8 +107,10 @@ with db.session() as s:
 before = w.store.recent_audit(500)
 r = admin.post(P + "/conversations/retention/run", headers=ah)
 with db.session() as s:
-    left = {m.content for m in s.scalars(select(Message))}
+    left = {m.content for m in s.scalars(select(Message).join(Conversation, Conversation.id == Message.conversation_id).where(Conversation.deleted_at.is_(None)))}
+    aside = {m.content for m in s.scalars(select(Message).join(Conversation, Conversation.id == Message.conversation_id).where(Conversation.deleted_at.is_not(None)))}
 ok(r.status_code == 200 and "An old question" not in left and "A recent question" in left, "retention removes a conversation older than the department's 30 days and keeps the recent one")
+ok("An old question" in aside and "A recent question" not in aside, "an expired conversation is moved aside, not purged (D62)")
 acts = w.store.recent_audit(500)
 ok(any(e["action"] == "retention.run" for e in acts), "the retention run is in the audit log")
 

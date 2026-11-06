@@ -37,7 +37,7 @@ class ChatResponse(BaseModel):
     language: str = ""                # the language the answer is written in (D19)
     rejected: str | None = None       # "language" when the question's language is not accepted (D39)
     suggestions: list[dict] = []      # [{text, suggestion_id, payload}]; payload None = show as plain text (D26, D37)
-    feedback: dict | None = None      # {payload, answer_id, reasons, labels} when the answer can be rated (Release 3)
+    feedback: dict | None = None      # {payload, answer_id, labels} when the answer can be rated (Release 3)
 
 
 class ActionRequest(BaseModel):
@@ -49,7 +49,6 @@ class FeedbackRequest(BaseModel):
     conv_id: str
     payload: str
     rating: str
-    reason: str = ""
     comment: str = ""
     attachments: list[str] = []
 
@@ -243,7 +242,7 @@ def chat_action(request: ActionRequest, caller: Caller = Depends(require_chat_ca
 @app.post("/chat/feedback")
 def chat_feedback(request: FeedbackRequest, caller: Caller = Depends(require_chat_caller)):
     """A rating of an answer (D49, D50): the signed payload is checked (only the asker, not expired), then it is stored.
-    -> {message, state, form} where `form` asks for a reason and comment after a thumbs-down that came without them."""
+    -> {message, state, form} where `form` asks for a comment and a link after a thumbs-down that came without them."""
     conv = _conv(caller, request.conv_id)
     lang = memory.last_language(conv)
     asker = suggestions.asker_key(_asker(caller))
@@ -256,7 +255,7 @@ def chat_feedback(request: FeedbackRequest, caller: Caller = Depends(require_cha
         raise HTTPException(403, catalog.t("denied", lang))
     token = identity.bind(who)
     try:
-        saved = feedback.capture(data, request.rating, request.reason, request.comment, request.attachments, who=who)
+        saved = feedback.capture(data, request.rating, request.comment, request.attachments, who=who)
     except ValueError:
         raise HTTPException(400, catalog.t("feedback_invalid", lang))
     except Exception:
@@ -264,10 +263,10 @@ def chat_feedback(request: FeedbackRequest, caller: Caller = Depends(require_cha
         raise HTTPException(500, "Internal error")
     finally:
         identity.unbind(token)
-    detailed = bool(request.reason or request.comment)
+    detailed = bool(request.comment or request.attachments)
     form = None
     if saved["intent"] != "positive" and request.rating == feedback.DOWN and not detailed:
-        form = {"payload": request.payload, "answer_id": data["a"], "reasons": feedback.reasons_offered(), "labels": feedback.labels(lang)}
+        form = feedback.form_for(request.payload, data["a"], lang)
     return {"message": catalog.t("feedback_updated" if detailed or not saved["created"] else "feedback_thanks", lang),
             "state": saved["state"], "form": form}
 

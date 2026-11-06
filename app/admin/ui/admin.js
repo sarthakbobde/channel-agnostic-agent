@@ -835,7 +835,7 @@
       ["Languages", "Answers are always written in the language of the question. Language codes are two letters, for example en or hi.", ["accepted_languages", "default_language", "document_languages", "language_confidence", "catalog_languages"]],
       ["Document summaries", "A short summary of each document, shown in KB documents. Display only: never used to answer.", ["summary_enabled", "summary_max_input_tokens"]],
       ["Glossary", "Expand searches with the terms in Input > Glossary. Off by default.", ["glossary_mode", "glossary_max_terms", "glossary_max_aliases"]],
-      ["Feedback", "Rating buttons under each answer. Switch them on or off for one channel, knowledge base or department under Scoped settings. Comments are masked before they are stored.", ["feedback_enabled", "feedback_reasons", "feedback_comment_max_chars", "feedback_payload_days"]]
+      ["Feedback", "Rating buttons under each answer. Switch them on or off for one channel, knowledge base or department under Scoped settings. Comments are masked before they are stored.", ["feedback_enabled", "feedback_comment_max_chars", "feedback_payload_days", "feedback_masking"]]
     ];
 
     function show(data, notice) {
@@ -3466,8 +3466,6 @@
   }
 
   // ---- feedback ----------------------------------------------------------------------
-  var REASON_NAMES = { data_mismatch: "Does not match the documents", data_not_found: "In the documents, not found", data_not_access: "Cannot see a document",
-                       experience: "Slow or hard to use", other: "Something else" };
   var STATE_NAMES = { captured: "Captured", no_ticket: "No ticket needed", human_review: "Waiting for a person", ready_for_ticket: "Ready for a ticket", ticketed: "Ticket raised" };
   async function viewFeedback(main) {
     var isAdmin = state.perm && state.perm.can_manage_all;
@@ -3478,7 +3476,6 @@
     var chan = selectOf([["", "All channels"], ["web", "Web UI"], ["slack", "Slack"], ["teams", "Teams"], ["gchat", "Google Chat"], ["other", "Other"]], "", null, "Channel"); chan.id = "fb_chan";
     var stateSel = h("select", { id: "fb_state", "aria-label": "State" }, h("option", { value: "", text: "Any state" }));
     var kbSel = h("select", { id: "fb_kb", "aria-label": "Knowledge base" }, h("option", { value: "", text: "All knowledge bases" }));
-    var reasonSel = h("select", { id: "fb_reason", "aria-label": "Reason" }, h("option", { value: "", text: "Any reason" }));
     var dr = dateRange("fb", function () { page = 0; load(); }, false);
     var summary = h("div", {});
     var list = h("div", {});
@@ -3503,8 +3500,6 @@
           r.total ? h("div", { class: "cols" },
             splitTable("Ratings by channel", "Channel", r.by_channel, function (n) { return channelName(n); }),
             splitTable("Ratings by knowledge base", "Knowledge base", r.by_kb, function (n) { return n; }),
-            r.by_reason.length ? h("div", {}, h("h4", {}, "Reasons for “not helpful”"), h("ul", {}, r.by_reason.map(function (x) {
-              return h("li", {}, (REASON_NAMES[x.name] || (x.name === "(none)" ? "No reason given" : x.name)) + ": " + x.count); }))) : null,
             r.by_state.length ? h("div", {}, h("h4", {}, "Where they stand"), h("ul", {}, r.by_state.map(function (x) {
               return h("li", {}, (STATE_NAMES[x.name] || x.name) + ": " + x.count); }))) : null)
             : h("p", { class: "empty" }, "No ratings yet. Turn on “Let people rate answers” under RAG settings.")));
@@ -3512,21 +3507,20 @@
     }
     async function load() {
       var q = "?limit=" + size + "&offset=" + (page * size) + "&rating=" + rating.value + "&channel=" + chan.value + "&state=" + stateSel.value + "&kb_id=" + (kbSel.value || 0)
-        + "&reason=" + reasonSel.value + "&date_from=" + dr.from.value + "&date_to=" + dr.to.value;
+        + "&date_from=" + dr.from.value + "&date_to=" + dr.to.value;
       try {
         var r = await api("GET", "/feedback" + q);
         if (!filled) {
           filled = true;
           r.states.forEach(function (s) { stateSel.appendChild(h("option", { value: s, text: STATE_NAMES[s] || s })); });
           r.knowledge_bases.forEach(function (k) { kbSel.appendChild(h("option", { value: String(k.id), text: k.name })); });
-          r.reasons.forEach(function (x) { reasonSel.appendChild(h("option", { value: x, text: REASON_NAMES[x] || x })); });
         }
         var body = h("tbody", {});
         r.items.forEach(function (f) {
           body.appendChild(h("tr", {},
             h("td", { class: "nw", "data-label": "Rating" }, h("span", { class: "pill " + (f.rating === "up" ? "ok" : "bad") }, f.rating === "up" ? "Helpful" : "Not helpful")),
-            h("td", { class: "wrap", "data-label": "Reason and comment" }, h("b", {}, REASON_NAMES[f.reason] || f.reason || ""),
-              f.comment ? h("div", {}, f.comment) : null,
+            h("td", { class: "wrap", "data-label": "Comment" },
+              f.comment ? h("div", {}, f.comment) : h("span", { class: "meta" }, "No comment"),
               (f.attachments || []).length ? h("div", { class: "meta" }, "Links: " + f.attachments.join(", ")) : null),
             h("td", { "data-label": "Channel" }, channelName(f.channel)),
             h("td", { class: "wrap", "data-label": "Knowledge base" }, f.kb || "–", h("div", { class: "meta" }, f.person)),
@@ -3544,7 +3538,7 @@
         var pages = Math.max(1, Math.ceil(r.total / size));
         list.replaceChildren(
           r.items.length ? h("div", { class: "tablewrap" }, h("table", {}, h("thead", {}, h("tr", {},
-            ["Rating", "Reason and comment", "Channel", "Knowledge base", "State", "When", ""].map(function (t) { return h("th", {}, t); }))), body))
+            ["Rating", "Comment", "Channel", "Knowledge base", "State", "When", ""].map(function (t) { return h("th", {}, t); }))), body))
             : h("p", { class: "empty" }, "No feedback matches."),
           h("div", { class: "pager" }, h("span", { class: "meta" }, "Page " + (page + 1) + " of " + pages + " · " + r.total + " ratings"),
             h("div", { class: "actions" },
@@ -3557,7 +3551,6 @@
     filters.appendChild(h("div", { class: "field" }, fieldLabel("fb_chan", "Channel"), chan));
     filters.appendChild(h("div", { class: "field" }, fieldLabel("fb_kb", "Knowledge base"), kbSel));
     filters.appendChild(h("div", { class: "field" }, fieldLabel("fb_state", "State"), stateSel));
-    filters.appendChild(h("div", { class: "field" }, fieldLabel("fb_reason", "Reason"), reasonSel));
     main.appendChild(summary);
     main.appendChild(h("section", { class: "panel filterbar" }, filters, h("div", { class: "filterrow" }, dr.el,
       h("button", { type: "button", class: "btn primary", onclick: apply }, "Apply"))));

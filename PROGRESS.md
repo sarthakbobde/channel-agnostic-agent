@@ -926,6 +926,20 @@ This follows `docs/development-plan-v5-release-3-feedback-ticketing.md`, on bran
   - Confirm the five reason codes (D50) and the full fields of your `feedbacks`, `ticket_types` and `ticket_groups` (open question 3 in the plan).
 - **Questions the plan raised while building** (see the notes in the review): the unique key against "a rating after ticketed is a new record" (handled, R3-1); retention deleting the trace and conversation of an item still waiting in `human_review`; the shared agent runtime being first needed in Phase 2 but scheduled in Phase 3; tickets left `assigned` when the agent is switched off; the sweeper against a run still in progress; shadow mode against the claim step; and ticket events being both "never deleted" and deleted by retention. They are for you to settle before Phases 2 to 4.
 
+## 29. Release 3, Phase 1 follow-up (2026-11-06)
+
+On branch `r3/phase-1-followup`, built on the Phase 1 branch, following the "Follow-up to Phase 1" list of plan v6.1. The plan's review issues R-1 to R-7 (`PLAN_V6_1_REVIEW.md`) **stay open**; this follow-up follows the plan as written.
+
+- **Deletion (D62).** Nothing is purged. `memory.move_aside` is the one helper behind the user's own delete, the memory delete and the retention job: the conversation and its messages, traces, suggestions and feedback get a new id (`~<hex>~<old id>`), and the conversation is marked `deleted_at` (migration 0035). User screens, lists, reports, exports and the retention job skip deleted conversations; a reused thread id starts a fresh conversation. The review screens still reach the data through the ids kept on the feedback and the trace. Two guard tests: every table with a `conversation_id` column must be in the helper's list, and no code may delete conversation rows directly.
+- **Masking (D61).** Comments are always masked. New Global Setting `feedback_masking` (`always`, or `follow_switch`).
+- **Open record (D49).** A partial unique index allows one open record per rater and answer (any state but `ticketed`). Two clicks at once end as one record. `ready_for_ticket` is open and, like `human_review`, is never undone by a later click.
+- **Reason list dropped (D50).** Removed from all four channels, the Web control, the settings (`feedback_reasons`, and its column), the catalogue texts and the Feedback screen. The `feedbacks.reason` column stays unused.
+- **Web UI when rating is off.** Chainlit's thumbs are hidden, so nothing shows where rating is off (the plan's fallback reply is not needed).
+- **Tests.** `tests/test_feedback_capture.py` was rewritten for the new rules (40 tests). Updated on purpose: the migration head, the Global Settings fields, the retention scenario and the trace test (a deleted conversation is moved aside, not removed).
+- **Results.** RESULT
+- **Still owed from the follow-up list.** The PostgreSQL run (Docker Desktop is not running); one live click in each chat app; the random-order test run.
+- **Open and accepted.** R-1: keeping deleted conversations for ever has no privacy sign-off and no purge path. The other review issues are unchanged.
+
 ## How to run
 
 ```powershell

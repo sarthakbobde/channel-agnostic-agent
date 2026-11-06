@@ -46,21 +46,21 @@ def _suggestions(items: list[dict], title: str) -> list:
 
 
 def _rating(fb: dict | None) -> list:
-    """Under an answer that can be rated: thumbs, and after a thumbs-down a reason list, a comment and a link (public/elements/FeedbackRating.jsx).
+    """Under an answer that can be rated: thumbs, and after a thumbs-down a comment and a link (public/elements/FeedbackRating.jsx).
     It replaces Chainlit's own thumbs (hidden by public/chat.css): those name a step id that cannot be tied to the answer, and they
-    cannot be switched off per answer or collect a reason."""
+    cannot be switched off per answer."""
     if not fb or not fb.get("payload"):
         return []
     labels = fb.get("labels") or {}
     return [cl.CustomElement(name="FeedbackRating", display="inline", props={
-        "payload": fb["payload"], "reasons": fb.get("reasons") or [], "labels": labels})]
+        "payload": fb["payload"], "labels": labels})]
 
 
 @cl.action_callback("caa_rate")
 async def rated(action: cl.Action):
     token = backend.token_for(cl.user_session.get("user"))
     p = action.payload or {}
-    status, body = await backend.rate(token, cl.context.session.thread_id, p.get("payload", ""), p.get("rating", ""), p.get("reason", ""),
+    status, body = await backend.rate(token, cl.context.session.thread_id, p.get("payload", ""), p.get("rating", ""),
                                       p.get("comment", ""), [p["link"]] if p.get("link") else None)
     if status != 200:
         texts = await backend.texts(token, cl.user_session.get("lang") or "")

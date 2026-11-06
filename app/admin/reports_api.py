@@ -85,7 +85,7 @@ def channel_report(_: Session = Depends(admin_session), ctx: AdminContext = Depe
     """Per channel: switched on, running, conversations, last activity."""
     with ctx.db.session() as s:
         convs = {c: (n, last) for c, n, last in s.execute(
-            select(Conversation.channel, func.count(), func.max(Conversation.updated_at)).group_by(Conversation.channel)).all()}
+            select(Conversation.channel, func.count(), func.max(Conversation.updated_at)).where(Conversation.deleted_at.is_(None)).group_by(Conversation.channel)).all()}
         enabled = {c.type: c.enabled for c in s.scalars(select(Channel)).all()}
     rows = []
     for typ in ctx.manager.registry:

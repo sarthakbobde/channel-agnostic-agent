@@ -23,7 +23,7 @@ def _scope(q, ctx: AdminContext, sess: Session):
     return q.where(Feedback.kb_id.in_(select(KnowledgeBase.id).where(KnowledgeBase.department_id.in_(mine)))) if mine else q.where(Feedback.id < 0)
 
 
-def _filtered(q, state, rating, channel, kb_id, reason, date_from, date_to):
+def _filtered(q, state, rating, channel, kb_id, date_from, date_to):
     if state:
         if state not in feedback.STATES:
             raise HTTPException(422, "Unknown state.")
@@ -36,8 +36,6 @@ def _filtered(q, state, rating, channel, kb_id, reason, date_from, date_to):
         q = q.where(Feedback.channel == channel)
     if kb_id:
         q = q.where(Feedback.kb_id == kb_id)
-    if reason:
-        q = q.where(Feedback.reason == reason)
     if _day(date_from):
         q = q.where(Feedback.created_at >= _day(date_from))
     if _day(date_to, True):
@@ -46,27 +44,27 @@ def _filtered(q, state, rating, channel, kb_id, reason, date_from, date_to):
 
 
 @router.get("")
-def list_feedback(state: str = "", rating: str = "", channel: str = "", kb_id: int = 0, reason: str = "", date_from: str = "", date_to: str = "",
+def list_feedback(state: str = "", rating: str = "", channel: str = "", kb_id: int = 0, date_from: str = "", date_to: str = "",
                   limit: int = 25, offset: int = 0, sess: Session = Depends(admin_session), ctx: AdminContext = Depends(get_ctx)):
     limit, offset = max(1, min(limit, 200)), max(0, offset)
-    q = _filtered(_scope(select(Feedback), ctx, sess), state, rating, channel, kb_id, reason, date_from, date_to)
+    q = _filtered(_scope(select(Feedback), ctx, sess), state, rating, channel, kb_id, date_from, date_to)
     with ctx.db.session() as s:
         total = s.scalar(select(func.count()).select_from(q.subquery())) or 0
         rows = list(s.scalars(q.order_by(Feedback.created_at.desc(), Feedback.id.desc()).limit(limit).offset(offset)))
         names = dict(s.execute(select(KnowledgeBase.id, KnowledgeBase.name)).all())
         people = dict(s.execute(select(Conversation.id, Conversation.owner_email).where(Conversation.id.in_([r.conversation_id for r in rows]))).all()) if rows else {}
         kbs = [{"id": i, "name": n} for i, n in sorted(names.items(), key=lambda x: x[1])]
-        return {"total": total, "states": list(feedback.STATES), "reasons": list(feedback.REASONS), "knowledge_bases": kbs,
+        return {"total": total, "states": list(feedback.STATES), "knowledge_bases": kbs,
                 "items": [{"id": r.id, "answer_id": r.answer_id, "conversation_id": r.conversation_id, "person": people.get(r.conversation_id) or "unknown",
                            "kb_id": r.kb_id, "kb": names.get(r.kb_id, "") if r.kb_id else "", "channel": r.channel, "rating": r.rating,
-                           "reason": r.reason, "comment": r.comment, "attachments": r.attachments or [], "state": r.state,
+                           "comment": r.comment, "attachments": r.attachments or [], "state": r.state,
                            "intent": r.intent, "created_at": r.created_at, "updated_at": r.updated_at} for r in rows]}
 
 
 @router.get("/report")
 def report(date_from: str = "", date_to: str = "", sess: Session = Depends(admin_session), ctx: AdminContext = Depends(get_ctx)):
-    """Ratings by channel, knowledge base, reason and state. Counts only; no text."""
-    base = _filtered(_scope(select(Feedback), ctx, sess), "", "", "", 0, "", date_from, date_to).subquery()
+    """Ratings by channel, knowledge base and state. Counts only; no text."""
+    base = _filtered(_scope(select(Feedback), ctx, sess), "", "", "", 0, date_from, date_to).subquery()
     with ctx.db.session() as s:
         def split(col):
             rows = s.execute(select(col, base.c.rating, func.count()).group_by(col, base.c.rating)).all()
@@ -81,8 +79,6 @@ def report(date_from: str = "", date_to: str = "", sess: Session = Depends(admin
             d["name"] = names.get(d["name"], "(none)") if d["name"] else "(none)"
         up = s.scalar(select(func.count()).select_from(base).where(base.c.rating == feedback.UP)) or 0
         down = s.scalar(select(func.count()).select_from(base).where(base.c.rating == feedback.DOWN)) or 0
-        by_reason = [{"name": n or "(none)", "count": c} for n, c in s.execute(
-            select(base.c.reason, func.count()).where(base.c.rating == feedback.DOWN).group_by(base.c.reason).order_by(func.count().desc())).all()]
         by_state = [{"name": n, "count": c} for n, c in s.execute(select(base.c.state, func.count()).group_by(base.c.state).order_by(func.count().desc())).all()]
         return {"total": up + down, "up": up, "down": down, "positive_share": round(up / (up + down), 3) if up + down else None,
-                "by_channel": split(base.c.channel), "by_kb": by_kb, "by_reason": by_reason, "by_state": by_state}
+                "by_channel": split(base.c.channel), "by_kb": by_kb, "by_state": by_state}
