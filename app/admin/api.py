@@ -412,4 +412,9 @@ def put_settings(body: SettingsUpdate, s: Session = Depends(admin_session), ctx:
         raise HTTPException(422, str(e))
     changes = [f"{k}: {v} -> {asdict(after)[k]}" for k, v in asdict(before).items() if asdict(after)[k] != v]
     ctx.store.record(s.email, "settings.update", "global", "; ".join(changes) or "no changes")
+    if before.admin_agent_mode == "live" and after.admin_agent_mode != "live":
+        from app import ticketing
+        released = ticketing.release_queue(ctx.db)                      # the agent's queue goes to people (D63)
+        if released:
+            ctx.store.record(s.email, "ticket.release_queue", "tickets", f"{len(released)} ticket(s) released to people")
     return global_settings.view(ctx.db)

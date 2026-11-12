@@ -350,6 +350,7 @@
     scoped: "M4 6h10M18 6h2M4 12h2M10 12h10M4 18h8M16 18h4M14 4v4M6 10v4M12 16v4",
     languages: "M12 3a9 9 0 100 18 9 9 0 000-18zM3 12h18M12 3c2.5 2.7 3.8 5.7 3.8 9s-1.3 6.3-3.8 9c-2.5-2.7-3.8-5.7-3.8-9S9.5 5.7 12 3z",
     conversations: "M8 10h8M8 14h5M21 12a9 9 0 0 1-13.3 7.9L3 21l1.1-4.7A9 9 0 1 1 21 12z",
+    tickets: "M4 7a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v2a2 2 0 0 0 0 4v2a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-2a2 2 0 0 0 0-4zM9 5v14",
     feedback: "M7 11v9H4v-9h3zM7 11l4-8a2 2 0 0 1 2 2v4h6a2 2 0 0 1 2 2.3l-1.3 7a2 2 0 0 1-2 1.7H7",
     usage: "M4 20V10M10 20V4M16 20v-8M22 20H2",
     reports: "M14 3H6v18h12V7zM14 3v4h4M9 13h6M9 17h6",
@@ -509,14 +510,14 @@
   var TABS = [["home", "Home"], ["channels", "Channels"], ["providers", "LLM providers"], ["kbconfig", "KB configuration", "knowledge"], ["settings", "RAG settings"], ["scoped", "Scoped settings"], ["languages", "Languages"], ["guardrails", "Guardrails"], ["signin", "Sign-in"],
               ["users", "Users"], ["groups", "Groups"], ["departments", "Departments"],
               ["prompts", "Prompts"], ["glossary", "Glossary"], ["kbdocs", "KB documents", "knowledge"],
-              ["reports", "Reports"], ["audit", "Audit log"], ["conversations", "Conversations"], ["feedback", "Feedback"], ["usage", "Usage and cost"],
+              ["reports", "Reports"], ["audit", "Audit log"], ["conversations", "Conversations"], ["feedback", "Feedback"], ["tickets", "Tickets"], ["usage", "Usage and cost"],
               ["account", "Account"]];
   // The side menu, in the order an admin works: configure the assistant, add people, give it content, then watch it run.
   var NAV_GROUPS = [["", ["home"]],
                     ["Settings", ["channels", "providers", "kbconfig", "settings", "scoped", "languages", "guardrails", "signin"]],
                     ["User management", ["users", "groups", "departments"]],
                     ["Input", ["prompts", "glossary", "kbdocs"]],
-                    ["Monitoring", ["reports", "audit", "conversations", "feedback", "usage"]]];
+                    ["Monitoring", ["reports", "audit", "conversations", "feedback", "tickets", "usage"]]];
   function tabLabel(k) { var t = TABS.filter(function (x) { return x[0] === k; })[0]; return t ? t[1] : k; }
   function canSee(k) {
     var t = TABS.filter(function (x) { return x[0] === k; })[0];
@@ -628,7 +629,7 @@
     mount(app);
     var view = { home: viewHome, channels: viewChannels, settings: viewSettings, scoped: viewScoped, languages: viewLanguages, providers: viewProviders,
       kbconfig: viewKnowledge, kbdocs: viewKbDocs,
-      groups: viewGroups, prompts: viewPrompts, glossary: viewGlossary, guardrails: viewGuardrails, conversations: viewConversations, feedback: viewFeedback, usage: viewUsage, reports: viewReports,
+      groups: viewGroups, prompts: viewPrompts, glossary: viewGlossary, guardrails: viewGuardrails, conversations: viewConversations, feedback: viewFeedback, tickets: viewTickets, usage: viewUsage, reports: viewReports,
       departments: viewDepartments, users: viewUsers, audit: viewAudit, account: viewAccount, signin: viewSignin }[state.tab] || viewAccount;
     view(main);
     loadAlerts(main);
@@ -835,7 +836,8 @@
       ["Languages", "Answers are always written in the language of the question. Language codes are two letters, for example en or hi.", ["accepted_languages", "default_language", "document_languages", "language_confidence", "catalog_languages"]],
       ["Document summaries", "A short summary of each document, shown in KB documents. Display only: never used to answer.", ["summary_enabled", "summary_max_input_tokens"]],
       ["Glossary", "Expand searches with the terms in Input > Glossary. Off by default.", ["glossary_mode", "glossary_max_terms", "glossary_max_aliases"]],
-      ["Feedback", "Rating buttons under each answer. Switch them on or off for one channel, knowledge base or department under Scoped settings. Comments are masked before they are stored.", ["feedback_enabled", "feedback_comment_max_chars", "feedback_payload_days", "feedback_masking"]]
+      ["Feedback", "Rating buttons under each answer. Switch them on or off for one channel, knowledge base or department under Scoped settings. Comments are masked before they are stored.", ["feedback_enabled", "feedback_comment_max_chars", "feedback_payload_days", "feedback_masking"]],
+      ["Tickets", "Problems raised from feedback. The agent mode is off until the admin agent exists; while it is off, tickets go to people. Alerts carry the ticket number and a link, never any text.", ["admin_agent_mode", "ticket_assignment", "ticket_related_window_days", "ticket_retention_days", "ticket_alert_channels", "ticket_alert_events"]]
     ];
 
     function show(data, notice) {
@@ -3526,7 +3528,11 @@
             h("td", { class: "wrap", "data-label": "Knowledge base" }, f.kb || "–", h("div", { class: "meta" }, f.person)),
             h("td", { class: "nw", "data-label": "State" }, h("span", { class: "pill off" }, STATE_NAMES[f.state] || f.state)),
             h("td", { class: "nw", "data-label": "When" }, when(f.created_at)),
-            h("td", { class: "act" }, h("button", { type: "button", class: "btn small", onclick: async function () {
+            h("td", { class: "act" }, f.rating === "down" && f.state !== "ticketed" ? h("button", { type: "button", class: "btn small", onclick: async function (ev) {
+              ev.target.disabled = true;
+              try { var t = await api("POST", "/tickets/new", { feedback_id: f.id }); detail.replaceChildren(msg("ok", "Ticket #" + t.ticket_id + (t.outcome === "evidence_added" ? " already covers this problem; the evidence was added." : " was raised."))); load(); }
+              catch (err) { ev.target.disabled = false; if (me) detail.replaceChildren(msg("bad", err.message)); }
+            } }, "Create ticket") : (f.ticket_id ? h("span", { class: "meta" }, "Ticket #" + f.ticket_id) : null), h("button", { type: "button", class: "btn small", onclick: async function () {
               detail.replaceChildren(msg("wait", "Loading…"));
               try {
                 detail.replaceChildren(panel("Why this answer?", null,
@@ -3558,6 +3564,103 @@
     main.appendChild(h("section", { class: "panel" }, list));
     load();
     loadReport();
+  }
+
+  // ---- tickets -----------------------------------------------------------------------
+  var TICKET_STATUS = { new: "New", assigned: "In the agent's queue", in_progress: "In progress", assigned_to_human: "Waiting for a person", hold: "On hold", completed: "Completed", dismissed: "Dismissed" };
+  var TICKET_EVENT = { new: "Raised", assigned: "Put in the agent's queue", in_progress: "Taken up", assigned_to_human: "Handed to a person", hold: "Put on hold", completed: "Completed",
+                       dismissed: "Dismissed", evidence_added: "New evidence added", reassigned: "Reassigned", comment: "Note" };
+  async function viewTickets(main) {
+    var isAdmin = state.perm && state.perm.can_manage_all;
+    pageHead(main, "Tickets", (isAdmin ? "Problems raised from feedback on answers." : "Problems raised on the knowledge bases of your departments.")
+      + " Take a ticket to work on it, and close it with a note. Evidence is masked; nothing here shows passage text.");
+    var statusSel = h("select", { id: "tk_status", "aria-label": "Status" }, h("option", { value: "", text: "Any status" }));
+    Object.keys(TICKET_STATUS).forEach(function (k) { statusSel.appendChild(h("option", { value: k, text: TICKET_STATUS[k] })); });
+    var openOnly = h("input", { type: "checkbox", id: "tk_open", checked: true });
+    var summary = h("div", {}), list = h("div", {}), detail = h("div", {});
+    var page = 0, size = 25;
+
+    async function loadReport() {
+      try {
+        var r = await api("GET", "/tickets/report");
+        summary.replaceChildren(panel("Overview", null, null, h("div", { class: "meta" },
+          r.total + " tickets · open: " + r.open_by_age.under_1_day + " under a day, " + r.open_by_age.over_7_days + " over a week old, " + r.open_by_age["1_to_7_days"] + " in between"
+          + (r.average_hours_to_close === null ? "" : " · closed in " + r.average_hours_to_close + " hours on average")
+          + " · " + r.evidence_additions + " evidence additions · " + r.related_tickets + " linked to an earlier closed ticket")));
+      } catch (err) { if (me) summary.replaceChildren(msg("bad", err.message)); }
+    }
+    async function open(id) {
+      detail.replaceChildren(msg("wait", "Loading…"));
+      try {
+        var t = await api("GET", "/tickets/" + id);
+        var note = h("textarea", { rows: 2, "aria-label": "Note", placeholder: "A note (needed to hold, complete or dismiss)" });
+        var out = h("div", {});
+        async function act(name) {
+          out.replaceChildren(msg("wait", "Working…"));
+          try { await api("POST", "/tickets/" + id + "/" + name, { note: note.value }); await open(id); load(); loadReport(); }
+          catch (err) { if (me) out.replaceChildren(msg("bad", err.message)); }
+        }
+        function btn(label, name, cls) { return h("button", { type: "button", class: "btn small " + (cls || ""), onclick: function () { act(name); } }, label); }
+        var s = t.status, buttons = [];
+        if (t.can_work && (s === "assigned_to_human" || s === "hold")) buttons.push(btn("Take it", "take", "primary"));
+        if (t.can_work && (s === "in_progress" || s === "assigned_to_human")) buttons.push(btn("Put on hold", "hold"));
+        if (t.can_work && s === "in_progress") { buttons.push(btn("Complete", "complete", "primary")); buttons.push(btn("Dismiss", "dismiss")); }
+        buttons.push(btn("Add note", "comment"));
+        var evidence = (t.evidence || []).map(function (e) {
+          return h("div", { class: "panel" },
+            h("div", { class: "meta" }, "Question"), h("div", {}, e.question || "–"),
+            h("div", { class: "meta" }, "Answer"), h("div", {}, e.answer || "–"),
+            e.comment ? h("div", {}, h("div", { class: "meta" }, "Comment"), h("div", {}, e.comment)) : null,
+            (e.documents || []).length ? h("div", { class: "meta" }, "Cited: " + e.documents.map(function (d) { return d.title || ("document " + d.doc_id); }).join(", ")) : null,
+            (e.attachments || []).length ? h("div", { class: "meta" }, "Links: " + e.attachments.join(", ")) : null);
+        });
+        detail.replaceChildren(panel("Ticket #" + t.id + " · " + (TICKET_STATUS[s] || s), null,
+          h("button", { type: "button", class: "btn small", onclick: function () { detail.replaceChildren(); } }, "Close"),
+          h("div", {}, h("div", { class: "meta" }, (t.kb || "No knowledge base") + " · raised " + when(t.created_at)
+            + (t.related_ticket_id ? " · follows ticket #" + t.related_ticket_id : "")), h("h4", {}, t.title || "Untitled")),
+          h("h4", {}, "Evidence (" + evidence.length + ")"), h("div", {}, evidence),
+          h("h4", {}, "History"), h("ul", {}, t.events.map(function (e) {
+            return h("li", {}, when(e.created_at) + " · " + (TICKET_EVENT[e.event] || e.event) + " · " + (e.actor_type === "manual" ? "a person" : e.actor_type)
+              + (e.note ? ": " + e.note : "")); })),
+          (s === "completed" || s === "dismissed") ? h("p", { class: "meta" }, "This ticket is closed and stays closed.") : h("div", {}, note, h("div", { class: "actions" }, buttons)),
+          out));
+      } catch (err) { if (me) detail.replaceChildren(msg("bad", err.message)); }
+    }
+    async function load() {
+      try {
+        var r = await api("GET", "/tickets?limit=" + size + "&offset=" + (page * size) + "&status=" + statusSel.value + "&open_only=" + (openOnly.checked && !statusSel.value));
+        var body = h("tbody", {});
+        r.items.forEach(function (t) {
+          body.appendChild(h("tr", {},
+            h("td", { class: "nw", "data-label": "Ticket" }, "#" + t.id),
+            h("td", { class: "wrap", "data-label": "Title" }, t.title || "Untitled", h("div", { class: "meta" }, t.evidence_count + " evidence")),
+            h("td", { class: "nw", "data-label": "Status" }, h("span", { class: "pill off" }, TICKET_STATUS[t.status] || t.status)),
+            h("td", { class: "wrap", "data-label": "Knowledge base" }, t.kb || "–"),
+            h("td", { class: "nw", "data-label": "Updated" }, when(t.updated_at)),
+            h("td", { class: "act" }, h("button", { type: "button", class: "btn small", onclick: function () { open(t.id); } }, "Open"))));
+        });
+        var pages = Math.max(1, Math.ceil(r.total / size));
+        list.replaceChildren(
+          r.items.length ? h("div", { class: "tablewrap" }, h("table", {}, h("thead", {}, h("tr", {},
+            ["Ticket", "Title", "Status", "Knowledge base", "Updated", ""].map(function (t) { return h("th", {}, t); }))), body))
+            : h("p", { class: "empty" }, "No tickets match."),
+          h("div", { class: "pager" }, h("span", { class: "meta" }, "Page " + (page + 1) + " of " + pages + " · " + r.total + " tickets"),
+            h("div", { class: "actions" },
+              h("button", { type: "button", class: "btn", disabled: page === 0, onclick: function () { page--; load(); } }, "Previous"),
+              h("button", { type: "button", class: "btn", disabled: page + 1 >= pages, onclick: function () { page++; load(); } }, "Next"))));
+      } catch (err) { if (me) list.replaceChildren(msg("bad", err.message)); }
+    }
+    main.appendChild(summary);
+    main.appendChild(h("section", { class: "panel filterbar" }, h("div", { class: "filters" },
+      h("div", { class: "field" }, fieldLabel("tk_status", "Status"), statusSel),
+      h("div", { class: "field" }, h("label", { for: "tk_open" }, openOnly, " Open tickets only")),
+      h("button", { type: "button", class: "btn primary", onclick: function () { page = 0; load(); } }, "Apply"))));
+    main.appendChild(detail);
+    main.appendChild(h("section", { class: "panel" }, list));
+    load();
+    loadReport();
+    var want = parseInt(new URLSearchParams(location.search).get("ticket") || "", 10);       // a link from an alert
+    if (want) open(want);
   }
 
   // ---- usage and cost -------------------------------------------------------------------

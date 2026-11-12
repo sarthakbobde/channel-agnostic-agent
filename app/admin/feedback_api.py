@@ -58,7 +58,7 @@ def list_feedback(state: str = "", rating: str = "", channel: str = "", kb_id: i
                 "items": [{"id": r.id, "answer_id": r.answer_id, "conversation_id": r.conversation_id, "person": people.get(r.conversation_id) or "unknown",
                            "kb_id": r.kb_id, "kb": names.get(r.kb_id, "") if r.kb_id else "", "channel": r.channel, "rating": r.rating,
                            "comment": r.comment, "attachments": r.attachments or [], "state": r.state,
-                           "intent": r.intent, "created_at": r.created_at, "updated_at": r.updated_at} for r in rows]}
+                           "intent": r.intent, "ticket_id": r.ticket_id, "created_at": r.created_at, "updated_at": r.updated_at} for r in rows]}
 
 
 @router.get("/report")

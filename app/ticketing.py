@@ -256,3 +256,24 @@ def release_queue(db: Database | None = None, reason: str = "The agent is off") 
     from app import ticket_alerts
     ticket_alerts.queue_released(db, moved)                           # one digest, not one alert per ticket
     return moved
+
+
+# ---- retention (D49) ------------------------------------------------------------------------------------------------------------------
+def retire(db: Database | None = None, now: datetime | None = None) -> int:
+    """Delete closed tickets, with their events, `ticket_retention_days` after they were closed (0 keeps them for ever). Open tickets are
+    never deleted. A ticket that pointed at a retired one loses only that link. Returns how many were deleted."""
+    from sqlalchemy import delete, update
+    from app.db import TicketEvent
+    db = db or get_db()
+    days = global_settings.current(db).ticket_retention_days
+    if days <= 0:
+        return 0
+    cutoff = (now or _now()) - timedelta(days=days)
+    with db.session() as s:
+        ids = list(s.scalars(select(Ticket.id).where(Ticket.status.in_(tickets.CLOSED), Ticket.closed_at.is_not(None), Ticket.closed_at < cutoff)))
+        for i in range(0, len(ids), 500):
+            chunk = ids[i:i + 500]
+            s.execute(update(Ticket).where(Ticket.related_ticket_id.in_(chunk)).values(related_ticket_id=None))
+            s.execute(delete(TicketEvent).where(TicketEvent.ticket_id.in_(chunk)))
+            s.execute(delete(Ticket).where(Ticket.id.in_(chunk)))
+    return len(ids)

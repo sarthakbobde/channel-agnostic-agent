@@ -19,6 +19,7 @@ to change one you type a new value, and leaving the box empty keeps the stored o
 | Change the assistant's instructions, safety checks | **Input → Prompts**, **Settings → Guardrails** | 8 |
 | Tune search, retention, the question limit | **Settings → RAG settings** | 9 |
 | Let people rate answers, see the ratings | **RAG settings → Feedback**, **Monitoring → Feedback** | 10b |
+| Raise and work tickets from ratings | **Monitoring → Tickets**, **RAG settings → Tickets** | 10c |
 | Get alerts by webhook or email | **RAG settings → Alert notifications** | 10 |
 | Your photo, theme (light or dark), accent colour, password | **Account** (your name, top right) | 1 |
 | Server addresses, ports, database | the `.env` file | 11 |
@@ -460,6 +461,16 @@ Only the person who asked a question can rate its answer. A second click, or a c
 
 **Look at the ratings.** **Monitoring → Feedback** lists ratings with filters (rating, channel, knowledge base, state, dates) and shows a short report by channel, knowledge base and state. *Why this answer?* opens the answer's trace. Admins see everything; an Editor sees the knowledge bases of their own departments. Viewers have no access.
 
+
+## 10c. Tickets
+
+A ticket is a problem raised from a negative rating. Tickets are switched by the settings under **RAG settings → Tickets** (all off or empty at first).
+
+- **Raise one by hand.** On **Monitoring → Feedback**, a not-helpful rating has a **Create ticket** button. If the same person already has an open ticket on the same problem (same knowledge base, a shared cited document), the evidence is added to it instead.
+- **Work one.** **Monitoring → Tickets** lists the tickets you may see: an Admin all of them, an Editor those of their own departments, and an assignee their own. Open one to read the masked evidence and its history. *Take it* starts work, *Put on hold*, *Complete* and *Dismiss* each need a short note. A closed ticket stays closed.
+- **Assignment.** `ticket_assignment` decides where a new ticket goes: the department's queue (default), a person (`user:ID`), a group (`group:ID`), or the admin agent's queue (`autonomous`, used only while the agent is live). Setting it for one knowledge base or department is done under **Scoped settings**.
+- **Alerts.** A ticket handed to people sends an alert (admin screen, and email if SMTP is on) with the ticket number and a link, never any text. Which events and channels send one are settings.
+- **Retention.** `ticket_retention_days` deletes closed tickets and their history after that many days (0 keeps them for ever).
 
 ## 11. Server settings: the `.env` file
 

@@ -940,6 +940,23 @@ On branch `r3/phase-1-followup`, built on the Phase 1 branch, following the "Fol
 - **Still owed from the follow-up list.** The PostgreSQL run (Docker Desktop is not running); one live click in each chat app; the random-order test run.
 - **Open and accepted.** R-1: keeping deleted conversations for ever has no privacy sign-off and no purge path. The other review issues are unchanged.
 
+## 30. Release 3, Phase 2: tickets (2026-11-12)
+
+On branch `r3/phase-2-tickets`, built on the Phase 1 follow-up branch (which holds Phase 1), following Phase 2 of `docs/development-plan-v5-release-3-feedback-ticketing.md` and the v6.1 changes. Deviations are marked R3-2 in `DECISIONS.md`.
+
+- **Data (migrations 0036, 0037).** `ticket_types` (seeded with `feedback`), `ticket_groups` (empty, not used: D48), `tickets`, `ticket_events`, `feedbacks.ticket_id`, and the settings `admin_agent_mode`, `ticket_assignment`, `ticket_related_window_days`, `ticket_retention_days`, `ticket_alert_channels`, `ticket_alert_events`. All off or empty by default.
+- **State machine (`app/tickets.py`).** One table of allowed moves and who may make them. `transition()` changes the status with a compare-and-set and writes the event in the same transaction, so of two runners claiming one ticket only one wins. Reassign and notes write non-state events. `tickets.status` always equals the latest state event.
+- **Ticket creation (`app/ticketing.py`).** Idempotent per feedback. A feedback from the same user on the same knowledge base that cites a shared document is matched to an open ticket (the evidence is added, nothing else changes) or to a closed one (a new ticket linked by `related_ticket_id`, within `ticket_related_window_days`). A model may only choose among the candidates the code offers, and only helps with a partial match and the title. Evidence is masked again before storage whatever the masking switch says.
+- **Assignment.** By the `ticket_assignment` rule (`autonomous`, `department`, `user:ID` or `group:ID`). `autonomous` is honoured only while `admin_agent_mode` is `live`; switching the agent off releases its queue to people, one event each, and sends one digest alert.
+- **Alerts (`app/ticket_alerts.py`).** Admin-screen and email channels, chosen by settings and overridable per department. An alert holds the ticket number and a link, never evidence or any text. A failing channel blocks nothing.
+- **Admin.** `/admin/api/tickets` (list, detail, take, hold, complete, dismiss, reassign, note, report, and `new` for a manual ticket) and Monitoring → Tickets. A negative feedback has a "Create ticket" button on the Feedback screen (audited, same service, same rules). An Admin works every ticket, an Editor those of their own departments, and an assignee their own; anyone else gets "no such ticket". Tickets are in the Admin and Editor screen lists and `/admin/api/tickets` in the Editor routes (pinned lists updated on purpose).
+- **Retention.** `ticket_retention_days` (0 keeps for ever). The daily retention job deletes closed tickets and their events after that many days, audited by count; open tickets are never deleted, and a ticket that pointed at a retired one only loses the link.
+- **Reports.** Open tickets by status and age, time to close, evidence additions, and the share linked to an earlier closed ticket. Counts only.
+- **Tests.** `tests/test_tickets_state.py` (54), `tests/test_ticketing.py` (service and alerts), `tests/test_tickets_api.py` (API, roles, release of the queue, report, retention). Updated on purpose: the migration head and table list, and the Global Settings field list.
+- **Results.** Full SQLite run: 720 passed, 17 skipped; the only failure left is `check_8b`, which needs the git-ignored `models/` folder that this worktree does not have (it passes in the main checkout). PostgreSQL: not run yet.
+- **Not in this phase.** The admin agent and its approvals tab (Phase 4), the feedback pipeline and the review queue (Phase 3). A reassign picker is not in the screen yet; the API reassigns (`POST /tickets/ID/reassign`).
+- **Still owed.** The PostgreSQL run; a look at the Tickets screen in a browser.
+
 ## How to run
 
 ```powershell

@@ -70,6 +70,14 @@ def run(db: Database | None = None, actor: str = ACTOR, now: datetime | None = N
            f"deleted {conversations} conversations ({messages} messages)" + (": " + ", ".join(f"{k} {v}" for k, v in per_dept.items()) if per_dept else "")
            + "; limits: " + ", ".join(f"{r[1]} {max(1, min(r[2], cap))} days" for r in rows))
     log.info("retention run: %s", result)
+    try:
+        from app import ticketing
+        retired = ticketing.retire(db, now)
+        if retired:
+            _audit(actor, "ticket.retire", "tickets", f"deleted {retired} closed ticket(s) past their retention")
+            result["tickets"] = retired
+    except Exception:
+        log.warning("could not retire old tickets", exc_info=True)
     return result
 
 
