@@ -611,9 +611,9 @@ def test_when_a_fair_replay_is_not_possible_no_model_is_called(world, spy, monke
     fb = rated(world, conv="web-1-rp-" + what)
     with get_db().session() as s:
         doc = s.scalar(select(Document).where(Document.kb_id == world.kb["id"]))
-        doc_id, original = doc.id, (doc.visibility, doc.updated_at)
+        doc_id, original = doc.id, (doc.visibility, doc.updated_at, doc.indexed_at)
         if what == "document_changed":
-            doc.updated_at = datetime.now(timezone.utc) + timedelta(minutes=5)
+            doc.indexed_at = datetime.now(timezone.utc) + timedelta(minutes=5)
         if what == "access_lost":
             s.execute(update(Document).where(Document.id == doc_id).values(visibility="groups", updated_at=original[1]))   # hidden; the time stays, to test access alone
         if what == "trace_missing":
@@ -636,8 +636,7 @@ def test_when_a_fair_replay_is_not_possible_no_model_is_called(world, spy, monke
         assert v["outcome"] == "not_possible" and v["reason"] == what and v["model_called"] is False and spy.purposes == []
     finally:
         with get_db().session() as s:
-            d = s.get(Document, doc_id)
-            d.visibility, d.updated_at = original
+            s.execute(update(Document).where(Document.id == doc_id).values(visibility=original[0], updated_at=original[1], indexed_at=original[2]))
 
 
 def test_a_raters_lost_access_never_leaks_the_restricted_document_into_a_replay(world, spy):

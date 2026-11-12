@@ -79,6 +79,8 @@ def setup(world, monkeypatch):
         s.execute(delete(Ticket))
         s.execute(delete(Feedback))
         s.execute(delete(ScopedSetting))
+        s.execute(delete(AnswerTrace).where(AnswerTrace.conversation_id.like("ag-conv-%")))
+        s.execute(delete(Message).where(Message.conversation_id.like("ag-conv-%")))
     glossary.purge("kb", world.kb)
     scoped_settings.invalidate()
     global_settings.update({"admin_agent_mode": "off", "admin_agent_daily_fix_cap": 5, "admin_agent_timeout_minutes": 30, "ticket_assignment": "department",

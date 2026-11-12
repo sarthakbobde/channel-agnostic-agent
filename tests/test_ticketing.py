@@ -51,6 +51,8 @@ def clean(world, monkeypatch):
         s.execute(delete(Ticket))
         s.execute(delete(Feedback))
         s.execute(delete(ScopedSetting))
+        s.execute(delete(AnswerTrace).where(AnswerTrace.conversation_id.like("tk-conv-%")))
+        s.execute(delete(Message).where(Message.conversation_id.like("tk-conv-%")))
     scoped_settings.invalidate()
     global_settings.update({"admin_agent_mode": "off", "ticket_assignment": "department", "ticket_related_window_days": 0}, "t", get_db())
 

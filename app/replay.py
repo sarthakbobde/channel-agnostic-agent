@@ -3,7 +3,7 @@
 1. `possible()` runs first and calls no model. It answers "not possible" when the answer cannot be reproduced fairly: its trace is gone, a
    cited document was deleted or changed after the answer, the rater can no longer see a cited document, a pinned prompt version or the
    knowledge base is gone. (Release 2 dropped the document version and the allow-list signature from the trace; this uses the document's
-   update time and a fresh access check instead.)
+   index time and a fresh access check instead. A background summary refresh or an access change does not count as a change of content.)
 2. `replay()` runs the normal answer pipeline in replay mode (chat_service.chat_stream): the same prompt versions as the trace, the rater's
    CURRENT access and CURRENT settings, nothing saved (no message, no trace, no suggestion), no rate limit, usage under `fb_replay`.
 3. `judge()` compares the replayed answer with the issue and says confirmed, failed or inconclusive. The model's reply is checked in code.
@@ -79,7 +79,7 @@ def possible(db: Database, fb: Feedback) -> tuple[bool, str]:
         d = docs.get(h["doc_id"])
         if d is None:
             return False, "document_gone"
-        if _aware(d.updated_at) and answered_at and _aware(d.updated_at) > answered_at:
+        if _aware(d.indexed_at) and answered_at and _aware(d.indexed_at) > answered_at:     # indexed again since the answer (a new file, or a re-index)
             return False, "document_changed"
     for kb_id in kb_ids:
         kb = kbs.get_kb(db, kb_id)

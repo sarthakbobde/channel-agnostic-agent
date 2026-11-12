@@ -6,7 +6,7 @@ from sqlalchemy import delete, select
 
 from app import global_settings, scoped_settings, ticket_agent, ticketing, tickets
 from app.admin import users
-from app.db import Alert, Department, DepartmentEditor, Document, Feedback, KnowledgeBase, ScopedSetting, Ticket, TicketEvent, get_db
+from app.db import Alert, AnswerTrace, Message, Department, DepartmentEditor, Document, Feedback, KnowledgeBase, ScopedSetting, Ticket, TicketEvent, get_db
 from tests.test_release2_suggestions import P, PW, person, sign_in
 from tests.test_ticketing import make_feedback
 
@@ -58,6 +58,8 @@ def clean(world, monkeypatch):
         s.execute(delete(Ticket))
         s.execute(delete(Feedback))
         s.execute(delete(ScopedSetting))
+        s.execute(delete(AnswerTrace).where(AnswerTrace.conversation_id.like("tk-conv-%")))
+        s.execute(delete(Message).where(Message.conversation_id.like("tk-conv-%")))
         s.execute(delete(Alert).where(Alert.key.like("ticket:%")))
     scoped_settings.invalidate()
     global_settings.update({"admin_agent_mode": "off", "ticket_assignment": "department", "ticket_related_window_days": 0}, "t", get_db())
