@@ -814,8 +814,12 @@ def test_a_chat_user_the_directory_does_not_know_is_replayed_as_an_unknown_sende
     assert replay.possible(get_db(), row) == (True, "")                                       # the document is open to everyone, as it was
     assert "five days" in replay.replay(get_db(), row)["answer"].lower()
     with get_db().session() as s:
-        s.get(Conversation, fb.conversation_id).owner_email = ""
-    assert replay.rater(get_db(), row) is None and replay.possible(get_db(), row) == (False, "rater_unavailable")
+        s.get(Conversation, fb.conversation_id).owner_email = ""                              # a Slack user with no email at all: still an unknown sender
+    anon = replay.rater(get_db(), row)
+    assert anon is not None and anon.known is False and anon.email == "" and replay.possible(get_db(), row) == (True, "")
+    with get_db().session() as s:
+        s.get(Feedback, fb.id).user_id = 987654                                               # a directory entry that no longer exists
+    assert replay.rater(get_db(), fresh(fb)) is None and replay.possible(get_db(), fresh(fb)) == (False, "rater_unavailable")
 
 
 def test_the_slack_comment_form_has_a_readable_cancel_button(world):

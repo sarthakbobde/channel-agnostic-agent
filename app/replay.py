@@ -37,16 +37,18 @@ def _aware(d: datetime | None) -> datetime | None:
 
 def rater(db: Database, fb: Feedback):
     """The rater's identity as it is NOW (role, groups, status): the replay is checked against today's access, not the access they had.
-    A person the directory does not know (a chat user who was answered as an unknown sender) is replayed as an unknown sender, with the
-    access an unknown sender has; their email comes from the conversation they started."""
+    A person the directory does not know (a chat user who was answered as an unknown sender: no directory entry, often no email at all) is
+    replayed as an unknown sender, with the access an unknown sender has. A rater whose directory entry has since been deleted is unavailable."""
     with db.session() as s:
         if fb.user_id is not None:
             u = s.get(User, fb.user_id)
-            email = u.email if u is not None else ""
+            if u is None:
+                return None
+            email = u.email
         else:
             c = s.get(Conversation, fb.conversation_id)
-            email = c.owner_email if c is not None else ""
-    return identity.resolve(email, db) if email else None
+            email = (c.owner_email if c is not None else "") or ""
+    return identity.resolve(email, db)
 
 
 def _trace(db: Database, fb: Feedback):

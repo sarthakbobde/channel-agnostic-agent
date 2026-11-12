@@ -3489,6 +3489,10 @@
     var REASONS = { review_all: "Review-all mode", failed: "The replay no longer shows the problem", inconclusive: "The replay was inconclusive", not_possible: "The question could not be replayed",
                     daily_cap: "The daily replay limit was reached", agent_off: "An agent is switched off", error: "A step failed too many times" };
     var OUTCOMES = { confirmed: "Problem confirmed", failed: "Problem not reproduced", inconclusive: "Inconclusive", not_possible: "Not possible to replay" };
+    var WHY = { rater_unavailable: "The person's access is turned off, so the question cannot be replayed as them.", trace_missing: "How the answer was made is no longer recorded.",
+                message_missing: "The question or answer is no longer stored.", kb_gone: "The knowledge base no longer exists.", prompt_gone: "A prompt version used for the answer no longer exists.",
+                document_gone: "A document the answer cited was deleted.", document_changed: "A document the answer cited was indexed again after the answer.",
+                access_lost: "The person can no longer see a document the answer cited.", daily_cap: "The daily limit on replays was reached." };
     var CHANGED = { model: "the model", retrieval: "the search settings", glossary: "the glossary" };
     async function loadReview() {
       try {
@@ -3510,7 +3514,7 @@
                 h("div", {}, h("h4", {}, "What the person said"), h("div", {}, f.comment || "No comment"), (f.attachments || []).length ? h("div", { class: "meta" }, "Links: " + f.attachments.join(", ")) : null,
                   h("h4", {}, "Issue (written by the agent)"), h("div", {}, f.summary || "–")),
                 h("div", {}, h("h4", {}, "Replay"), v ? h("div", {}, h("span", { class: "pill " + (v.outcome === "confirmed" ? "bad" : "off") }, OUTCOMES[v.outcome] || v.outcome || "–"),
-                  v.reason ? h("div", { class: "meta" }, v.reason) : null,
+                  v.reason ? h("div", { class: "meta" }, WHY[v.reason] || v.reason) : null,
                   v.replay_answer ? h("div", {}, h("h4", {}, "Answer now"), h("div", {}, v.replay_answer)) : null,
                   (v.settings_changed || []).length ? h("div", { class: "meta" }, "Changed since the answer: " + v.settings_changed.map(function (k) { return CHANGED[k] || k; }).join(", ")) : null)
                   : h("div", { class: "meta" }, "Not replayed."))),
