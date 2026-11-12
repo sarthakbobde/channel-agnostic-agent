@@ -14,6 +14,7 @@ closed ticket stays closed. The model is never called inside a database transact
 """
 import logging
 import re
+import threading
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select
@@ -174,7 +175,17 @@ def _related_window_ok(closed_at: datetime | None) -> bool:
     return days == 0 or (closed_at is not None and _aware(closed_at) >= _now() - timedelta(days=days))
 
 
+_write_locks = [threading.Lock() for _ in range(64)]
+
+
 def _write(db: Database, feedback_id: int, item: dict, match: dict | None, title: str) -> dict:
+    """One ticket per feedback. On PostgreSQL the row lock (FOR UPDATE) makes two runners take turns, in any process. SQLite ignores that
+    lock, so the calls of one process also take turns on a lock chosen by the feedback id."""
+    with _write_locks[feedback_id % len(_write_locks)]:
+        return _write_locked(db, feedback_id, item, match, title)
+
+
+def _write_locked(db: Database, feedback_id: int, item: dict, match: dict | None, title: str) -> dict:
     with db.session() as s:
         fb = s.scalars(select(Feedback).where(Feedback.id == feedback_id).with_for_update()).first()
         if fb.ticket_id:                                              # another call got here first
