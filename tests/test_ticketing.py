@@ -20,7 +20,8 @@ AGENT = Actor.agent()
 def world():
     db = get_db()
     with db.session() as s:
-        s.add(Department(name="TkHR", retention_days=30, banned_topics="", is_default=False))
+        if s.scalar(select(Department.id).where(Department.name == "TkHR")) is None:
+            s.add(Department(name="TkHR", retention_days=30, banned_topics="", is_default=False))
     with db.session() as s:
         dept = s.scalar(select(Department.id).where(Department.name == "TkHR"))
     with db.session() as s:
@@ -34,7 +35,10 @@ def world():
             s.add(d)
             s.flush()
             docs[key] = d.id
-    return type("W", (), {"db": db, "dept": dept, "kb_a": kb_a, "kb_b": kb_b, "docs": docs})
+    yield type("W", (), {"db": db, "dept": dept, "kb_a": kb_a, "kb_b": kb_b, "docs": docs})
+    with db.session() as s:                                   # these knowledge bases have no search index: later tests must not meet them
+        s.execute(delete(Document).where(Document.kb_id.in_([kb_a, kb_b])))
+        s.execute(delete(KnowledgeBase).where(KnowledgeBase.id.in_([kb_a, kb_b])))
 
 
 @pytest.fixture(autouse=True)

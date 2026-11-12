@@ -42,7 +42,10 @@ def world():
     w.admin, w.ah = sign_in("tkapi-boss@sysfore.com")
     w.editor, w.eh = sign_in("tkapi-ed@sysfore.com")
     w.editor2, w.eh2 = sign_in("tkapi-ed2@sysfore.com")
-    return w
+    yield w
+    with db.session() as s:
+        s.execute(delete(Document).where(Document.kb_id.in_([w.kb_a, w.kb_b])))
+        s.execute(delete(KnowledgeBase).where(KnowledgeBase.id.in_([w.kb_a, w.kb_b])))
 
 
 @pytest.fixture(autouse=True)
