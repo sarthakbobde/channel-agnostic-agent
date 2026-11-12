@@ -799,3 +799,27 @@ def test_holding_a_review_item_does_not_reset_how_long_it_has_waited(world, staf
     assert world.admin.post(f"{R}/review/{fid}/claim", headers=world.ah).json()["claimed"] is True
     after = world.admin.get(R + "/review", headers=world.ah).json()["items"][0]
     assert after["old"] is True and after["age_days"] >= before["age_days"]
+
+
+def test_a_chat_user_the_directory_does_not_know_is_replayed_as_an_unknown_sender(world, spy):
+    """Found in the first live Slack test: the replay called such a rater unavailable, though the bot had answered them."""
+    from app.db import Conversation
+    fb = rated(world, conv="web-1-rp-stranger")
+    with get_db().session() as s:
+        s.get(Feedback, fb.id).user_id = None
+        s.get(Conversation, fb.conversation_id).owner_email = "stranger@example.org"
+    row = fresh(fb)
+    who = replay.rater(get_db(), row)
+    assert who is not None and who.known is False and who.active is True and who.email == "stranger@example.org"
+    assert replay.possible(get_db(), row) == (True, "")                                       # the document is open to everyone, as it was
+    assert "five days" in replay.replay(get_db(), row)["answer"].lower()
+    with get_db().session() as s:
+        s.get(Conversation, fb.conversation_id).owner_email = ""
+    assert replay.rater(get_db(), row) is None and replay.possible(get_db(), row) == (False, "rater_unavailable")
+
+
+def test_the_slack_comment_form_has_a_readable_cancel_button(world):
+    from app.channels.slack import SlackPresenter
+    form = feedback.form_for(feedback.sign(1, "web:x", datetime.now(timezone.utc) + timedelta(days=1)), 1)
+    view = SlackPresenter.form_view(form, {})
+    assert view["close"]["text"] == "Cancel" and view["submit"]["text"] == "Send"

@@ -429,6 +429,7 @@ class GlobalSettings(Base):
     feedback_agent_max_steps: Mapped[int] = mapped_column(Integer, default=6)
     feedback_agent_timeout_seconds: Mapped[int] = mapped_column(Integer, default=60)
     feedback_agent_token_ceiling: Mapped[int] = mapped_column(Integer, default=6000)
+    feedback_settle_minutes: Mapped[int] = mapped_column(Integer, default=2)              # wait this long after the last change before processing
     admin_agent_interval_minutes: Mapped[int] = mapped_column(Integer, default=5)           # Phase 4 (D57, D60)
     admin_agent_daily_fix_cap: Mapped[int] = mapped_column(Integer, default=5)              # fixes per knowledge base per day (UTC)
     admin_agent_timeout_minutes: Mapped[int] = mapped_column(Integer, default=30)           # the sweeper hands a stuck ticket to a person

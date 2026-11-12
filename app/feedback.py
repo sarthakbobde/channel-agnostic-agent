@@ -105,7 +105,7 @@ def controls(answer_id: int | None, asker: str, lang: str = "", shown_at: dateti
 
 def labels(lang: str = "") -> dict:
     """The texts of the rating controls, in the answer's language."""
-    return {n: catalog.t("feedback_" + n, lang) for n in ("prompt", "up", "down", "comment", "link", "submit", "thanks")}
+    return {n: catalog.t("feedback_" + n, lang) for n in ("prompt", "up", "down", "comment", "link", "submit", "cancel", "thanks")}
 
 
 def form_for(payload: str, answer_id: int, lang: str = "") -> dict:

@@ -73,6 +73,7 @@ class Snapshot:
     feedback_agent_max_steps: int = 6
     feedback_agent_timeout_seconds: int = 60
     feedback_agent_token_ceiling: int = 6000
+    feedback_settle_minutes: int = 2
     admin_agent_interval_minutes: int = 5
     admin_agent_daily_fix_cap: int = 5
     admin_agent_timeout_minutes: int = 30
@@ -199,6 +200,8 @@ SPEC = (
      "help": "A reviewer who opens an item holds it for this long, so two people do not decide the same one. Default 30."},
     {"name": "feedback_review_age_days", "label": "Review: mark items older than (days)", "min": 1, "max": 365, "step": 1, "integer": True,
      "help": "An item waiting for a person this long is marked as old in the queue. Default 7."},
+    {"name": "feedback_settle_minutes", "label": "Feedback: wait before processing (minutes)", "min": 0, "max": 60, "step": 1, "integer": True,
+     "help": "A rating in a chat app is often followed by a comment a moment later. A rating is processed only after it has been left alone this long, so the comment is part of what the agents read. Default 2."},
     {"name": "feedback_agent_max_steps", "label": "Agents: most steps in one run", "min": 1, "max": 20, "step": 1, "integer": True,
      "help": "A run that needs more steps than this stops and the item goes to a person. Default 6."},
     {"name": "feedback_agent_timeout_seconds", "label": "Agents: longest run (seconds)", "min": 5, "max": 600, "step": 5, "integer": True,
@@ -245,7 +248,7 @@ def defaults() -> Snapshot:
                     ticket_alert_channels=("admin_screen",), ticket_alert_events=("assigned", "approval", "queue_released"),
                     feedback_processing_mode="off", feedback_intent_enabled=True, feedback_verify_enabled=True, feedback_replay_daily_cap=50,
                     feedback_retry_limit=3, feedback_review_claim_minutes=30, feedback_review_age_days=7, feedback_agent_max_steps=6,
-                    feedback_agent_timeout_seconds=60, feedback_agent_token_ceiling=6000,
+                    feedback_agent_timeout_seconds=60, feedback_agent_token_ceiling=6000, feedback_settle_minutes=2,
                     admin_agent_interval_minutes=5, admin_agent_daily_fix_cap=5, admin_agent_timeout_minutes=30,
                     admin_agent_setting_keys=("retrieval_strategy", "hybrid_keyword_weight", "diversity", "top_k", "score_threshold", "glossary_mode"),
                     admin_agent_max_steps=8, admin_agent_token_ceiling=8000, admin_agent_run_seconds=120)
@@ -270,6 +273,7 @@ def _snapshot(row: GlobalSettings) -> Snapshot:
                     50 if row.feedback_replay_daily_cap is None else row.feedback_replay_daily_cap, row.feedback_retry_limit or 3,
                     row.feedback_review_claim_minutes or 30, row.feedback_review_age_days or 7, row.feedback_agent_max_steps or 6,
                     row.feedback_agent_timeout_seconds or 60, row.feedback_agent_token_ceiling or 6000,
+                    2 if row.feedback_settle_minutes is None else row.feedback_settle_minutes,
                     row.admin_agent_interval_minutes or 5, 5 if row.admin_agent_daily_fix_cap is None else row.admin_agent_daily_fix_cap,
                     row.admin_agent_timeout_minutes or 30,
                     tuple(row.admin_agent_setting_keys if row.admin_agent_setting_keys is not None else ("retrieval_strategy", "hybrid_keyword_weight", "diversity", "top_k", "score_threshold", "glossary_mode")),

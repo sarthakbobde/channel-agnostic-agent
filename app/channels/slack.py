@@ -55,7 +55,7 @@ class SlackPresenter(ChannelPresenter):
         labels = form["labels"]
         return {"type": "modal", "callback_id": RATE_FORM, "private_metadata": json.dumps(meta),
                 "title": {"type": "plain_text", "text": labels["down"][:24]}, "submit": {"type": "plain_text", "text": labels["submit"][:24]},
-                "close": {"type": "plain_text", "text": "x"},
+                "close": {"type": "plain_text", "text": labels["cancel"][:24]},
                 "blocks": [
                     {"type": "input", "block_id": "comment", "optional": True, "label": {"type": "plain_text", "text": labels["comment"][:200]},
                      "element": {"type": "plain_text_input", "action_id": "comment", "multiline": True}},

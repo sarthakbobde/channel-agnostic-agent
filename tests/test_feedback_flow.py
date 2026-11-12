@@ -60,7 +60,7 @@ def setup(world, model, monkeypatch):
         return {"answer": "It is 18 days.", "found": True, "settings_changed": ["model"]}
     monkeypatch.setattr(replay, "replay", fake_replay)
     world.state = state
-    global_settings.update({"feedback_processing_mode": "auto", "feedback_replay_daily_cap": 50, "feedback_retry_limit": 3}, "t", get_db())
+    global_settings.update({"feedback_processing_mode": "auto", "feedback_replay_daily_cap": 50, "feedback_retry_limit": 3, "feedback_settle_minutes": 0}, "t", get_db())
     yield
     with get_db().session() as s:
         s.execute(delete(TicketEvent))
@@ -69,7 +69,7 @@ def setup(world, model, monkeypatch):
         s.execute(delete(ScopedSetting))
         s.execute(delete(UsageRecord).where(UsageRecord.purpose.like("fb_%")))
     scoped_settings.invalidate()
-    global_settings.update({"feedback_processing_mode": "off", "feedback_intent_enabled": True, "feedback_verify_enabled": True,
+    global_settings.update({"feedback_settle_minutes": 2, "feedback_processing_mode": "off", "feedback_intent_enabled": True, "feedback_verify_enabled": True,
                             "admin_agent_mode": "off", "ticket_assignment": "department", "ticket_related_window_days": 0}, "t", get_db())
 
 
@@ -366,3 +366,19 @@ def test_a_feedback_cannot_skip_a_step(world, model):
         feedback_flow.move(get_db(), fid, "ticketed", expect="captured")
     assert feedback_flow.move(get_db(), fid, "no_ticket", expect="human_review") is False         # not in that state: nothing changes
     assert row(fid).state == "captured"
+
+
+def test_a_rating_is_processed_only_after_it_has_been_left_alone_so_a_late_comment_is_read(world, model):
+    """Found in the first live Slack test: the thumbs-down is recorded at the click and the comment arrives a moment later."""
+    global_settings.update({"feedback_settle_minutes": 2}, "t", get_db())
+    fid = make_feedback(world, comment="")
+    with get_db().session() as s:
+        s.get(Feedback, fid).updated_at = datetime.now(timezone.utc) - timedelta(seconds=30)                     # just clicked
+    assert feedback_flow.run_once(get_db()) == {} and row(fid).intent is None and model.calls == []             # not yet: a comment may be coming
+    with get_db().session() as s:
+        s.get(Feedback, fid).comment = "I expected 20, not 18"                                                    # the comment arrives: the clock starts again
+    assert feedback_flow.run_once(get_db()) == {} and model.calls == []
+    with get_db().session() as s:
+        s.get(Feedback, fid).updated_at = datetime.now(timezone.utc) - timedelta(minutes=3)
+    assert feedback_flow.run_once(get_db()) == {"ticketed": 1}
+    assert row(fid).intent_source == "comment"                                                                    # the agent read the comment, not just the trace

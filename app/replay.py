@@ -20,7 +20,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from sqlalchemy import select
 
 from app import agent_runtime, chat_service, global_settings, identity, memory, prompts, ticketing
-from app.db import AnswerTrace, Database, Document, Feedback, KnowledgeBase, Message, Prompt, User, get_db
+from app.db import AnswerTrace, Conversation, Database, Document, Feedback, KnowledgeBase, Message, Prompt, User, get_db
 from app.knowledge import access, kbs
 from app.llm import get_chat_model
 
@@ -36,12 +36,16 @@ def _aware(d: datetime | None) -> datetime | None:
 
 
 def rater(db: Database, fb: Feedback):
-    """The rater's identity as it is NOW (role, groups, status): the replay is checked against today's access, not the access they had."""
-    if fb.user_id is None:
-        return None
+    """The rater's identity as it is NOW (role, groups, status): the replay is checked against today's access, not the access they had.
+    A person the directory does not know (a chat user who was answered as an unknown sender) is replayed as an unknown sender, with the
+    access an unknown sender has; their email comes from the conversation they started."""
     with db.session() as s:
-        u = s.get(User, fb.user_id)
-        email = u.email if u is not None else ""
+        if fb.user_id is not None:
+            u = s.get(User, fb.user_id)
+            email = u.email if u is not None else ""
+        else:
+            c = s.get(Conversation, fb.conversation_id)
+            email = c.owner_email if c is not None else ""
     return identity.resolve(email, db) if email else None
 
 
@@ -56,7 +60,7 @@ def _trace(db: Database, fb: Feedback):
 def possible(db: Database, fb: Feedback) -> tuple[bool, str]:
     """(True, "") or (False, a short code). Makes no model call."""
     who = rater(db, fb)
-    if who is None or not who.known or not who.active:
+    if who is None or not who.active:                       # no one to replay as, or their access was turned off
         return False, "rater_unavailable"
     t = _trace(db, fb)
     if t is None or not t.complete:

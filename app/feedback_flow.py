@@ -181,9 +181,10 @@ def run_once(db: Database | None = None, limit: int = 20) -> dict:
     """One pass of the job: process eligible captured items, and hand over any ready_for_ticket that is still waiting."""
     db = db or get_db()
     now = _now()
+    settled = now - timedelta(minutes=global_settings.current(db).feedback_settle_minutes)       # a comment may still be on its way
     counts: dict = {}
     with db.session() as s:
-        captured = list(s.scalars(select(Feedback.id).where(Feedback.state == CAPTURED, Feedback.rating == "down",
+        captured = list(s.scalars(select(Feedback.id).where(Feedback.state == CAPTURED, Feedback.rating == "down", Feedback.updated_at <= settled,
                                                             or_(Feedback.next_attempt_at.is_(None), Feedback.next_attempt_at <= now)).order_by(Feedback.id).limit(limit)))
         ready = list(s.scalars(select(Feedback.id).where(Feedback.state == READY).order_by(Feedback.id).limit(limit)))
     for fid in captured:
