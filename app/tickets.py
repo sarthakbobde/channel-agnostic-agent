@@ -24,7 +24,8 @@ STATUSES = (NEW, ASSIGNED, IN_PROGRESS, ASSIGNED_TO_HUMAN, HOLD, COMPLETED, DISM
 CLOSED = (COMPLETED, DISMISSED)
 OPEN = tuple(s for s in STATUSES if s not in CLOSED)
 EVIDENCE_ADDED, REASSIGNED, COMMENT = "evidence_added", "reassigned", "comment"
-OTHER_EVENTS = (EVIDENCE_ADDED, REASSIGNED, COMMENT)
+DIAGNOSIS, PROPOSAL, PROPOSAL_DECIDED, FIX_APPLIED = "diagnosis", "proposal", "proposal_decided", "fix_applied"      # Phase 4: the admin agent's record
+OTHER_EVENTS = (EVIDENCE_ADDED, REASSIGNED, COMMENT, DIAGNOSIS, PROPOSAL, PROPOSAL_DECIDED, FIX_APPLIED)
 AUTONOMOUS, USER, GROUP = "autonomous", "user", "group"
 
 # (from, to) -> who may make the move. system = the pipeline's own rules (assignment, the release of the queue, the sweeper);
@@ -239,6 +240,22 @@ def comment(db: Database | None, ticket_id: int, actor: Actor, note: str) -> dic
         t.updated_at = _now()
         s.flush()
         return as_dict(t)
+
+
+def record(db: Database | None, ticket_id: int, event: str, actor: Actor, note: str = "", detail: dict | None = None) -> int:
+    """A non-state event written by the admin agent, the system or an approver (a diagnosis, a proposal, a decision, a fix). It does not change
+    the status, but it renews `updated_at`, so a run that is still working is not mistaken for a stuck one. Returns the event id."""
+    if event not in (DIAGNOSIS, PROPOSAL, PROPOSAL_DECIDED, FIX_APPLIED):
+        raise TicketError("Unknown event.")
+    db = db or get_db()
+    with db.session() as s:
+        t = s.get(Ticket, ticket_id)
+        if t is None:
+            raise NotFound("No such ticket.")
+        row = _event(s, ticket_id, event, actor, note, detail)
+        t.updated_at = _now()
+        s.flush()
+        return row.id
 
 
 # ---- reading -----------------------------------------------------------------------------------------------------------------------

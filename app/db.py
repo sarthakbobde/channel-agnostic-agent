@@ -413,7 +413,7 @@ class GlobalSettings(Base):
     feedback_comment_max_chars: Mapped[int] = mapped_column(Integer, default=1000)
     feedback_payload_days: Mapped[int] = mapped_column(Integer, default=14)
     feedback_masking: Mapped[str] = mapped_column(String(16), default="always")   # always | follow_switch (D61)
-    admin_agent_mode: Mapped[str] = mapped_column(String(8), default="off")        # off | live (D60, D63)
+    admin_agent_mode: Mapped[str] = mapped_column(String(8), default="off")        # off | shadow | live (D60, D63)
     ticket_assignment: Mapped[str] = mapped_column(String(24), default="department")   # department | autonomous | user:<id> | group:<id>
     ticket_related_window_days: Mapped[int] = mapped_column(Integer, default=0)    # 0 = no limit
     ticket_retention_days: Mapped[int] = mapped_column(Integer, default=0)         # 0 = keep closed tickets for ever
@@ -429,6 +429,13 @@ class GlobalSettings(Base):
     feedback_agent_max_steps: Mapped[int] = mapped_column(Integer, default=6)
     feedback_agent_timeout_seconds: Mapped[int] = mapped_column(Integer, default=60)
     feedback_agent_token_ceiling: Mapped[int] = mapped_column(Integer, default=6000)
+    admin_agent_interval_minutes: Mapped[int] = mapped_column(Integer, default=5)           # Phase 4 (D57, D60)
+    admin_agent_daily_fix_cap: Mapped[int] = mapped_column(Integer, default=5)              # fixes per knowledge base per day (UTC)
+    admin_agent_timeout_minutes: Mapped[int] = mapped_column(Integer, default=30)           # the sweeper hands a stuck ticket to a person
+    admin_agent_setting_keys: Mapped[list | None] = mapped_column(JSON, nullable=True)      # the approved list of KB setting keys
+    admin_agent_max_steps: Mapped[int] = mapped_column(Integer, default=8)
+    admin_agent_token_ceiling: Mapped[int] = mapped_column(Integer, default=8000)
+    admin_agent_run_seconds: Mapped[int] = mapped_column(Integer, default=120)
 
 
 class Feedback(Base):

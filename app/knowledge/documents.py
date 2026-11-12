@@ -385,8 +385,13 @@ def index_document(db: Database, doc_id: int) -> None:
         ids, texts, metas = prepare(d, kb, chunker, department, access.ids_for(db, doc_id), pii_mask=mask, report=report, db=db)
         n = len(ids)
         store = kbs.store_for(kb)
+        previous = _previous_chunks(store, d)                # kept in memory until the new ones are in (Release 3, D57: a failed re-index leaves the file as it was)
         store.delete_by_document(d["doc_key"])
-        signature = add_in_batches(store, ids, texts, metas, kb=kb)
+        try:
+            signature = add_in_batches(store, ids, texts, metas, kb=kb)
+        except BaseException:
+            _restore_chunks(store, d, previous)
+            raise
         access.sync_chunks(db, d)
         save_redacted(d, report)
         from app.knowledge import doc_summary
@@ -401,6 +406,27 @@ def index_document(db: Database, doc_id: int) -> None:
         message = str(e) if isinstance(e, ValueError) else f"{type(e).__name__}: {str(e)[:300]}"
         _set(db, doc_id, status="Failed", error=message[:500])
         _alert_failed(db, doc_id, message)
+
+
+def _previous_chunks(store, d: dict) -> list[dict]:
+    """The chunks a document had before it is indexed again, read by their ids (`doc_key::0` to `doc_key::chunks-1`). Empty for a first index."""
+    if not d.get("chunks"):
+        return []
+    try:
+        return store.get([f"{d['doc_key']}::{n}" for n in range(int(d["chunks"]))])
+    except Exception:
+        log.warning("could not read the previous chunks of document %s", d.get("id"), exc_info=True)
+        return []
+
+
+def _restore_chunks(store, d: dict, previous: list[dict]) -> None:
+    """Put the previous chunks back after a failed re-index, so the document keeps answering as before."""
+    try:
+        store.delete_by_document(d["doc_key"])
+        if previous:
+            store.add([c["id"] for c in previous], [c["text"] for c in previous], [c["metadata"] for c in previous])
+    except Exception:
+        log.warning("could not restore the previous chunks of document %s", d.get("id"), exc_info=True)
 
 
 def _alert_failed(db: Database, doc_id: int, message: str) -> None:

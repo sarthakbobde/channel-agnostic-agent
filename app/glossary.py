@@ -280,6 +280,15 @@ def rollback(version_id: int, actor: str, db: Database | None = None) -> tuple[d
     return _activate(db or get_db(), version_id, actor, ARCHIVED)
 
 
+def retire(version_id: int, db: Database | None = None) -> None:
+    """Take a Published version out of use when there is no earlier version to go back to (an undone first publish): it becomes Archived."""
+    with (db or get_db()).session() as s:
+        v = s.get(GlossaryVersion, version_id)
+        if v is not None and v.status == PUBLISHED:
+            v.status = ARCHIVED
+    invalidate()
+
+
 def purge(scope_type: str, scope_id: int, db: Database | None = None) -> None:
     """Its knowledge base or department was deleted: a later one with the same id must not inherit these terms."""
     with (db or get_db()).session() as s:

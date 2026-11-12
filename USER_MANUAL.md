@@ -19,6 +19,7 @@ to change one you type a new value, and leaving the box empty keeps the stored o
 | Change the assistant's instructions, safety checks | **Input → Prompts**, **Settings → Guardrails** | 8 |
 | Tune search, retention, the question limit | **Settings → RAG settings** | 9 |
 | Let people rate answers, see the ratings | **RAG settings → Feedback**, **Monitoring → Feedback** | 10b |
+| Let the admin agent work tickets, approve its proposals | **RAG settings → Admin agent**, **Monitoring → Tickets** | 10e |
 | Check negative ratings automatically, review them | **RAG settings → Feedback processing**, **Monitoring → Feedback** | 10d |
 | Raise and work tickets from ratings | **Monitoring → Tickets**, **RAG settings → Tickets** | 10c |
 | Get alerts by webhook or email | **RAG settings → Alert notifications** | 10 |
@@ -482,6 +483,15 @@ Off until you switch it on under **RAG settings → Feedback processing**.
 - **Review.** **Monitoring → Feedback → Waiting for a person** shows the question, the answer, the comment, the issue and the replay side by side, with a mark on old items. *Hold it* keeps the item for you while you read it; *Real problem* raises a ticket, *Not a problem* closes it. Add a note if useful; it is masked.
 - **Limits.** Replays cost money: `feedback_replay_daily_cap` sends the rest of the day to a person. A step that fails is tried again later; after `feedback_retry_limit` tries a person gets it, with the reason. Each agent can be switched off alone.
 - **Report.** Admins see the funnel, the replay outcomes, how often reviewers overturn the replay, the cost per feedback and the failures.
+
+## 10e. The admin agent
+
+Off until you switch it on under **RAG settings → Admin agent**. It works only the tickets in its own queue, and only with three tools.
+
+- **What it does.** For a ticket in its queue it reads the evidence, the trace, the knowledge base's documents, settings and glossary, and similar past tickets, then chooses one action: *re-index one file*, *add one glossary term*, *propose a setting change*, nothing, or (only when sure) dismiss. A re-index or a glossary term is applied and checked; if the check fails it is rolled back and a person gets the ticket. A setting change is never applied by the agent: it appears on the ticket as a proposal for you to **Approve** or **Decline** (Admin, or an Editor of the department).
+- **Modes.** *Off*, *Shadow* (it only reads the tickets people hold and records what it would do, so you can compare it with your own decisions), *Live* (it works its queue). Tickets are put in its queue by **RAG settings → Tickets → Who receives new tickets = autonomous**, or per knowledge base under **Scoped settings**. Switching away from Live gives its queue back to people.
+- **Limits.** Fixes per knowledge base per day, the most steps, tokens and seconds in one run, and the list of settings it may propose (all under Admin agent). A ticket it has held too long is handed to a person. Switching it off stops it at its next step.
+- **The record.** The ticket's history shows each diagnosis, proposal, decision and fix, with the values before and after and whether it was rolled back. **Monitoring → Tickets** shows an agent report (Admin): handled, fixes by type, handovers with reasons, rollbacks.
 
 ## 11. Server settings: the `.env` file
 

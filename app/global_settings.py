@@ -73,18 +73,27 @@ class Snapshot:
     feedback_agent_max_steps: int = 6
     feedback_agent_timeout_seconds: int = 60
     feedback_agent_token_ceiling: int = 6000
+    admin_agent_interval_minutes: int = 5
+    admin_agent_daily_fix_cap: int = 5
+    admin_agent_timeout_minutes: int = 30
+    admin_agent_setting_keys: tuple = ("retrieval_strategy", "hybrid_keyword_weight", "diversity", "top_k", "score_threshold", "glossary_mode")
+    admin_agent_max_steps: int = 8
+    admin_agent_token_ceiling: int = 8000
+    admin_agent_run_seconds: int = 120
 
 
+ADMIN_AGENT_KEYS = {"retrieval_strategy": "Retrieval strategy", "hybrid_keyword_weight": "Keyword weight", "diversity": "Diversity", "top_k": "Passages per question",
+                    "score_threshold": "Score threshold", "glossary_mode": "Glossary mode"}
 PROCESSING_MODES = {"off": "Off", "review_all": "Review all (every negative goes to a person)", "auto": "Automatic (a confirmed replay becomes a ticket)"}
-AGENT_MODES = {"off": "Off", "live": "Live"}
+AGENT_MODES = {"off": "Off", "shadow": "Shadow (diagnose and record, change nothing)", "live": "Live"}
 ALERT_CHANNELS = {"admin_screen": "Admin screen", "email": "Email"}
 ALERT_EVENTS = {"assigned": "A ticket is assigned to a person or group", "approval": "A proposal is waiting for approval",
                 "evidence_added": "New evidence is added to an open ticket", "queue_released": "The agent's queue is released to people"}
-LIST_CHOICES = {"ticket_alert_channels": ALERT_CHANNELS, "ticket_alert_events": ALERT_EVENTS}
+LIST_CHOICES = {"ticket_alert_channels": ALERT_CHANNELS, "ticket_alert_events": ALERT_EVENTS, "admin_agent_setting_keys": ADMIN_AGENT_KEYS}
 FEEDBACK_MASKING = {"always": "Always (recommended)", "follow_switch": "Only while personal-data masking is on"}
 SUGGESTION_MODES = {"same_call": "In the same AI call as the answer", "second_call": "In a second AI call (for models that cannot follow the format)"}
 GLOSSARY_MODES = {"off": "Off", "query": "Expand questions (recommended)", "index": "Also add stable terms to passages when indexing"}
-LIST_FIELDS = ("accepted_languages", "document_languages", "catalog_languages", "ticket_alert_channels", "ticket_alert_events")
+LIST_FIELDS = ("accepted_languages", "document_languages", "catalog_languages", "ticket_alert_channels", "ticket_alert_events", "admin_agent_setting_keys")
 
 STRATEGIES = {
     "similarity": "Similarity (meaning)",
@@ -196,6 +205,20 @@ SPEC = (
      "help": "A run that takes longer stops and the item goes to a person. Default 60."},
     {"name": "feedback_agent_token_ceiling", "label": "Agents: most tokens in one run", "min": 500, "max": 100000, "step": 500, "integer": True,
      "help": "A run that would read more than this stops and the item goes to a person. Default 6000."},
+    {"name": "admin_agent_interval_minutes", "label": "Admin agent: how often it looks for tickets (minutes)", "min": 1, "max": 1440, "step": 1, "integer": True,
+     "help": "How often the agent checks its queue. Default 5."},
+    {"name": "admin_agent_daily_fix_cap", "label": "Admin agent: fixes per knowledge base per day", "min": 0, "max": 1000, "step": 1, "integer": True,
+     "help": "After this many fixes (re-index, glossary term) on one knowledge base in a day (UTC), the agent hands the rest to a person. 0 means no fixes. Default 5."},
+    {"name": "admin_agent_timeout_minutes", "label": "Admin agent: hand a stuck ticket to a person after (minutes)", "min": 1, "max": 1440, "step": 1, "integer": True,
+     "help": "A ticket the agent has held this long without finishing (a crashed run) is handed to a person. Default 30."},
+    {"name": "admin_agent_setting_keys", "label": "Admin agent: settings it may propose changing", "kind": "list",
+     "help": "Comma-separated knowledge-base setting names. The agent only PROPOSES a change; a person approves it. A key not on this list is refused. Default: retrieval_strategy, hybrid_keyword_weight, diversity, top_k, score_threshold, glossary_mode."},
+    {"name": "admin_agent_max_steps", "label": "Admin agent: most steps in one run", "min": 1, "max": 30, "step": 1, "integer": True,
+     "help": "A run that needs more steps stops and the ticket goes to a person. Default 8."},
+    {"name": "admin_agent_token_ceiling", "label": "Admin agent: most tokens in one run", "min": 1000, "max": 200000, "step": 1000, "integer": True,
+     "help": "A run that would read more than this stops and the ticket goes to a person. Default 8000."},
+    {"name": "admin_agent_run_seconds", "label": "Admin agent: longest run (seconds)", "min": 10, "max": 900, "step": 10, "integer": True,
+     "help": "A run that takes longer stops and the ticket goes to a person. Default 120."},
     {"name": "ticket_alert_events", "label": "Ticket alerts: which events", "kind": "list",
      "help": "Comma-separated: assigned, approval, evidence_added, queue_released. Default assigned, approval, queue_released."},
 )
@@ -222,7 +245,10 @@ def defaults() -> Snapshot:
                     ticket_alert_channels=("admin_screen",), ticket_alert_events=("assigned", "approval", "queue_released"),
                     feedback_processing_mode="off", feedback_intent_enabled=True, feedback_verify_enabled=True, feedback_replay_daily_cap=50,
                     feedback_retry_limit=3, feedback_review_claim_minutes=30, feedback_review_age_days=7, feedback_agent_max_steps=6,
-                    feedback_agent_timeout_seconds=60, feedback_agent_token_ceiling=6000)
+                    feedback_agent_timeout_seconds=60, feedback_agent_token_ceiling=6000,
+                    admin_agent_interval_minutes=5, admin_agent_daily_fix_cap=5, admin_agent_timeout_minutes=30,
+                    admin_agent_setting_keys=("retrieval_strategy", "hybrid_keyword_weight", "diversity", "top_k", "score_threshold", "glossary_mode"),
+                    admin_agent_max_steps=8, admin_agent_token_ceiling=8000, admin_agent_run_seconds=120)
 
 
 def _snapshot(row: GlobalSettings) -> Snapshot:
@@ -243,7 +269,11 @@ def _snapshot(row: GlobalSettings) -> Snapshot:
                     row.feedback_processing_mode or "off", row.feedback_intent_enabled is not False, row.feedback_verify_enabled is not False,
                     50 if row.feedback_replay_daily_cap is None else row.feedback_replay_daily_cap, row.feedback_retry_limit or 3,
                     row.feedback_review_claim_minutes or 30, row.feedback_review_age_days or 7, row.feedback_agent_max_steps or 6,
-                    row.feedback_agent_timeout_seconds or 60, row.feedback_agent_token_ceiling or 6000)
+                    row.feedback_agent_timeout_seconds or 60, row.feedback_agent_token_ceiling or 6000,
+                    row.admin_agent_interval_minutes or 5, 5 if row.admin_agent_daily_fix_cap is None else row.admin_agent_daily_fix_cap,
+                    row.admin_agent_timeout_minutes or 30,
+                    tuple(row.admin_agent_setting_keys if row.admin_agent_setting_keys is not None else ("retrieval_strategy", "hybrid_keyword_weight", "diversity", "top_k", "score_threshold", "glossary_mode")),
+                    row.admin_agent_max_steps or 8, row.admin_agent_token_ceiling or 8000, row.admin_agent_run_seconds or 120)
 
 
 def _read(db: Database) -> tuple[Snapshot, GlobalSettings]:

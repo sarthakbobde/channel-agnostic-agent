@@ -837,7 +837,8 @@
       ["Document summaries", "A short summary of each document, shown in KB documents. Display only: never used to answer.", ["summary_enabled", "summary_max_input_tokens"]],
       ["Glossary", "Expand searches with the terms in Input > Glossary. Off by default.", ["glossary_mode", "glossary_max_terms", "glossary_max_aliases"]],
       ["Feedback", "Rating buttons under each answer. Switch them on or off for one channel, knowledge base or department under Scoped settings. Comments are masked before they are stored.", ["feedback_enabled", "feedback_comment_max_chars", "feedback_payload_days", "feedback_masking"]],
-      ["Tickets", "Problems raised from feedback. The agent mode is off until the admin agent exists; while it is off, tickets go to people. Alerts carry the ticket number and a link, never any text.", ["admin_agent_mode", "ticket_assignment", "ticket_related_window_days", "ticket_retention_days", "ticket_alert_channels", "ticket_alert_events"]],
+      ["Tickets", "Problems raised from feedback. The agent mode is off until the admin agent exists; while it is off, tickets go to people. Alerts carry the ticket number and a link, never any text.", ["ticket_assignment", "ticket_related_window_days", "ticket_retention_days", "ticket_alert_channels", "ticket_alert_events"]],
+      ["Admin agent", "An agent that works the tickets in its queue: it re-indexes one file, adds one glossary term, or proposes a setting change for a person to approve. Off by default. Shadow mode only diagnoses tickets that people hold and records what it would do. Live mode works the queue. Switching from Live releases the queue to people.", ["admin_agent_mode", "admin_agent_interval_minutes", "admin_agent_daily_fix_cap", "admin_agent_timeout_minutes", "admin_agent_setting_keys", "admin_agent_max_steps", "admin_agent_token_ceiling", "admin_agent_run_seconds"]],
       ["Feedback processing", "Agents that check negative ratings. Off by default. Review all lets the agents read and replay each one while a person decides every case; Automatic lets a confirmed replay become a ticket. Anything doubtful always goes to a person. The mode can be set per knowledge base or department under Scoped settings.", ["feedback_processing_mode", "feedback_intent_enabled", "feedback_verify_enabled", "feedback_replay_daily_cap", "feedback_retry_limit", "feedback_review_claim_minutes", "feedback_review_age_days", "feedback_agent_max_steps", "feedback_agent_timeout_seconds", "feedback_agent_token_ceiling"]]
     ];
 
@@ -3624,7 +3625,8 @@
   // ---- tickets -----------------------------------------------------------------------
   var TICKET_STATUS = { new: "New", assigned: "In the agent's queue", in_progress: "In progress", assigned_to_human: "Waiting for a person", hold: "On hold", completed: "Completed", dismissed: "Dismissed" };
   var TICKET_EVENT = { new: "Raised", assigned: "Put in the agent's queue", in_progress: "Taken up", assigned_to_human: "Handed to a person", hold: "Put on hold", completed: "Completed",
-                       dismissed: "Dismissed", evidence_added: "New evidence added", reassigned: "Reassigned", comment: "Note" };
+                       dismissed: "Dismissed", evidence_added: "New evidence added", reassigned: "Reassigned", comment: "Note",
+                       diagnosis: "Diagnosis", proposal: "Proposal", proposal_decided: "Proposal decided", fix_applied: "Fix tried" };
   async function viewTickets(main) {
     var isAdmin = state.perm && state.perm.can_manage_all;
     pageHead(main, "Tickets", (isAdmin ? "Problems raised from feedback on answers." : "Problems raised on the knowledge bases of your departments.")
@@ -3642,6 +3644,15 @@
           r.total + " tickets · open: " + r.open_by_age.under_1_day + " under a day, " + r.open_by_age.over_7_days + " over a week old, " + r.open_by_age["1_to_7_days"] + " in between"
           + (r.average_hours_to_close === null ? "" : " · closed in " + r.average_hours_to_close + " hours on average")
           + " · " + r.evidence_additions + " evidence additions · " + r.related_tickets + " linked to an earlier closed ticket")));
+        if (isAdmin) {
+          var a = await api("GET", "/tickets/agent-report");
+          summary.appendChild(panel("Admin agent (" + a.mode + ")", null, null, h("div", { class: "meta" },
+            "Handled: " + a.handled.completed + " completed, " + a.handled.dismissed + " dismissed, " + a.handled.handed_over + " handed to a person"
+            + " · fixes: " + (Object.keys(a.fixes).map(function (k) { return k + " " + a.fixes[k].succeeded + "/" + a.fixes[k].attempted; }).join(", ") || "none")
+            + " · rollbacks " + a.rollbacks + " · handovers: " + (Object.keys(a.handover_reasons).map(function (k) { return k + " " + a.handover_reasons[k]; }).join(", ") || "none")
+            + " · proposals " + a.proposals.made + " (" + a.proposals.approved + " approved, " + a.proposals.declined + " declined)"
+            + " · diagnoses " + a.diagnoses.live + " live, " + a.diagnoses.shadow + " shadow")));
+        }
       } catch (err) { if (me) summary.replaceChildren(msg("bad", err.message)); }
     }
     async function open(id) {
@@ -3661,6 +3672,21 @@
         if (t.can_work && (s === "in_progress" || s === "assigned_to_human")) buttons.push(btn("Put on hold", "hold"));
         if (t.can_work && s === "in_progress") { buttons.push(btn("Complete", "complete", "primary")); buttons.push(btn("Dismiss", "dismiss")); }
         buttons.push(btn("Add note", "comment"));
+        var proposal = null;
+        if (t.proposal && t.can_manage) {
+          var pr = t.proposal;
+          async function decide(which) {
+            out.replaceChildren(msg("wait", "Working…"));
+            try { var x = await api("POST", "/tickets/" + id + "/proposal/" + which, { note: note.value }); await open(id); load(); loadReport();
+              if (!x.ok && me) detail.prepend(msg("bad", "The change was rolled back (" + x.error + ")."));
+            } catch (err) { if (me) out.replaceChildren(msg("bad", err.message)); }
+          }
+          proposal = h("div", { class: "panel" }, h("h4", {}, "Proposed change, waiting for you"),
+            h("div", {}, "Set " + pr.key + " for this knowledge base to " + JSON.stringify(pr.proposed) + " (now " + JSON.stringify(pr.before) + ")."),
+            h("div", { class: "meta" }, pr.diagnosis || ""),
+            h("div", { class: "actions" }, h("button", { type: "button", class: "btn primary", onclick: function () { decide("approve"); } }, "Approve and apply"),
+              h("button", { type: "button", class: "btn", onclick: function () { decide("decline"); } }, "Decline")));
+        }
         var evidence = (t.evidence || []).map(function (e) {
           return h("div", { class: "panel" },
             h("div", { class: "meta" }, "Question"), h("div", {}, e.question || "–"),
@@ -3673,6 +3699,7 @@
           h("button", { type: "button", class: "btn small", onclick: function () { detail.replaceChildren(); } }, "Close"),
           h("div", {}, h("div", { class: "meta" }, (t.kb || "No knowledge base") + " · raised " + when(t.created_at)
             + (t.related_ticket_id ? " · follows ticket #" + t.related_ticket_id : "")), h("h4", {}, t.title || "Untitled")),
+          proposal,
           h("h4", {}, "Evidence (" + evidence.length + ")"), h("div", {}, evidence),
           h("h4", {}, "History"), h("ul", {}, t.events.map(function (e) {
             return h("li", {}, when(e.created_at) + " · " + (TICKET_EVENT[e.event] || e.event) + " · " + (e.actor_type === "manual" ? "a person" : e.actor_type)

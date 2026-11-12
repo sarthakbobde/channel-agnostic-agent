@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import func, select
 
-from app import identity, ticketing, tickets
+from app import admin_fixes, global_settings, identity, ticketing, tickets
 from app.admin.api import AdminContext, Session, admin_session, get_ctx
 from app.admin.feedback_api import _scope as feedback_scope
 from app.db import Feedback, KnowledgeBase, Ticket, TicketEvent, TicketType
@@ -114,6 +114,43 @@ def new_ticket(body: NewTicket, sess: Session = Depends(admin_session), ctx: Adm
     return out
 
 
+@router.get("/agent-report")
+def agent_report(sess: Session = Depends(admin_session), ctx: AdminContext = Depends(get_ctx)):
+    """What the admin agent did: tickets handled, fixes by type, handovers with their reasons, rollbacks, shadow diagnoses, proposals. Admin only; counts only."""
+    if identity.resolve(sess.email, ctx.db).role != "admin":
+        raise HTTPException(403, "Only an Admin can see the agent report.")
+    with ctx.db.session() as s:
+        events = list(s.scalars(select(TicketEvent).where(TicketEvent.event.in_((tickets.COMPLETED, tickets.DISMISSED, tickets.ASSIGNED_TO_HUMAN, tickets.FIX_APPLIED,
+                                                                                tickets.DIAGNOSIS, tickets.PROPOSAL, tickets.PROPOSAL_DECIDED)))))
+    handled = {"completed": 0, "dismissed": 0, "handed_over": 0}
+    fixes: dict = {}
+    reasons: dict = {}
+    rollbacks = shadow = live = proposals = approved = declined = 0
+    for e in events:
+        d = e.detail or {}
+        if e.event == tickets.FIX_APPLIED:
+            row = fixes.setdefault(d.get("action") or "?", {"attempted": 0, "succeeded": 0, "rolled_back": 0})
+            row["attempted"] += 1
+            row["succeeded"] += 1 if d.get("ok") else 0
+            row["rolled_back"] += 1 if d.get("rolled_back") else 0
+            rollbacks += 1 if d.get("rolled_back") else 0
+        elif e.event == tickets.DIAGNOSIS:
+            shadow, live = shadow + (1 if d.get("shadow") else 0), live + (0 if d.get("shadow") else 1)
+        elif e.event == tickets.PROPOSAL:
+            proposals += 1
+        elif e.event == tickets.PROPOSAL_DECIDED:
+            approved, declined = approved + (1 if d.get("decision") == "approved" else 0), declined + (1 if d.get("decision") == "declined" else 0)
+        elif e.actor_type in ("autonomous", "system") and (d.get("reason") or e.event != tickets.ASSIGNED_TO_HUMAN or e.actor_type == "autonomous"):
+            if e.event == tickets.ASSIGNED_TO_HUMAN:
+                if e.actor_type == "autonomous" or d.get("reason") == "timeout":
+                    handled["handed_over"] += 1
+                    reasons[d.get("reason") or "unknown"] = reasons.get(d.get("reason") or "unknown", 0) + 1
+            elif e.actor_type == "autonomous":
+                handled[e.event] += 1
+    return {"handled": handled, "fixes": fixes, "handover_reasons": reasons, "rollbacks": rollbacks, "diagnoses": {"live": live, "shadow": shadow},
+            "proposals": {"made": proposals, "approved": approved, "declined": declined}, "mode": global_settings.current(ctx.db).admin_agent_mode}
+
+
 @router.get("/{ticket_id}")
 def get_ticket(ticket_id: int, sess: Session = Depends(admin_session), ctx: AdminContext = Depends(get_ctx)):
     actor = _actor(sess, ctx)
@@ -127,6 +164,7 @@ def get_ticket(ticket_id: int, sess: Session = Depends(admin_session), ctx: Admi
     out["events"] = tickets.events(ctx.db, ticket_id)
     out["can_manage"] = tickets.is_manager(actor, t)
     out["can_work"] = tickets.is_worker(actor, t)
+    out["proposal"] = admin_fixes.proposal_event(ctx.db, ticket_id) if out["can_manage"] else None
     return out
 
 
@@ -190,3 +228,27 @@ def add_comment(ticket_id: int, body: Note, sess: Session = Depends(admin_sessio
     except tickets.TicketError as e:
         _fail(e)
     return out
+
+
+def _decide(ticket_id: int, body: Note, approve: bool, sess: Session, ctx: AdminContext) -> dict:
+    actor = _actor(sess, ctx)
+    with ctx.db.session() as s:
+        t = s.get(Ticket, ticket_id)
+        if t is None or not tickets.can_see(actor, t):
+            raise HTTPException(404, "No such ticket.")
+    try:
+        out = admin_fixes.approve(ctx.db, ticket_id, actor, sess.email, approve=approve, note=body.note)
+    except tickets.TicketError as e:
+        _fail(e)
+    _audit(ctx, sess, "approve" if approve else "decline", ticket_id, f"{out['decision']}; ok={out['ok']}")
+    return out
+
+
+@router.post("/{ticket_id}/proposal/approve")
+def approve_proposal(ticket_id: int, body: Note = Note(), sess: Session = Depends(admin_session), ctx: AdminContext = Depends(get_ctx)):
+    return _decide(ticket_id, body, True, sess, ctx)
+
+
+@router.post("/{ticket_id}/proposal/decline")
+def decline_proposal(ticket_id: int, body: Note = Note(), sess: Session = Depends(admin_session), ctx: AdminContext = Depends(get_ctx)):
+    return _decide(ticket_id, body, False, sess, ctx)
