@@ -718,7 +718,7 @@ def waiting(world, comment="The limit is wrong", age_days=0, verification=None, 
         fb.state, fb.review_reason, fb.intent, fb.summary = "human_review", "review_all", intent, "The carry-over limit seems wrong."
         fb.verification = verification or {"outcome": "confirmed", "reason": "Same figure.", "replay_answer": "Up to five days.", "settings_changed": ["model"], "model_called": True,
                                            "replayed_at": datetime.now(timezone.utc).isoformat()}
-        fb.updated_at = datetime.now(timezone.utc) - timedelta(days=age_days)
+        fb.created_at = datetime.now(timezone.utc) - timedelta(days=age_days)
         return fb.id
 
 
@@ -790,3 +790,12 @@ def test_the_new_settings_are_validated_and_the_mode_can_be_set_per_knowledge_ba
         scoped_settings.put("channel", "web", {"feedback_processing_mode": "auto"}, "t", get_db())             # not allowed at that scope
     scoped_settings.invalidate()
     global_settings.update({"feedback_processing_mode": "off", "feedback_replay_daily_cap": 50, "feedback_retry_limit": 3}, "t", get_db())
+
+
+def test_holding_a_review_item_does_not_reset_how_long_it_has_waited(world, staff):
+    fid = waiting(world, age_days=9)
+    before = world.admin.get(R + "/review", headers=world.ah).json()["items"][0]
+    assert before["old"] is True and 8.9 <= before["age_days"] <= 9.2
+    assert world.admin.post(f"{R}/review/{fid}/claim", headers=world.ah).json()["claimed"] is True
+    after = world.admin.get(R + "/review", headers=world.ah).json()["items"][0]
+    assert after["old"] is True and after["age_days"] >= before["age_days"]

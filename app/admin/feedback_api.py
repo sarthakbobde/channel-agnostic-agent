@@ -119,7 +119,7 @@ def review_queue(limit: int = 25, offset: int = 0, sess: Session = Depends(admin
     now = datetime.now(timezone.utc)
     with ctx.db.session() as s:
         total = s.scalar(select(func.count()).select_from(q.subquery())) or 0
-        rows = list(s.scalars(q.order_by(Feedback.updated_at, Feedback.id).limit(limit).offset(offset)))
+        rows = list(s.scalars(q.order_by(Feedback.created_at, Feedback.id).limit(limit).offset(offset)))
         names = dict(s.execute(select(KnowledgeBase.id, KnowledgeBase.name)).all())
         items = []
         for r in rows:
@@ -127,7 +127,7 @@ def review_queue(limit: int = 25, offset: int = 0, sess: Session = Depends(admin
             question = s.get(Message, t.question_id) if t is not None else None
             answer = s.get(Message, r.answer_id)
             v = r.verification if isinstance(r.verification, dict) else {}
-            age = (now - _aware(r.updated_at)).total_seconds() / 86400
+            age = (now - _aware(r.created_at)).total_seconds() / 86400            # since it was rated: holding or touching an item must not reset it
             held = bool(r.claimed_by and _aware(r.claimed_until) and _aware(r.claimed_until) > now)
             items.append({"id": r.id, "kb": names.get(r.kb_id, "") if r.kb_id else "", "channel": r.channel, "rating": r.rating,
                           "question": _text(ctx, question.content if question else ""), "answer": _text(ctx, answer.content if answer else ""),

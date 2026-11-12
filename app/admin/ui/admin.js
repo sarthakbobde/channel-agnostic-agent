@@ -3503,8 +3503,8 @@
             }
             var v = f.verification;
             return h("div", { class: "panel" },
-              h("div", { class: "meta" }, (f.kb || "–") + " · " + channelName(f.channel) + " · " + (REASONS[f.reason] || f.reason || "") + " · waiting " + f.age_days + " days"
-                + (f.old ? " (old)" : "") + (f.held_by ? " · held by another reviewer" : "")),
+              h("div", { class: "meta" }, h("span", {}, (f.kb || "–") + " · "), channelName(f.channel), h("span", {}, " · " + (REASONS[f.reason] || f.reason || "") + " · waiting " + f.age_days + " days"
+                + (f.old ? " (old)" : "") + (f.held_by ? " · held by another reviewer" : ""))),
               h("div", { class: "cols" },
                 h("div", {}, h("h4", {}, "Question"), h("div", {}, f.question || "–"), h("h4", {}, "Answer given"), h("div", {}, f.answer || "–")),
                 h("div", {}, h("h4", {}, "What the person said"), h("div", {}, f.comment || "No comment"), (f.attachments || []).length ? h("div", { class: "meta" }, "Links: " + f.attachments.join(", ")) : null,
