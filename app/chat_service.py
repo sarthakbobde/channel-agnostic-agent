@@ -102,12 +102,19 @@ def _accepting(targets: list[dict], ctx: language.LanguageContext) -> list[dict]
     return [kb for kb in targets if not ctx.accepted[str(kb.get("id"))] or ctx.resolved in ctx.accepted[str(kb.get("id"))]]
 
 
-def chat_stream(message: str, conv_id: str | None, kb_ids=None, preview: bool = False, asker: str = "") -> tuple[Iterator[str], dict]:
+def chat_stream(message: str, conv_id: str | None, kb_ids=None, preview: bool = False, asker: str = "", replay: dict | None = None) -> tuple[Iterator[str], dict]:
     """Routing + retrieval happen now; the answer comes from the returned iterator.
     The question is saved before any model runs; the answer is saved as soon as it is complete (or kept, marked
     incomplete, if it never finishes). A blocked question, or one in a language that is not accepted, is not stored.
-    meta = {searched, query, sources, found, answer_id, language}; answer_id is None for a preview."""
+    meta = {searched, query, sources, found, answer_id, language}; answer_id is None for a preview.
+    `replay` ({summary, history, language}) asks the question again for a feedback check (Release 3, D53): like a preview nothing is saved
+    (no message, no trace, no suggestions, no rating buttons), but the conversation's earlier turns are given to the model, and the model
+    calls are recorded under the purpose `fb_replay`. The caller sets the asker's identity and the prompt versions."""
+    preview = preview or replay is not None
+    last = (replay or {}).get("language", "") if preview else None
     rec = trace.Recorder()
+    if replay is not None:
+        replay["recorder"] = rec                               # so the caller can compare the settings in effect with the original answer's
     message = language.normalize(message)                      # clean-up only: never translated (D21)
     targets = _targets(kb_ids)
     first = targets[0] if targets else None
@@ -122,7 +129,7 @@ def chat_stream(message: str, conv_id: str | None, kb_ids=None, preview: bool = 
         return _refusal(catalog.t(gate.key, lang, default), lang)
     message = gate.text
     with rec.stage("language"):
-        ctx = language.resolve(message, last="" if preview else memory.last_language(conv_id), default=default,
+        ctx = language.resolve(message, last=last if preview else memory.last_language(conv_id), default=default,
                                threshold=_kb_setting(first, "language_confidence"))
         rec.language = ctx
         gate = guardrails.check_language(message, ctx.resolved)
@@ -131,7 +138,7 @@ def chat_stream(message: str, conv_id: str | None, kb_ids=None, preview: bool = 
         kept = _accepting(targets, ctx)
         if targets and not kept and ctx.source == "detected" and ctx.confidence < language.REJECT_CONFIDENCE:
             # not sure enough to turn the question away: fall back as D19 says, then check that language instead
-            ctx = language.resolve(message, last="" if preview else memory.last_language(conv_id), default=default, threshold=1.01)
+            ctx = language.resolve(message, last=last if preview else memory.last_language(conv_id), default=default, threshold=1.01)
             rec.language = ctx
             gate = guardrails.check_language(message, ctx.resolved)
             if gate.blocked:
@@ -151,14 +158,14 @@ def chat_stream(message: str, conv_id: str | None, kb_ids=None, preview: bool = 
     wanted = g.suggestions_requested if offer else 0
     inline = wanted if g.suggestions_mode == "same_call" else 0
     asker_key = suggestions.asker_key(asker or identity.current().email or (conv_id or ""))
-    summary, history = ("", []) if preview else memory.get_context(conv_id)   # a preview starts from nothing and leaves nothing behind
+    summary, history = ((replay or {}).get("summary", ""), list((replay or {}).get("history", []))) if preview else memory.get_context(conv_id)   # a preview starts from nothing and leaves nothing behind
     turn = None if preview else memory.begin_turn(conv_id, message, identity.current(), language=ctx.resolved)   # saved BEFORE any model runs
     answer_id = turn.answer_id if turn else None
-    purpose = {"purpose": "preview-answer"} if preview else {}
+    purpose = {"purpose": "fb_replay" if replay is not None else "preview-answer"} if preview else {}
     try:
         with usage.for_answer(answer_id), trace.recording(rec), language.using(ctx):
             with rec.stage("routing"):
-                decision = _decide(message, history, "preview-router" if preview else "router", **({"summary": summary} if summary else {}))
+                decision = _decide(message, history, ("fb_replay" if replay is not None else "preview-router") if preview else "router", **({"summary": summary} if summary else {}))
             rec.standalone_query = rec.search_text = decision["query"]
             if decision["search"]:
                 with rec.stage("retrieval"):

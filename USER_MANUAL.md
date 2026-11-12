@@ -19,6 +19,7 @@ to change one you type a new value, and leaving the box empty keeps the stored o
 | Change the assistant's instructions, safety checks | **Input → Prompts**, **Settings → Guardrails** | 8 |
 | Tune search, retention, the question limit | **Settings → RAG settings** | 9 |
 | Let people rate answers, see the ratings | **RAG settings → Feedback**, **Monitoring → Feedback** | 10b |
+| Check negative ratings automatically, review them | **RAG settings → Feedback processing**, **Monitoring → Feedback** | 10d |
 | Raise and work tickets from ratings | **Monitoring → Tickets**, **RAG settings → Tickets** | 10c |
 | Get alerts by webhook or email | **RAG settings → Alert notifications** | 10 |
 | Your photo, theme (light or dark), accent colour, password | **Account** (your name, top right) | 1 |
@@ -471,6 +472,16 @@ A ticket is a problem raised from a negative rating. Tickets are switched by the
 - **Assignment.** `ticket_assignment` decides where a new ticket goes: the department's queue (default), a person (`user:ID`), a group (`group:ID`), or the admin agent's queue (`autonomous`, used only while the agent is live). Setting it for one knowledge base or department is done under **Scoped settings**.
 - **Alerts.** A ticket handed to people sends an alert (admin screen, and email if SMTP is on) with the ticket number and a link, never any text. Which events and channels send one are settings.
 - **Retention.** `ticket_retention_days` deletes closed tickets and their history after that many days (0 keeps them for ever).
+
+## 10d. Checking negative ratings (feedback processing)
+
+Off until you switch it on under **RAG settings → Feedback processing**.
+
+- **Modes.** *Review all*: every not-helpful rating is read by the intent agent and replayed, then a person decides every one. *Automatic*: a replay that confirms the problem becomes a ticket with no person; anything doubtful still goes to a person. Start with *Review all* and compare your decisions with the agents' before switching. The mode can be set for one knowledge base or department under **Scoped settings**.
+- **What the agents do.** The intent agent decides if a comment is a complaint (an unclear one counts as a complaint) and writes the issue in a sentence; a plain thumbs-down is always a complaint. The verification agent asks the question again with the same prompts, the same earlier turns and the rater's *current* access, then says whether the problem is still there. If the answer cannot be replayed fairly (a cited document was deleted or changed, the person lost access) no model is called and a person decides.
+- **Review.** **Monitoring → Feedback → Waiting for a person** shows the question, the answer, the comment, the issue and the replay side by side, with a mark on old items. *Hold it* keeps the item for you while you read it; *Real problem* raises a ticket, *Not a problem* closes it. Add a note if useful; it is masked.
+- **Limits.** Replays cost money: `feedback_replay_daily_cap` sends the rest of the day to a person. A step that fails is tried again later; after `feedback_retry_limit` tries a person gets it, with the reason. Each agent can be switched off alone.
+- **Report.** Admins see the funnel, the replay outcomes, how often reviewers overturn the replay, the cost per feedback and the failures.
 
 ## 11. Server settings: the `.env` file
 

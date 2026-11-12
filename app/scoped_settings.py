@@ -42,6 +42,7 @@ REGISTRY = {k.name: k for k in (
     Key("suggestions_enabled", (CHANNEL, KB, DEPARTMENT)),   # D26: on only when the channel and the knowledge base are both on
     Key("feedback_enabled", (CHANNEL, KB, DEPARTMENT)),      # Release 3: same rule as suggestions
     Key("ticket_assignment", (KB, DEPARTMENT)),              # Release 3: who receives new tickets (D58, Phase 2)
+    Key("feedback_processing_mode", (KB, DEPARTMENT)),       # Release 3, Phase 3: roll the feedback agents out one knowledge base at a time (D60)
     Key("ticket_alert_channels", (DEPARTMENT,)),
     Key("ticket_alert_events", (DEPARTMENT,)),
 )}

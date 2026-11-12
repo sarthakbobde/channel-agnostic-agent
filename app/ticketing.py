@@ -65,7 +65,7 @@ def build_item(db: Database, fb: Feedback, replay: dict | None = None) -> dict:
         raw = {"question": question.content if question else "", "answer": answer.content if answer else "", "comment": fb.comment or ""}
         links = list(fb.attachments or [])
     return {"feedback_id": fb.id, "question": mask(db, raw["question"]), "answer": mask(db, raw["answer"]), "comment": mask(db, raw["comment"]),
-            "attachments": links, "documents": [{"doc_id": i, "title": titles.get(i, "")} for i in doc_ids], "replay": replay or None,
+            "summary": mask(db, fb.summary or ""), "attachments": links, "documents": [{"doc_id": i, "title": titles.get(i, "")} for i in doc_ids], "replay": replay or None,
             "added_at": _now().isoformat()}
 
 

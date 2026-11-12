@@ -419,6 +419,16 @@ class GlobalSettings(Base):
     ticket_retention_days: Mapped[int] = mapped_column(Integer, default=0)         # 0 = keep closed tickets for ever
     ticket_alert_channels: Mapped[list | None] = mapped_column(JSON, nullable=True)
     ticket_alert_events: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    feedback_processing_mode: Mapped[str] = mapped_column(String(12), default="off")   # off | review_all | auto (D60)
+    feedback_intent_enabled: Mapped[bool] = mapped_column(Boolean, default=True)        # a kill switch for each agent (D51)
+    feedback_verify_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    feedback_replay_daily_cap: Mapped[int] = mapped_column(Integer, default=50)
+    feedback_retry_limit: Mapped[int] = mapped_column(Integer, default=3)
+    feedback_review_claim_minutes: Mapped[int] = mapped_column(Integer, default=30)
+    feedback_review_age_days: Mapped[int] = mapped_column(Integer, default=7)
+    feedback_agent_max_steps: Mapped[int] = mapped_column(Integer, default=6)
+    feedback_agent_timeout_seconds: Mapped[int] = mapped_column(Integer, default=60)
+    feedback_agent_token_ceiling: Mapped[int] = mapped_column(Integer, default=6000)
 
 
 class Feedback(Base):
@@ -441,6 +451,19 @@ class Feedback(Base):
     intent_source: Mapped[str | None] = mapped_column(String(10), nullable=True)   # rating | comment | trace
     state: Mapped[str] = mapped_column(String(20), default="captured", index=True)
     ticket_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)      # NULL until ticketed (D55)
+    # ---- Phase 3: processing (D51 to D54). Masked text only; a failure is stored as a code, never as free text.
+    summary: Mapped[str] = mapped_column(Text, default="")                      # the issue summary written by the intent agent (masked)
+    suggested_type: Mapped[str] = mapped_column(String(32), default="")         # a ticket type name; empty for now
+    verification: Mapped[dict | None] = mapped_column(JSON, nullable=True)      # {outcome, reason, replay_answer (masked), settings_changed, ...}
+    review_reason: Mapped[str] = mapped_column(String(24), default="")          # why the item is in human_review (D54)
+    reviewer_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    review_note: Mapped[str] = mapped_column(Text, default="")
+    claimed_by: Mapped[str] = mapped_column(String(64), default="")             # the runner or reviewer holding the item
+    claimed_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    next_attempt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_error: Mapped[str] = mapped_column(String(64), default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)
     # one OPEN record per rater and answer (any state but ticketed): a rating after `ticketed` is a new record (D49)

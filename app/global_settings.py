@@ -63,8 +63,19 @@ class Snapshot:
     ticket_retention_days: int = 0
     ticket_alert_channels: tuple = ("admin_screen",)
     ticket_alert_events: tuple = ("assigned", "approval", "queue_released")
+    feedback_processing_mode: str = "off"
+    feedback_intent_enabled: bool = True
+    feedback_verify_enabled: bool = True
+    feedback_replay_daily_cap: int = 50
+    feedback_retry_limit: int = 3
+    feedback_review_claim_minutes: int = 30
+    feedback_review_age_days: int = 7
+    feedback_agent_max_steps: int = 6
+    feedback_agent_timeout_seconds: int = 60
+    feedback_agent_token_ceiling: int = 6000
 
 
+PROCESSING_MODES = {"off": "Off", "review_all": "Review all (every negative goes to a person)", "auto": "Automatic (a confirmed replay becomes a ticket)"}
 AGENT_MODES = {"off": "Off", "live": "Live"}
 ALERT_CHANNELS = {"admin_screen": "Admin screen", "email": "Email"}
 ALERT_EVENTS = {"assigned": "A ticket is assigned to a person or group", "approval": "A proposal is waiting for approval",
@@ -165,6 +176,26 @@ SPEC = (
      "help": "Closed tickets older than this are retired together with their events (hidden from screens and reports); open tickets never are. 0 keeps them for ever. Default 0."},
     {"name": "ticket_alert_channels", "label": "Ticket alerts: where they go", "kind": "list",
      "help": "Comma-separated: admin_screen, email. An alert holds the ticket number and a link, never the evidence. Default admin_screen."},
+    {"name": "feedback_processing_mode", "label": "Feedback processing", "kind": "choice", "choices": list(PROCESSING_MODES), "choice_labels": PROCESSING_MODES,
+     "help": "Off by default. Review all: the agents read each negative rating and replay the question, then a person decides every one. Automatic: a replay that confirms the problem becomes a ticket with no person involved; everything doubtful still goes to a person. Start with Review all, compare the agents with your reviewers, then switch. Can be set per knowledge base or department under Scoped settings."},
+    {"name": "feedback_intent_enabled", "label": "Feedback: intent agent", "kind": "bool",
+     "help": "A switch for this agent alone. While it is off, every negative feedback goes to a person. Default on, but nothing runs while Feedback processing is Off."},
+    {"name": "feedback_verify_enabled", "label": "Feedback: verification agent (replay)", "kind": "bool",
+     "help": "A switch for this agent alone. While it is off, nothing is replayed and every negative feedback goes to a person. Default on, but nothing runs while Feedback processing is Off."},
+    {"name": "feedback_replay_daily_cap", "label": "Feedback: replays per day", "min": 0, "max": 100000, "step": 10, "integer": True,
+     "help": "A replay asks the model again, so it costs money. After this many in a day (UTC), the rest go to a person. 0 means no replays. Default 50."},
+    {"name": "feedback_retry_limit", "label": "Feedback: tries before a person is asked", "min": 1, "max": 10, "step": 1, "integer": True,
+     "help": "A step that keeps failing is tried again with a wait; after this many tries the item goes to a person, with the reason. Default 3."},
+    {"name": "feedback_review_claim_minutes", "label": "Review: how long a reviewer holds an item (minutes)", "min": 1, "max": 1440, "step": 5, "integer": True,
+     "help": "A reviewer who opens an item holds it for this long, so two people do not decide the same one. Default 30."},
+    {"name": "feedback_review_age_days", "label": "Review: mark items older than (days)", "min": 1, "max": 365, "step": 1, "integer": True,
+     "help": "An item waiting for a person this long is marked as old in the queue. Default 7."},
+    {"name": "feedback_agent_max_steps", "label": "Agents: most steps in one run", "min": 1, "max": 20, "step": 1, "integer": True,
+     "help": "A run that needs more steps than this stops and the item goes to a person. Default 6."},
+    {"name": "feedback_agent_timeout_seconds", "label": "Agents: longest run (seconds)", "min": 5, "max": 600, "step": 5, "integer": True,
+     "help": "A run that takes longer stops and the item goes to a person. Default 60."},
+    {"name": "feedback_agent_token_ceiling", "label": "Agents: most tokens in one run", "min": 500, "max": 100000, "step": 500, "integer": True,
+     "help": "A run that would read more than this stops and the item goes to a person. Default 6000."},
     {"name": "ticket_alert_events", "label": "Ticket alerts: which events", "kind": "list",
      "help": "Comma-separated: assigned, approval, evidence_added, queue_released. Default assigned, approval, queue_released."},
 )
@@ -188,7 +219,10 @@ def defaults() -> Snapshot:
                     suggestions_mode="same_call", suggestions_max_searches=3, suggestions_payload_days=14,
                     feedback_enabled=False, feedback_comment_max_chars=1000, feedback_payload_days=14, feedback_masking="always",
                     admin_agent_mode="off", ticket_assignment="department", ticket_related_window_days=0, ticket_retention_days=0,
-                    ticket_alert_channels=("admin_screen",), ticket_alert_events=("assigned", "approval", "queue_released"))
+                    ticket_alert_channels=("admin_screen",), ticket_alert_events=("assigned", "approval", "queue_released"),
+                    feedback_processing_mode="off", feedback_intent_enabled=True, feedback_verify_enabled=True, feedback_replay_daily_cap=50,
+                    feedback_retry_limit=3, feedback_review_claim_minutes=30, feedback_review_age_days=7, feedback_agent_max_steps=6,
+                    feedback_agent_timeout_seconds=60, feedback_agent_token_ceiling=6000)
 
 
 def _snapshot(row: GlobalSettings) -> Snapshot:
@@ -205,7 +239,11 @@ def _snapshot(row: GlobalSettings) -> Snapshot:
                     bool(row.feedback_enabled), row.feedback_comment_max_chars or 1000, row.feedback_payload_days or 14,
                     row.feedback_masking or "always", row.admin_agent_mode or "off", row.ticket_assignment or "department",
                     row.ticket_related_window_days or 0, row.ticket_retention_days or 0,
-                    tuple(row.ticket_alert_channels or ("admin_screen",)), tuple(row.ticket_alert_events if row.ticket_alert_events is not None else ("assigned", "approval", "queue_released")))
+                    tuple(row.ticket_alert_channels or ("admin_screen",)), tuple(row.ticket_alert_events if row.ticket_alert_events is not None else ("assigned", "approval", "queue_released")),
+                    row.feedback_processing_mode or "off", row.feedback_intent_enabled is not False, row.feedback_verify_enabled is not False,
+                    50 if row.feedback_replay_daily_cap is None else row.feedback_replay_daily_cap, row.feedback_retry_limit or 3,
+                    row.feedback_review_claim_minutes or 30, row.feedback_review_age_days or 7, row.feedback_agent_max_steps or 6,
+                    row.feedback_agent_timeout_seconds or 60, row.feedback_agent_token_ceiling or 6000)
 
 
 def _read(db: Database) -> tuple[Snapshot, GlobalSettings]:

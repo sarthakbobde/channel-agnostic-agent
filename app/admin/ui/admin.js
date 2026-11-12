@@ -837,7 +837,8 @@
       ["Document summaries", "A short summary of each document, shown in KB documents. Display only: never used to answer.", ["summary_enabled", "summary_max_input_tokens"]],
       ["Glossary", "Expand searches with the terms in Input > Glossary. Off by default.", ["glossary_mode", "glossary_max_terms", "glossary_max_aliases"]],
       ["Feedback", "Rating buttons under each answer. Switch them on or off for one channel, knowledge base or department under Scoped settings. Comments are masked before they are stored.", ["feedback_enabled", "feedback_comment_max_chars", "feedback_payload_days", "feedback_masking"]],
-      ["Tickets", "Problems raised from feedback. The agent mode is off until the admin agent exists; while it is off, tickets go to people. Alerts carry the ticket number and a link, never any text.", ["admin_agent_mode", "ticket_assignment", "ticket_related_window_days", "ticket_retention_days", "ticket_alert_channels", "ticket_alert_events"]]
+      ["Tickets", "Problems raised from feedback. The agent mode is off until the admin agent exists; while it is off, tickets go to people. Alerts carry the ticket number and a link, never any text.", ["admin_agent_mode", "ticket_assignment", "ticket_related_window_days", "ticket_retention_days", "ticket_alert_channels", "ticket_alert_events"]],
+      ["Feedback processing", "Agents that check negative ratings. Off by default. Review all lets the agents read and replay each one while a person decides every case; Automatic lets a confirmed replay become a ticket. Anything doubtful always goes to a person. The mode can be set per knowledge base or department under Scoped settings.", ["feedback_processing_mode", "feedback_intent_enabled", "feedback_verify_enabled", "feedback_replay_daily_cap", "feedback_retry_limit", "feedback_review_claim_minutes", "feedback_review_age_days", "feedback_agent_max_steps", "feedback_agent_timeout_seconds", "feedback_agent_token_ceiling"]]
     ];
 
     function show(data, notice) {
@@ -3483,6 +3484,56 @@
     var list = h("div", {});
     var detail = h("div", {});
     var page = 0, size = 25, filled = false;
+    var review = h("div", {}), processing = h("div", {});
+    var REASONS = { review_all: "Review-all mode", failed: "The replay no longer shows the problem", inconclusive: "The replay was inconclusive", not_possible: "The question could not be replayed",
+                    daily_cap: "The daily replay limit was reached", agent_off: "An agent is switched off", error: "A step failed too many times" };
+    var OUTCOMES = { confirmed: "Problem confirmed", failed: "Problem not reproduced", inconclusive: "Inconclusive", not_possible: "Not possible to replay" };
+    var CHANGED = { model: "the model", retrieval: "the search settings", glossary: "the glossary" };
+    async function loadReview() {
+      try {
+        var r = await api("GET", "/feedback/review?limit=25");
+        review.replaceChildren(panel("Waiting for a person (" + r.total + ")", null, null,
+          r.items.length ? h("div", {}, r.items.map(function (f) {
+            var note = h("textarea", { rows: 2, "aria-label": "Note", placeholder: "A note (optional)" }), out = h("div", {});
+            async function decide(d) {
+              out.replaceChildren(msg("wait", "Saving…"));
+              try { var x = await api("POST", "/feedback/review/" + f.id + "/decide", { decision: d, note: note.value }); out.replaceChildren(msg("ok", x.state === "ticketed" ? "Ticket raised." : "Closed without a ticket.")); loadReview(); load(); loadProcessing(); }
+              catch (err) { if (me) out.replaceChildren(msg("bad", err.message)); }
+            }
+            var v = f.verification;
+            return h("div", { class: "panel" },
+              h("div", { class: "meta" }, (f.kb || "–") + " · " + channelName(f.channel) + " · " + (REASONS[f.reason] || f.reason || "") + " · waiting " + f.age_days + " days"
+                + (f.old ? " (old)" : "") + (f.held_by ? " · held by another reviewer" : "")),
+              h("div", { class: "cols" },
+                h("div", {}, h("h4", {}, "Question"), h("div", {}, f.question || "–"), h("h4", {}, "Answer given"), h("div", {}, f.answer || "–")),
+                h("div", {}, h("h4", {}, "What the person said"), h("div", {}, f.comment || "No comment"), (f.attachments || []).length ? h("div", { class: "meta" }, "Links: " + f.attachments.join(", ")) : null,
+                  h("h4", {}, "Issue (written by the agent)"), h("div", {}, f.summary || "–")),
+                h("div", {}, h("h4", {}, "Replay"), v ? h("div", {}, h("span", { class: "pill " + (v.outcome === "confirmed" ? "bad" : "off") }, OUTCOMES[v.outcome] || v.outcome || "–"),
+                  v.reason ? h("div", { class: "meta" }, v.reason) : null,
+                  v.replay_answer ? h("div", {}, h("h4", {}, "Answer now"), h("div", {}, v.replay_answer)) : null,
+                  (v.settings_changed || []).length ? h("div", { class: "meta" }, "Changed since the answer: " + v.settings_changed.map(function (k) { return CHANGED[k] || k; }).join(", ")) : null)
+                  : h("div", { class: "meta" }, "Not replayed."))),
+              note,
+              h("div", { class: "actions" },
+                h("button", { type: "button", class: "btn", onclick: async function () { try { var c = await api("POST", "/feedback/review/" + f.id + "/claim"); out.replaceChildren(msg(c.claimed ? "ok" : "bad", c.claimed ? "Held for you." : "Another reviewer holds this item.")); } catch (err) { if (me) out.replaceChildren(msg("bad", err.message)); } } }, "Hold it"),
+                h("button", { type: "button", class: "btn primary", onclick: function () { decide("negative"); } }, "Real problem: raise a ticket"),
+                h("button", { type: "button", class: "btn", onclick: function () { decide("positive"); } }, "Not a problem: close")),
+              out);
+          })) : h("p", { class: "empty" }, "Nothing is waiting for a person.")));
+      } catch (err) { if (me) review.replaceChildren(msg("bad", err.message)); }
+    }
+    async function loadProcessing() {
+      if (!isAdmin) return;
+      try {
+        var r = await api("GET", "/feedback/processing-report");
+        var f = r.funnel;
+        processing.replaceChildren(panel("Feedback processing", null, null, h("div", { class: "meta" },
+          "Captured " + f.captured + " · waiting for a person " + f.human_review + " · ready for a ticket " + f.ready_for_ticket + " · ticketed " + f.ticketed + " · no ticket needed " + f.no_ticket
+          + " · replays: " + Object.keys(r.replay_outcomes).map(function (k) { return (OUTCOMES[k] || k) + " " + r.replay_outcomes[k]; }).join(", ")
+          + (r.overturned_share === null ? "" : " · reviewers overturned " + Math.round(r.overturned_share * 100) + "% of " + r.reviewed_replays + " replays")
+          + " · " + r.failures + " failures · cost per feedback " + (r.cost_per_feedback === null ? "–" : r.cost_per_feedback))));
+      } catch (err) { if (me) processing.replaceChildren(msg("bad", err.message)); }
+    }
 
     function pct(n, total) { return total ? Math.round(100 * n / total) + "%" : "–"; }
     function splitTable(title, first, rows, nameOf) {
@@ -3557,6 +3608,8 @@
     filters.appendChild(h("div", { class: "field" }, fieldLabel("fb_chan", "Channel"), chan));
     filters.appendChild(h("div", { class: "field" }, fieldLabel("fb_kb", "Knowledge base"), kbSel));
     filters.appendChild(h("div", { class: "field" }, fieldLabel("fb_state", "State"), stateSel));
+    main.appendChild(review);
+    main.appendChild(processing);
     main.appendChild(summary);
     main.appendChild(h("section", { class: "panel filterbar" }, filters, h("div", { class: "filterrow" }, dr.el,
       h("button", { type: "button", class: "btn primary", onclick: apply }, "Apply"))));
@@ -3564,6 +3617,8 @@
     main.appendChild(h("section", { class: "panel" }, list));
     load();
     loadReport();
+    loadReview();
+    loadProcessing();
   }
 
   // ---- tickets -----------------------------------------------------------------------

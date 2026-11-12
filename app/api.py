@@ -8,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-from app import catalog, feedback, suggestions, channels, chat_auth, chat_service, global_settings, guardrails, identity, language, memory, prompts, ratelimit, retention, summaries
+from app import catalog, feedback, feedback_flow, suggestions, channels, chat_auth, chat_service, global_settings, guardrails, identity, language, memory, prompts, ratelimit, retention, summaries
 from app.knowledge import storehealth
 from app.channels import health as channel_health
 from app.jobs import scheduler
@@ -94,6 +94,7 @@ async def lifespan(app: FastAPI):
         retention.register()
         storehealth.register()
         channel_health.register()
+        feedback_flow.register()
     except Exception:
         log.exception("could not schedule the retention job")
     if settings.admin_port:
